@@ -8,53 +8,56 @@ import pdfplumber
 from docx import Document
 from openai import OpenAI
 
-# =============================
-# OpenAI client（使用 Railway 環境變數 OPENAI_API_KEY）
-# =============================
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# =========================================
+# OpenAI client（從環境變數讀取 API Key）
+# =========================================
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
-# =============================
-# 帳號系統設定
-# =============================
-# 先用簡單密碼測試，確認登入無誤，之後你再自行修改成正式密碼即可。
+# =========================================
+# 簡易帳號系統（你可以在這裡改帳號密碼）
+# =========================================
 ACCOUNTS = {
+    # 管理者帳號
     "admin@errorfree.com": {
-        "password": "1111",      # TODO: 換成你自己的密碼
+        "password": "1111",
         "role": "admin",
-        "max_runs": 9999,
-        "used_runs": 0,
     },
+    # 內部 Pro 使用者
     "dr.chiu@errorfree.com": {
-        "password": "2222",      # TODO: 換成邱博士密碼
+        "password": "2222",
         "role": "pro",
-        "max_runs": 999,
-        "used_runs": 0,
     },
+    # 內部測試用帳號（不是匿名 guest）
     "guest@errorfree.com": {
-        "password": "3333",      # TODO: 內部測試帳號
+        "password": "3333",
         "role": "pro",
-        "max_runs": 100,
-        "used_runs": 0,
     },
 }
 
-
+# =========================================
+# 依角色選模型 + 每日次數上限
+# =========================================
 def get_model_and_limit(role: str):
-    """依照帳號角色決定模型與每日次數上限"""
+    """
+    回傳 (model_name, daily_limit)
+    daily_limit = None 表示無上限
+    """
     if role == "free":
         return "gpt-4.1-mini", 5
     if role == "advanced":
         return "gpt-4.1", 10
     if role == "pro":
-        return "gpt-5.1", None  # None = 不限
+        return "gpt-5.1", None
     if role == "admin":
         return "gpt-5.1", None
+    # 預設
     return "gpt-4.1-mini", 2
 
 
-# =============================
-# 多框架設定
-# =============================
+# =========================================
+# Multi-framework 設定（可再增加）
+# =========================================
 FRAMEWORKS: Dict[str, Dict] = {
     "omission": {
         "name_zh": "Error-Free® 遺漏錯誤檢查框架",
@@ -177,10 +180,9 @@ Each row should correspond to one important risk that should be prioritized for 
     },
 }
 
-
-# =============================
-# 工具：讀取檔案文字
-# =============================
+# =========================================
+# 工具：讀取上傳檔案文字
+# =========================================
 def read_file_to_text(uploaded_file) -> str:
     if uploaded_file is None:
         return ""
@@ -188,12 +190,12 @@ def read_file_to_text(uploaded_file) -> str:
     name = uploaded_file.name.lower()
     try:
         if name.endswith(".pdf"):
-            text = []
+            text_pages: List[str] = []
             with pdfplumber.open(uploaded_file) as pdf:
                 for page in pdf.pages:
                     t = page.extract_text() or ""
-                    text.append(t)
-            return "\n".join(text)
+                    text_pages.append(t)
+            return "\n".join(text_pages)
         elif name.endswith(".docx"):
             doc = Document(uploaded_file)
             return "\n".join(p.text for p in doc.paragraphs)
@@ -205,9 +207,9 @@ def read_file_to_text(uploaded_file) -> str:
         return f"[讀取檔案時發生錯誤: {e}]"
 
 
-# =============================
+# =========================================
 # 工具：第一次框架分析
-# =============================
+# =========================================
 def run_llm_analysis(
     framework_key: str,
     language: str,
@@ -215,31 +217,33 @@ def run_llm_analysis(
     model_name: str,
 ) -> str:
     fw = FRAMEWORKS[framework_key]
+    system_prompt = fw["wrapper_zh"] if language == "zh" else fw["wrapper_en"]
+
     if language == "zh":
-        system_prompt = fw["wrapper_zh"]
+        user_prompt = "以下是要分析的文件內容：\n\n" + document_text
     else:
-        system_prompt = fw["wrapper_en"]
+        user_prompt = "Here is the document to analyze:\n\n" + document_text
 
-    user_prompt = (
-        ("以下是要分析的文件內容：\n\n" if language == "zh" else "Here is the document to analyze:\n\n")
-        + document_text
-    )
+    if client is None:
+        return "[Error] OPENAI_API_KEY 尚未設定，無法連線至 OpenAI。"
 
-    response = client.responses.create(
-        model=model_name,
-        input=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        max_output_tokens=2500,
-    )
+    try:
+        response = client.responses.create(
+            model=model_name,
+            input=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_output_tokens=2500,
+        )
+        return response.output_text
+    except Exception as e:
+        return f"[呼叫 OpenAI API 時發生錯誤: {e}]"
 
-    return response.output_text
 
-
-# =============================
+# =========================================
 # 工具：後續追問 / Q&A
-# =============================
+# =========================================
 def run_followup_qa(
     framework_key: str,
     language: str,
@@ -286,7 +290,6 @@ Important:
         analysis_label = "Here is an excerpt of your previous analysis:"
         question_label = "The user's new question is:"
 
-    # 控制長度，避免爆 token
     max_doc_chars = 8000
     max_analysis_chars = 8000
     doc_excerpt = document_text[:max_doc_chars]
@@ -298,68 +301,107 @@ Important:
         f"{question_label}\n{user_question}"
     )
 
-    response = client.responses.create(
-        model=model_name,
-        input=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
-        ],
-        max_output_tokens=2000,
+    if client is None:
+        return "[Error] OPENAI_API_KEY 尚未設定，無法連線至 OpenAI。"
+
+    try:
+        response = client.responses.create(
+            model=model_name,
+            input=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ],
+            max_output_tokens=2000,
+        )
+        return response.output_text
+    except Exception as e:
+        return f"[呼叫 OpenAI API 時發生錯誤: {e}]"
+
+
+# =========================================
+# 工具：組合「完整報告」文字，供下載
+# =========================================
+def build_full_report(lang: str) -> str:
+    doc_text = st.session_state.get("last_doc_text", "")
+    framework_key = st.session_state.get("last_framework_key")
+    analysis_output = st.session_state.get("last_analysis_output", "")
+    followup_history: List[Tuple[str, str]] = st.session_state.get(
+        "followup_history", []
     )
 
-    return response.output_text
+    if not framework_key:
+        return ""
 
-
-# =============================
-# 工具：組合「完整報告」文字（分析 + 後續 Q&A）
-# =============================
-def build_full_report_text(
-    lang: str,
-    framework_key: str,
-    ai_output: str,
-    followup_history: List[Tuple[str, str]],
-) -> str:
     fw = FRAMEWORKS[framework_key]
-    lines = []
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    user_email = st.session_state.get("user_email", "anonymous")
 
     if lang == "zh":
-        lines.append("=== Error-Free® 多框架 AI 文件分析報告 ===")
-        lines.append(f"使用框架：{fw['name_zh']}")
-        lines.append("")
-        lines.append("【一、第一次 AI 分析結果】")
-        lines.append(ai_output)
+        header = [
+            "Error-Free® 多框架 AI 文件分析完整報告",
+            f"產生時間：{now}",
+            f"使用者帳號：{user_email}",
+            f"使用框架：{fw['name_zh']}",
+            "",
+            "==============================",
+            "一、原始文件內容（節錄）",
+            "==============================",
+            doc_text,
+            "",
+            "==============================",
+            "二、第一次 AI 框架分析結果",
+            "==============================",
+            analysis_output,
+        ]
         if followup_history:
-            lines.append("")
-            lines.append("【二、後續問答紀錄】")
+            header.append("")
+            header.append("==============================")
+            header.append("三、後續提問與回覆（Q&A）")
+            header.append("==============================")
             for i, (q, a) in enumerate(followup_history, start=1):
-                lines.append(f"\nQ{i}：{q}\n")
-                lines.append(f"A{i}：\n{a}\n")
+                header.append(f"[Q{i}] {q}")
+                header.append(f"[A{i}] {a}")
+                header.append("")
     else:
-        lines.append("=== Error-Free® Multi-framework AI Document Analysis Report ===")
-        lines.append(f"Framework: {fw['name_en']}")
-        lines.append("")
-        lines.append("【1. Initial AI analysis】")
-        lines.append(ai_output)
+        header = [
+            "Error-Free® Multi-framework AI Document Analysis - Full Report",
+            f"Generated at: {now}",
+            f"User account: {user_email}",
+            f"Framework: {fw['name_en']}",
+            "",
+            "==============================",
+            "1. Original document (excerpt)",
+            "==============================",
+            doc_text,
+            "",
+            "==============================",
+            "2. Initial AI framework analysis",
+            "==============================",
+            analysis_output,
+        ]
         if followup_history:
-            lines.append("")
-            lines.append("【2. Follow-up Q&A】")
+            header.append("")
+            header.append("==============================")
+            header.append("3. Follow-up Q&A")
+            header.append("==============================")
             for i, (q, a) in enumerate(followup_history, start=1):
-                lines.append(f"\nQ{i}: {q}\n")
-                lines.append(f"A{i}:\n{a}\n")
+                header.append(f"[Q{i}] {q}")
+                header.append(f"[A{i}] {a}")
+                header.append("")
 
-    return "\n".join(lines)
+    return "\n".join(header)
 
 
-# =============================
+# =========================================
 # Streamlit 主程式
-# =============================
+# =========================================
 def main():
     st.set_page_config(
         page_title="Error-Free Multi-framework AI Document Analyzer",
         layout="wide",
     )
 
-    # Session 初始狀態
+    # -------- Session 初始狀態 --------
     if "user_email" not in st.session_state:
         st.session_state.user_email = None
         st.session_state.user_role = None
@@ -369,7 +411,6 @@ def main():
     if "lang" not in st.session_state:
         st.session_state.lang = "zh"
 
-    # 用來支援後續追問與下載
     if "last_doc_text" not in st.session_state:
         st.session_state.last_doc_text = ""
     if "last_framework_key" not in st.session_state:
@@ -379,25 +420,33 @@ def main():
     if "followup_history" not in st.session_state:
         st.session_state.followup_history = []
 
-    # ------------ 側邊欄：語言切換 ------------
+    # -------- 側邊欄：語言切換 --------
     with st.sidebar:
         current_lang = st.session_state.lang
 
         st.markdown("### Language" if current_lang == "en" else "### 語言")
-
-        new_lang = st.radio(
-            "Select language" if current_lang == "en" else "選擇語言",
-            ["zh", "en"],
-            index=0 if current_lang == "zh" else 1,
-            format_func=lambda x: "繁體中文" if x == "zh" else "English",
-        )
+        if current_lang == "zh":
+            new_lang = st.radio(
+                "選擇語言",
+                ["zh", "en"],
+                index=0 if current_lang == "zh" else 1,
+                format_func=lambda x: "繁體中文" if x == "zh" else "English",
+            )
+        else:
+            new_lang = st.radio(
+                "Select language",
+                ["zh", "en"],
+                index=1 if current_lang == "en" else 0,
+                format_func=lambda x: "Chinese" if x == "zh" else "English",
+            )
 
         st.session_state.lang = new_lang
         lang = new_lang
 
-    # ------------ 標題區（主畫面上方） ------------
+    # -------- 主標題 + Logo --------
     logo_path = Path(__file__).parent / "logo.png"
     col_logo, col_title = st.columns([1, 4])
+
     with col_logo:
         if logo_path.exists():
             st.image(str(logo_path), use_column_width=True)
@@ -412,10 +461,13 @@ def main():
 
     st.markdown("---")
 
-    # ------------ 再回到側邊欄：帳號 / 框架資訊 ------------
+    # -------- 再回到側邊欄：登入與框架設定 --------
     with st.sidebar:
-        # 帳號區
-        st.markdown("### Account" if lang == "en" else "### 帳號")
+        # ===== 帳號區 =====
+        if lang == "zh":
+            st.markdown("### 帳號")
+        else:
+            st.markdown("### Account")
 
         # 已登入
         if st.session_state.user_email:
@@ -442,7 +494,6 @@ def main():
                     st.session_state.last_framework_key = None
                     st.session_state.last_analysis_output = ""
                     st.session_state.followup_history = []
-                    st.experimental_rerun()
             else:
                 if role == "free":
                     role_label = "Free (basic)"
@@ -462,11 +513,9 @@ def main():
                     st.session_state.last_framework_key = None
                     st.session_state.last_analysis_output = ""
                     st.session_state.followup_history = []
-                    st.experimental_rerun()
         else:
             # 尚未登入
             login_email = st.text_input("Email")
-
             if lang == "zh":
                 login_password = st.text_input("密碼", type="password")
                 if st.button("登入"):
@@ -481,7 +530,6 @@ def main():
                         st.session_state.last_analysis_output = ""
                         st.session_state.followup_history = []
                         st.success("登入成功！")
-                        st.experimental_rerun()
                     else:
                         st.error("Email 或密碼錯誤。")
                 st.info("目前僅開放授權帳號使用，請向管理者申請帳號。")
@@ -499,14 +547,13 @@ def main():
                         st.session_state.last_analysis_output = ""
                         st.session_state.followup_history = []
                         st.success("Login successful.")
-                        st.experimental_rerun()
                     else:
                         st.error("Invalid email or password.")
                 st.info("Access is limited to authorized accounts. Please contact the administrator.")
 
         st.markdown("---")
 
-        # 框架選擇
+        # ===== 框架選擇 =====
         if lang == "zh":
             st.markdown("### 選擇框架")
             framework_label = "框架"
@@ -522,7 +569,7 @@ def main():
             else FRAMEWORKS[k]["name_en"],
         )
 
-        # 使用次數資訊（登入後才顯示）
+        # ===== 使用次數資訊（登入後） =====
         if st.session_state.user_role is not None:
             model_name, daily_limit = get_model_and_limit(st.session_state.user_role)
             today = datetime.date.today()
@@ -549,7 +596,7 @@ def main():
                         f"Today used: {today_usage} / {daily_limit}; remaining: {remaining}"
                     )
 
-        # Admin 額外資訊
+        # ===== Admin 額外資訊（只顯示這個 session） =====
         if st.session_state.user_role == "admin":
             st.markdown("---")
             if lang == "zh":
@@ -575,7 +622,7 @@ def main():
                     st.session_state.usage_count = 0
                     st.success("Today's usage has been reset for this session.")
 
-    # ------------ 主畫面：框架說明 + 上傳 ------------
+    # -------- 主畫面：框架說明 + 上傳 --------
     fw = FRAMEWORKS[framework_key]
 
     if lang == "zh":
@@ -623,7 +670,7 @@ def main():
     else:
         text = ""
 
-    # ------------ 第一次分析按鈕 ------------
+    # -------- 第一次分析按鈕 --------
     if st.button(start_button_label):
         if st.session_state.user_role is None:
             st.error(warn_no_login)
@@ -647,7 +694,7 @@ def main():
                 st.error("You have reached today's analysis limit. Please try again tomorrow or use a higher tier.")
             return
 
-        # 增加可分析字數上限（例如 120,000 字）
+        # 字數上限（可以再調整）
         max_chars = 120000
         if len(text) > max_chars:
             text_to_use = text[:max_chars]
@@ -673,23 +720,6 @@ def main():
         st.subheader(result_title)
         st.write(ai_output)
 
-        # 下載按鈕（第一次分析就可以下載）
-        full_report_text = build_full_report_text(
-            lang,
-            framework_key,
-            ai_output,
-            st.session_state.followup_history,
-        )
-        filename = (
-            "ErrorFree_report.txt" if lang == "en" else "ErrorFree_零錯誤分析報告.txt"
-        )
-        st.download_button(
-            label="Download full report" if lang == "en" else "下載完整報告（文字檔）",
-            data=full_report_text.encode("utf-8"),
-            file_name=filename,
-            mime="text/plain",
-        )
-
         if truncated:
             if lang == "zh":
                 st.caption(
@@ -703,7 +733,7 @@ def main():
                     "For very long documents, consider splitting into multiple uploads.)"
                 )
 
-    # ------------ 後續追問 / Q&A 區塊 ------------
+    # -------- 後續追問 / Q&A 區塊 --------
     if st.session_state.last_analysis_output:
         st.markdown("---")
         if lang == "zh":
@@ -720,7 +750,7 @@ def main():
                 "prioritization, suggested wording, example text, or practical actions."
             )
 
-        # 顯示歷史問答
+        # 顯示歷史 Q&A
         if st.session_state.followup_history:
             for i, (q, a) in enumerate(st.session_state.followup_history, start=1):
                 if lang == "zh":
@@ -735,16 +765,14 @@ def main():
         # 問題輸入
         if lang == "zh":
             followup_question = st.text_area(
-                "請輸入你想追問的問題（與本次文件與分析相關）",
-                key="followup_input",
+                "請輸入你想追問的問題（與本次文件與分析相關）"
             )
             ask_label = "送出提問"
             warn_need_q = "請先輸入一個問題。"
             warn_need_login = "請先登入授權帳號，才可使用後續提問功能。"
         else:
             followup_question = st.text_area(
-                "Enter your follow-up question (related to this document and analysis)",
-                key="followup_input",
+                "Enter your follow-up question (related to this document and analysis)"
             )
             ask_label = "Send question"
             warn_need_q = "Please enter a question first."
@@ -770,24 +798,8 @@ def main():
                     (followup_question.strip(), answer)
                 )
 
-                # 重新組合「完整報告」供下載（含新的 Q&A）
-                full_report_text = build_full_report_text(
-                    lang,
-                    st.session_state.last_framework_key,
-                    st.session_state.last_analysis_output,
-                    st.session_state.followup_history,
-                )
-                filename = (
-                    "ErrorFree_report.txt" if lang == "en" else "ErrorFree_零錯誤分析報告.txt"
-                )
-                st.download_button(
-                    label="Download full report" if lang == "en" else "下載完整報告（文字檔）",
-                    data=full_report_text.encode("utf-8"),
-                    file_name=filename,
-                    mime="text/plain",
-                )
-
-                # 立刻顯示最新一輪 Q&A
+                # 立即顯示最新一輪
+                st.markdown("---")
                 if lang == "zh":
                     st.markdown(f"**Q{len(st.session_state.followup_history)}：{followup_question.strip()}**")
                     st.markdown(f"**A{len(st.session_state.followup_history)}：**")
@@ -795,24 +807,24 @@ def main():
                     st.markdown(f"**Q{len(st.session_state.followup_history)}: {followup_question.strip()}**")
                     st.markdown(f"**A{len(st.session_state.followup_history)}:**")
                 st.write(answer)
-                st.markdown("---")
 
-        # 即使沒有按新問題，也提供最新的下載按鈕
-        full_report_text = build_full_report_text(
-            lang,
-            st.session_state.last_framework_key,
-            st.session_state.last_analysis_output,
-            st.session_state.followup_history,
-        )
-        filename = (
-            "ErrorFree_report.txt" if lang == "en" else "ErrorFree_零錯誤分析報告.txt"
-        )
-        st.download_button(
-            label="Download full report" if lang == "en" else "下載完整報告（文字檔）",
-            data=full_report_text.encode("utf-8"),
-            file_name=filename,
-            mime="text/plain",
-        )
+        # -------- 下載完整報告 --------
+        full_report = build_full_report(lang)
+        if full_report:
+            if lang == "zh":
+                st.download_button(
+                    label="下載完整報告（文字檔）",
+                    data=full_report,
+                    file_name="errorfree_full_report.txt",
+                    mime="text/plain",
+                )
+            else:
+                st.download_button(
+                    label="Download full report (text file)",
+                    data=full_report,
+                    file_name="errorfree_full_report.txt",
+                    mime="text/plain",
+                )
 
 
 if __name__ == "__main__":
