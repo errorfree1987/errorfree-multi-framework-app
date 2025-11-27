@@ -9,46 +9,38 @@ from docx import Document
 from openai import OpenAI
 
 # -----------------------------
-# OpenAI client (Railway 環境變數)
+# OpenAI client（從環境變數讀 KEY）
 # -----------------------------
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # -----------------------------
-# 簡易帳號系統
+# 帳號設定（請把密碼改成你自己的）
 # -----------------------------
 ACCOUNTS = {
-"admin@errorfree": {
-"'password"："amandachiu67"，＃ 改成你自己的管理員密碼
-"role": "admin"
-"max_runs": 9999,
-"used_runs": 0,
-}
-"dr.chiu@errorfree.com": {
-"password"： "PIIcC@462"，＃ 改成邱博士的密碼
-"role": "pro",
-"max_runs": 999,
-"used_runs": 3,
-"guest@errorfree": {
-"password"： "brucepower"，# 這是內部測試帳號，不是匿名guest
-"role": "pro",
-"max_runs": 100,
-"used_runs": 7,
+    "admin@errorfree": {
+        "password": "amandachiu67",   # TODO: 改成你自己的管理員密碼
+        "role": "admin",
+        "max_runs": 9999,
+        "used_runs": 0,
+    },
+    "dr.chiu@errorfree.com": {
+        "password": "PIIcc462",  # TODO: 改成邱博士密碼
+        "role": "pro",
+        "max_runs": 999,
+        "used_runs": 3,
+    },
+    "guest@errorfree": {
+        "password": "brucepower",   # TODO: 改成內部測試帳號密碼
+        "role": "pro",
+        "max_runs": 100,
+        "used_runs": 7,
     },
 }
-import streamlit as st
-import pdfplumber
-import docx
-from openai import OpenAI
-import os
-import base64
 
-# ===== 帳號設定 =====
-ACCOUNTS = {
-    "admin@errorfree": {...},
-    "dr.chiu@errorfree.com": {...},
-    "guest@errorfree": {...},
-}
 
+# -----------------------------
+# 帳號相關工具
+# -----------------------------
 def get_current_user_email() -> str:
     """從 session 拿目前登入的 email，沒有就回傳 'anonymous'。"""
     return st.session_state.get("user_email", "anonymous")
@@ -58,8 +50,6 @@ def is_admin() -> bool:
     """判斷目前登入者是不是 admin。"""
     return st.session_state.get("user_role") == "admin"
 
-
-# ===== 下面才會開始你的登入頁、語言切換、主畫面 =====
 
 def get_model_and_limit(role: str):
     """依照帳號角色決定模型與每日次數上限"""
@@ -72,6 +62,7 @@ def get_model_and_limit(role: str):
     if role == "admin":
         return "gpt-5.1", None
     return "gpt-4.1-mini", 2
+
 
 # -----------------------------
 # 多框架設定
@@ -198,6 +189,7 @@ Each row should correspond to one important risk that should be prioritized for 
     },
 }
 
+
 # -----------------------------
 # 工具：讀取檔案文字
 # -----------------------------
@@ -226,7 +218,7 @@ def read_file_to_text(uploaded_file) -> str:
 
 
 # -----------------------------
-# 工具：第一次框架分析
+# 工具：第一次框架分析（第 3 步已加入 user）
 # -----------------------------
 def run_llm_analysis(
     framework_key: str,
@@ -252,13 +244,15 @@ def run_llm_analysis(
             {"role": "user", "content": user_prompt},
         ],
         max_output_tokens=2500,
+        # ★ 第 3 步：把目前登入的 email 傳給 OpenAI（方便之後管理 usage）
+        user=get_current_user_email(),
     )
 
     return response.output_text
 
 
 # -----------------------------
-# 工具：後續追問 / Q&A
+# 工具：後續追問 / Q&A（第 3 步也加入 user）
 # -----------------------------
 def run_followup_qa(
     framework_key: str,
@@ -308,7 +302,7 @@ Important:
         analysis_label = "Here is an excerpt of your previous analysis:"
         question_label = "The user's new question is:"
 
-    # 控制長度，避免爆 token
+    # 控制長度，避免爆 token（追問用，保留 8000 + 8000 字的精華）
     max_doc_chars = 8000
     max_analysis_chars = 8000
     doc_excerpt = document_text[:max_doc_chars]
@@ -327,6 +321,8 @@ Important:
             {"role": "user", "content": user_content},
         ],
         max_output_tokens=2000,
+        # ★ 一樣標記是哪個帳號在追問
+        user=get_current_user_email(),
     )
 
     return response.output_text
@@ -398,7 +394,7 @@ def main():
             st.caption("邱強博士零錯誤研發團隊1987年至今")
         else:
             st.title("Error-Free Multi-framework AI Document Analyzer")
-            st.caption("Dr. Chong Chiu’s Error-Free Team — Advancing Error-Free Practices since 1987")
+            st.caption("Dr. Chong Chiu’s Error-Free Team — Advancing Error-Free Practices")
 
     st.markdown("---")
 
@@ -538,11 +534,11 @@ def main():
                         f"Today used: {today_usage} / {daily_limit}; remaining: {remaining}"
                     )
 
-        # Admin 額外資訊
+        # Admin 額外資訊（簡易後台）
         if st.session_state.user_role == "admin":
             st.markdown("---")
             if lang == "zh":
-                st.markdown("### 管理者資訊")
+                st.markdown("### 管理者資訊（本 Session）")
                 st.write(
                     f"Session 使用日期 = {st.session_state.usage_date}, "
                     f"今日次數 = {st.session_state.usage_count}"
@@ -553,7 +549,7 @@ def main():
                     st.session_state.usage_count = 0
                     st.success("已重置本 Session 的今日使用次數。")
             else:
-                st.markdown("### Admin panel")
+                st.markdown("### Admin panel (this session)")
                 st.write(
                     f"Session usage_date = {st.session_state.usage_date}, "
                     f"today usage_count = {st.session_state.usage_count}"
@@ -636,6 +632,7 @@ def main():
                 st.error("You have reached today's analysis limit. Please try again tomorrow or use a higher tier.")
             return
 
+        # ★ 第 4 步：把可分析字數提高到 120,000 字（比原本 8,000 大很多）
         max_chars = 120000
         if len(text) > max_chars:
             text_to_use = text[:max_chars]
