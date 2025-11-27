@@ -18,22 +18,22 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # -----------------------------
 ACCOUNTS = {
     "admin@errorfree.com": {
-        "password": "123",  # TODO: 改成你的管理員密碼
+        "password": "1111",
         "role": "admin",
         "max_runs": 9999,
         "used_runs": 0,
     },
     "dr.chiu@errorfree.com": {
-        "password": "123",  # TODO: 改成邱博士的密碼
+        "password": "2222",
         "role": "pro",
         "max_runs": 999,
-        "used_runs": 3,
+        "used_runs": 0,
     },
     "guest@errorfree.com": {
-        "password": "123",  # TODO: 改成內部測試密碼
+        "password": "3333",
         "role": "pro",
         "max_runs": 100,
-        "used_runs": 7,
+        "used_runs": 0,
     },
 }
 
