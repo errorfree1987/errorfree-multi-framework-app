@@ -3,17 +3,11 @@ import json
 import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple
-from io import BytesIO
-import textwrap
 
 import streamlit as st
 import pdfplumber
 from docx import Document
 from openai import OpenAI
-
-# PDF 產生（請確認你的環境有安裝 reportlab）
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
 
 # =========================================
 # OpenAI client（從環境變數讀取 API Key）
@@ -226,6 +220,7 @@ def restore_state_from_disk():
     except Exception:
         return
 
+    # 只在尚未初始化時覆蓋，避免覆蓋當前 session 的操作
     for key, value in data.items():
         if key not in st.session_state:
             st.session_state[key] = value
@@ -444,42 +439,6 @@ def build_full_report(lang: str) -> str:
 
 
 # =========================================
-# 工具：把報告文字轉成 Word 與 PDF
-# =========================================
-def build_word_bytes(report_text: str) -> bytes:
-    doc = Document()
-    for line in report_text.splitlines():
-        doc.add_paragraph(line)
-    bio = BytesIO()
-    doc.save(bio)
-    bio.seek(0)
-    return bio.getvalue()
-
-
-def build_pdf_bytes(report_text: str) -> bytes:
-    buffer = BytesIO()
-    c = canvas.Canvas(buffer, pagesize=A4)
-    width, height = A4
-    x_margin = 40
-    y_margin = 40
-    y = height - y_margin
-
-    for line in report_text.splitlines():
-        wrapped_lines = textwrap.wrap(line, width=90) or [""]
-        for wline in wrapped_lines:
-            if y < y_margin:
-                c.showPage()
-                y = height - y_margin
-            c.drawString(x_margin, y, wline)
-            y -= 14
-
-    c.save()
-    pdf = buffer.getvalue()
-    buffer.close()
-    return pdf
-
-
-# =========================================
 # Streamlit 主程式
 # =========================================
 def main():
@@ -531,6 +490,7 @@ def main():
         analysis_active = bool(st.session_state.last_analysis_output)
 
         if analysis_active:
+            # 分析進行中：語言鎖定，不顯示 radio
             if current_lang == "zh":
                 st.markdown("### 語言")
                 st.caption("目前語言：繁體中文（本次分析期間無法切換語言）")
@@ -541,6 +501,7 @@ def main():
                 )
             lang = current_lang
         else:
+            # 尚未分析，可以自由切換語言
             if current_lang == "en":
                 st.markdown("### Language")
                 new_lang = st.radio(
@@ -561,6 +522,7 @@ def main():
             lang = new_lang
             save_state_to_disk()
 
+        # 登入資訊區
         st.markdown("---")
         if st.session_state.is_authenticated:
             if lang == "zh":
@@ -624,6 +586,7 @@ def main():
                 st.title("Error-Free® Multi-framework AI Document Analyzer")
                 st.subheader("Please log in first")
 
+            # 不用 form，避免「要按兩次」的行為
             email = st.text_input("Email")
             if lang == "zh":
                 password = st.text_input("密碼", type="password")
@@ -639,14 +602,17 @@ def main():
                     st.session_state.user_role = account["role"]
                     st.session_state.is_authenticated = True
                     st.session_state.login_success = True
+                    # 重設當日使用次數
                     st.session_state.usage_date = datetime.date.today().isoformat()
                     st.session_state.usage_count = 0
+                    # 清空舊分析
                     st.session_state.last_doc_text = ""
                     st.session_state.last_framework_key = None
                     st.session_state.last_analysis_output = ""
                     st.session_state.followup_history = []
                     st.session_state.analysis_done = False
                     save_state_to_disk()
+                    # 立刻跳轉主畫面（不留在登入頁）
                     st.experimental_rerun()
                 else:
                     if lang == "zh":
@@ -654,7 +620,7 @@ def main():
                     else:
                         st.error("Invalid email or password. Please try again.")
 
-            return
+            return  # 未登入時不顯示後續內容
 
         # ======= 已登入：顯示主功能畫面 =======
         if lang == "zh":
@@ -742,6 +708,7 @@ def main():
         st.markdown("---")
 
         # ======= Run Analysis（只允許跑一次） =======
+        # 一旦按下去就鎖死，避免重複分析
         can_run_analysis = not st.session_state.analysis_done
 
         if can_run_analysis:
@@ -758,6 +725,7 @@ def main():
                     "Analysis for this document has already been run once. To analyze a new document, upload a new file and click Reset."
                 )
 
+        # Reset 功能：用來重新上傳新文件與重新分析
         if lang == "zh":
             reset_clicked = st.button("Reset / 重新開始（新文件）")
         else:
@@ -774,10 +742,11 @@ def main():
 
         # 執行分析
         if run_button and can_run_analysis:
-            # 按下瞬間就鎖死，再按也不會重跑
+            # 按下的瞬間就鎖死，避免被按第二次
             st.session_state.analysis_done = True
             save_state_to_disk()
 
+            # 檢查每日使用次數限制
             if daily_limit is not None and st.session_state.usage_count >= daily_limit:
                 if lang == "zh":
                     st.error("已達今日使用次數上限。請明天再試，或聯絡管理者提升方案。")
@@ -786,6 +755,7 @@ def main():
                         "You have reached your daily usage limit. Please try again tomorrow or contact the admin."
                     )
             else:
+                # 取得文件文字
                 if uploaded_file is not None:
                     doc_text = read_file_to_text(uploaded_file)
                 else:
@@ -796,6 +766,7 @@ def main():
                         st.error("請至少上傳一份文件或貼上一些文字內容。")
                     else:
                         st.error("Please upload a document or paste some text to analyze.")
+                    # 如果失敗，解鎖分析權限
                     st.session_state.analysis_done = False
                     save_state_to_disk()
                 else:
@@ -828,7 +799,7 @@ def main():
 
             st.markdown(st.session_state.last_analysis_output)
 
-        # ======= Q&A 歷史 + 下載區塊（與聊天輸入框並存） =======
+        # ======= ChatGPT 風格：後續追問 Q&A（可連續） =======
         if st.session_state.analysis_done and st.session_state.last_analysis_output:
             st.markdown("---")
             if lang == "zh":
@@ -840,7 +811,7 @@ def main():
                     "You can keep asking follow-up questions about this analysis until you're ready to download the full report."
                 )
 
-            # Q&A 歷史
+            # 顯示歷史 Q&A
             if st.session_state.followup_history:
                 if lang == "zh":
                     st.markdown("#### 先前對話")
@@ -851,66 +822,65 @@ def main():
                     st.markdown(f"**A{idx}:** {a}")
                     st.markdown("---")
 
-            # 下載完整報告（Text / Word / PDF）
-            st.markdown("---")
+            # 新問題輸入（永遠存在，不會消失）
             if lang == "zh":
-                st.subheader("下載完整報告（包含第一次分析＋所有追問 Q&A）")
+                followup_q = st.text_area(
+                    "請輸入你的追問（可以連續追問多次）",
+                    height=100,
+                    key="followup_input",
+                )
+                ask_btn = st.button("送出追問")
             else:
-                st.subheader("Download full report (initial analysis + all follow-up Q&A)")
+                followup_q = st.text_area(
+                    "Enter your follow-up question (you can ask multiple times)",
+                    height=100,
+                    key="followup_input",
+                )
+                ask_btn = st.button("Ask")
 
-            report_text = build_full_report(lang)
-            if report_text:
-                now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-                txt_name = f"errorfree_report_{now_str}.txt"
-                docx_name = f"errorfree_report_{now_str}.docx"
-                pdf_name = f"errorfree_report_{now_str}.pdf"
-
-                col1, col2, col3 = st.columns(3)
-
-                with col1:
-                    st.download_button(
-                        label="Download TXT",
-                        data=report_text,
-                        file_name=txt_name,
-                        mime="text/plain",
-                    )
-                with col2:
-                    word_bytes = build_word_bytes(report_text)
-                    st.download_button(
-                        label="Download Word",
-                        data=word_bytes,
-                        file_name=docx_name,
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    )
-                with col3:
-                    pdf_bytes = build_pdf_bytes(report_text)
-                    st.download_button(
-                        label="Download PDF",
-                        data=pdf_bytes,
-                        file_name=pdf_name,
-                        mime="application/pdf",
-                    )
-
-            # ======= 底部固定聊天輸入框（st.chat_input） =======
-            if lang == "zh":
-                prompt = st.chat_input("請在此輸入你的追問（按 Enter 送出）")
-            else:
-                prompt = st.chat_input("Enter your follow-up question (Press Enter to send)")
-
-            if prompt:
+            if ask_btn and followup_q.strip():
                 with st.spinner("Thinking..."):
                     answer = run_followup_qa(
                         framework_key=st.session_state.last_framework_key,
                         language=lang,
                         document_text=st.session_state.last_doc_text,
                         analysis_output=st.session_state.last_analysis_output,
-                        user_question=prompt.strip(),
+                        user_question=followup_q.strip(),
                         model_name=model_name,
                     )
-                st.session_state.followup_history.append((prompt.strip(), answer))
+                st.session_state.followup_history.append(
+                    (followup_q.strip(), answer)
+                )
                 save_state_to_disk()
-                st.experimental_rerun()  # 重新 render，讓新 Q&A 出現在歷史區塊中
+                # 立即顯示最新一次
+                st.markdown(
+                    f"**Q{len(st.session_state.followup_history)}:** {followup_q.strip()}"
+                )
+                st.markdown(
+                    f"**A{len(st.session_state.followup_history)}:** {answer}"
+                )
+                st.markdown("---")
+
+        # ======= Download Full Report 按鈕（與 Q&A 並存） =======
+        if st.session_state.analysis_done and st.session_state.last_analysis_output:
+            st.markdown("---")
+            if lang == "zh":
+                st.subheader("下載完整報告（包含第一次分析＋所有追問 Q&A）")
+                report_btn_label = "Download Full Report"
+            else:
+                st.subheader("Download full report (initial analysis + all follow-up Q&A)")
+                report_btn_label = "Download Full Report"
+
+            report_text = build_full_report(lang)
+            if report_text:
+                now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                file_name = f"errorfree_report_{now_str}.txt"
+                st.download_button(
+                    label=report_btn_label,
+                    data=report_text,
+                    file_name=file_name,
+                    mime="text/plain",
+                )
 
 
 if __name__ == "__main__":
