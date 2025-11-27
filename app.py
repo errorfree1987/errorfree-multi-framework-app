@@ -171,7 +171,7 @@ Answer structure in English:
 
 1. Brief summary of the technical content and main design ideas
 2. Potential technical risks (bullet list, each with cause / context / affected scope)
-3. Risk level and impact (High / Medium / Low, with short justification)
+3. Risk level and impact (High/Medium/Low, with short justification)
 4. Concrete mitigation suggestions (design changes, additional checks, tests, documentation, etc.)
 5. Additionally, output a Markdown table with columns:
    | Risk item | Risk level (High/Medium/Low) | Impact description | Mitigation suggestion |
@@ -419,29 +419,48 @@ def main():
         st.session_state.last_analysis_output = ""
     if "followup_history" not in st.session_state:
         st.session_state.followup_history = []
+    if "analysis_truncated" not in st.session_state:
+        st.session_state.analysis_truncated = False
+    if "analysis_max_chars" not in st.session_state:
+        st.session_state.analysis_max_chars = 0
 
-    # -------- 側邊欄：語言切換 --------
+    # =====================================
+    # 側邊欄：語言切換（有分析時鎖定語言）
+    # =====================================
     with st.sidebar:
         current_lang = st.session_state.lang
+        analysis_active = bool(st.session_state.last_analysis_output)
 
-        st.markdown("### Language" if current_lang == "en" else "### 語言")
-        if current_lang == "zh":
-            new_lang = st.radio(
-                "選擇語言",
-                ["zh", "en"],
-                index=0 if current_lang == "zh" else 1,
-                format_func=lambda x: "繁體中文" if x == "zh" else "English",
-            )
+        if analysis_active:
+            # 分析進行中：語言鎖定，不顯示 radio
+            if current_lang == "zh":
+                st.markdown("### 語言")
+                st.caption("目前語言：繁體中文（本次分析期間無法切換語言）")
+            else:
+                st.markdown("### Language")
+                st.caption("Current language: English (language is locked while this analysis is active).")
+            lang = current_lang
         else:
-            new_lang = st.radio(
-                "Select language",
-                ["zh", "en"],
-                index=1 if current_lang == "en" else 0,
-                format_func=lambda x: "Chinese" if x == "zh" else "English",
-            )
+            # 尚未分析，可以自由切換語言
+            if current_lang == "en":
+                st.markdown("### Language")
+                new_lang = st.radio(
+                    "Select language",
+                    ["zh", "en"],
+                    index=1 if current_lang == "en" else 0,
+                    format_func=lambda x: "Chinese" if x == "zh" else "English",
+                )
+            else:
+                st.markdown("### 語言")
+                new_lang = st.radio(
+                    "選擇語言",
+                    ["zh", "en"],
+                    index=0 if current_lang == "zh" else 1,
+                    format_func=lambda x: "繁體中文" if x == "zh" else "English",
+                )
+            lang = new_lang
 
-        st.session_state.lang = new_lang
-        lang = new_lang
+        st.session_state.lang = lang
 
     # -------- 主標題 + Logo --------
     logo_path = Path(__file__).parent / "logo.png"
@@ -494,6 +513,8 @@ def main():
                     st.session_state.last_framework_key = None
                     st.session_state.last_analysis_output = ""
                     st.session_state.followup_history = []
+                    st.session_state.analysis_truncated = False
+                    st.session_state.analysis_max_chars = 0
             else:
                 if role == "free":
                     role_label = "Free (basic)"
@@ -513,6 +534,8 @@ def main():
                     st.session_state.last_framework_key = None
                     st.session_state.last_analysis_output = ""
                     st.session_state.followup_history = []
+                    st.session_state.analysis_truncated = False
+                    st.session_state.analysis_max_chars = 0
         else:
             # 尚未登入
             login_email = st.text_input("Email")
@@ -529,6 +552,8 @@ def main():
                         st.session_state.last_framework_key = None
                         st.session_state.last_analysis_output = ""
                         st.session_state.followup_history = []
+                        st.session_state.analysis_truncated = False
+                        st.session_state.analysis_max_chars = 0
                         st.success("登入成功！")
                     else:
                         st.error("Email 或密碼錯誤。")
@@ -546,6 +571,8 @@ def main():
                         st.session_state.last_framework_key = None
                         st.session_state.last_analysis_output = ""
                         st.session_state.followup_history = []
+                        st.session_state.analysis_truncated = False
+                        st.session_state.analysis_max_chars = 0
                         st.success("Login successful.")
                     else:
                         st.error("Invalid email or password.")
@@ -595,6 +622,27 @@ def main():
                     st.caption(
                         f"Today used: {today_usage} / {daily_limit}; remaining: {remaining}"
                     )
+
+        # ===== 清除本次分析（所有角色都可以） =====
+        if st.session_state.last_analysis_output:
+            if lang == "zh":
+                if st.button("清除本次分析"):
+                    st.session_state.last_doc_text = ""
+                    st.session_state.last_framework_key = None
+                    st.session_state.last_analysis_output = ""
+                    st.session_state.followup_history = []
+                    st.session_state.analysis_truncated = False
+                    st.session_state.analysis_max_chars = 0
+                    st.success("已清除本次分析，您可以重新上傳文件並執行分析。")
+            else:
+                if st.button("Clear current analysis"):
+                    st.session_state.last_doc_text = ""
+                    st.session_state.last_framework_key = None
+                    st.session_state.last_analysis_output = ""
+                    st.session_state.followup_history = []
+                    st.session_state.analysis_truncated = False
+                    st.session_state.analysis_max_chars = 0
+                    st.success("Current analysis cleared. You can upload a new document and run analysis again.")
 
         # ===== Admin 額外資訊（只顯示這個 session） =====
         if st.session_state.user_role == "admin":
@@ -670,8 +718,27 @@ def main():
     else:
         text = ""
 
-    # -------- 第一次分析按鈕 --------
-    if st.button(start_button_label):
+    # =====================================
+    # 第一次分析按鈕（單次分析，按鈕會鎖）
+    # =====================================
+    analysis_locked = bool(st.session_state.last_analysis_output)
+    run_clicked = st.button(start_button_label, disabled=analysis_locked)
+
+    if analysis_locked:
+        if lang == "zh":
+            st.info(
+                "本次文件已完成 AI 分析，為避免覆蓋原始結果，分析按鈕已鎖定。"
+                "若要重新分析新的文件，請先到左側按「清除本次分析」。"
+            )
+        else:
+            st.info(
+                "AI analysis for this document has been completed. "
+                "To avoid overwriting the original result, the analysis button is locked. "
+                "If you want to analyze a new document, please click "
+                "\"Clear current analysis\" in the left sidebar first."
+            )
+
+    if run_clicked and not analysis_locked:
         if st.session_state.user_role is None:
             st.error(warn_no_login)
             return
@@ -691,7 +758,10 @@ def main():
             if lang == "zh":
                 st.error("今天的分析次數已達上限，請明天再試，或使用更高等級帳號。")
             else:
-                st.error("You have reached today's analysis limit. Please try again tomorrow or use a higher tier.")
+                st.error(
+                    "You have reached today's analysis limit. "
+                    "Please try again tomorrow or use a higher tier."
+                )
             return
 
         # 字數上限（可以再調整）
@@ -715,11 +785,17 @@ def main():
         st.session_state.last_framework_key = framework_key
         st.session_state.last_analysis_output = ai_output
         st.session_state.followup_history = []
+        st.session_state.analysis_truncated = truncated
+        st.session_state.analysis_max_chars = max_chars
 
+    # -------- 顯示分析結果（只要有就顯示，不會因為互動消失） --------
+    if st.session_state.last_analysis_output:
         st.markdown("---")
         st.subheader(result_title)
-        st.write(ai_output)
+        st.write(st.session_state.last_analysis_output)
 
+        truncated = st.session_state.get("analysis_truncated", False)
+        max_chars = st.session_state.get("analysis_max_chars", 0)
         if truncated:
             if lang == "zh":
                 st.caption(
