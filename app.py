@@ -2,6 +2,7 @@ import os
 import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple
+from io import BytesIO
 
 import streamlit as st
 import pdfplumber
@@ -393,515 +394,64 @@ def build_full_report(lang: str) -> str:
 
 
 # =========================================
+# 工具：轉成 Word（.docx）與 PDF（.pdf）
+# =========================================
+def build_full_report_docx(lang: str) -> bytes:
+    """
+    用 python-docx 把完整報告轉成 .docx
+    """
+    text = build_full_report(lang)
+    doc = Document()
+    for line in text.split("\n"):
+        doc.add_paragraph(line)
+    buf = BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def build_full_report_pdf(lang: str):
+    """
+    嘗試用 reportlab 產生簡單的 PDF。
+    若未安裝 reportlab，回傳 (None, error_message)
+    若成功，回傳 (pdf_bytes, None)
+    """
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfgen import canvas
+    except ImportError:
+        return None, "目前伺服器尚未安裝 reportlab，因此無法產生 PDF 檔案。請管理者於 requirements.txt 加入 reportlab 再重新部署。"
+
+    text = build_full_report(lang)
+    buf = BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    width, height = A4
+
+    x = 40
+    y = height - 40
+    line_height = 14
+
+    for line in text.split("\n"):
+        if y < 40:
+            c.showPage()
+            y = height - 40
+        # 避免行太長出界，簡單截斷
+        c.drawString(x, y, line[:2000])
+        y -= line_height
+
+    c.save()
+    buf.seek(0)
+    return buf.getvalue(), None
+
+
+# =========================================
 # Streamlit 主程式
 # =========================================
 def main():
     st.set_page_config(
         page_title="Error-Free Multi-framework AI Document Analyzer",
         layout="wide",
-    )
-
-    # -------- Session 初始狀態 --------
-    if "user_email" not in st.session_state:
-        st.session_state.user_email = None
-        st.session_state.user_role = None
-        st.session_state.usage_date = None
-        st.session_state.usage_count = 0
-
-    if "lang" not in st.session_state:
-        st.session_state.lang = "zh"
-
-    if "last_doc_text" not in st.session_state:
-        st.session_state.last_doc_text = ""
-    if "last_framework_key" not in st.session_state:
-        st.session_state.last_framework_key = None
-    if "last_analysis_output" not in st.session_state:
-        st.session_state.last_analysis_output = ""
-    if "followup_history" not in st.session_state:
-        st.session_state.followup_history = []
-    if "analysis_truncated" not in st.session_state:
-        st.session_state.analysis_truncated = False
-    if "analysis_max_chars" not in st.session_state:
-        st.session_state.analysis_max_chars = 0
-
-    # =====================================
-    # 側邊欄：語言切換（有分析時鎖定語言）
-    # =====================================
-    with st.sidebar:
-        current_lang = st.session_state.lang
-        analysis_active = bool(st.session_state.last_analysis_output)
-
-        if analysis_active:
-            # 分析進行中：語言鎖定，不顯示 radio
-            if current_lang == "zh":
-                st.markdown("### 語言")
-                st.caption("目前語言：繁體中文（本次分析期間無法切換語言）")
-            else:
-                st.markdown("### Language")
-                st.caption("Current language: English (language is locked while this analysis is active).")
-            lang = current_lang
-        else:
-            # 尚未分析，可以自由切換語言
-            if current_lang == "en":
-                st.markdown("### Language")
-                new_lang = st.radio(
-                    "Select language",
-                    ["zh", "en"],
-                    index=1 if current_lang == "en" else 0,
-                    format_func=lambda x: "Chinese" if x == "zh" else "English",
-                )
-            else:
-                st.markdown("### 語言")
-                new_lang = st.radio(
-                    "選擇語言",
-                    ["zh", "en"],
-                    index=0 if current_lang == "zh" else 1,
-                    format_func=lambda x: "繁體中文" if x == "zh" else "English",
-                )
-            lang = new_lang
-
-        st.session_state.lang = lang
-
-    # -------- 主標題 + Logo --------
-    logo_path = Path(__file__).parent / "logo.png"
-    col_logo, col_title = st.columns([1, 4])
-
-    with col_logo:
-        if logo_path.exists():
-            st.image(str(logo_path), use_column_width=True)
-
-    with col_title:
-        if lang == "zh":
-            st.title("零錯誤多框架 AI 文件分析器")
-            st.caption("邱強博士零錯誤研發團隊1987年至今")
-        else:
-            st.title("Error-Free Multi-framework AI Document Analyzer")
-            st.caption("Dr. Chong Chiu’s Error-Free Team — Advancing Error-Free Practices")
-
-    st.markdown("---")
-
-    # -------- 再回到側邊欄：登入與框架設定 --------
-    with st.sidebar:
-        # ===== 帳號區 =====
-        if lang == "zh":
-            st.markdown("### 帳號")
-        else:
-            st.markdown("### Account")
-
-        # 已登入
-        if st.session_state.user_email:
-            email = st.session_state.user_email
-            role = st.session_state.user_role
-            model_name, daily_limit = get_model_and_limit(role)
-
-            if lang == "zh":
-                if role == "free":
-                    role_label = "Free（一般測試）"
-                elif role == "advanced":
-                    role_label = "Advanced（進階）"
-                elif role == "pro":
-                    role_label = "Pro（內部專業帳號）"
-                else:
-                    role_label = "Admin（管理者）"
-                st.success(f"已登入：{email}（{role_label}）")
-                if st.button("登出"):
-                    st.session_state.user_email = None
-                    st.session_state.user_role = None
-                    st.session_state.usage_date = None
-                    st.session_state.usage_count = 0
-                    st.session_state.last_doc_text = ""
-                    st.session_state.last_framework_key = None
-                    st.session_state.last_analysis_output = ""
-                    st.session_state.followup_history = []
-                    st.session_state.analysis_truncated = False
-                    st.session_state.analysis_max_chars = 0
-            else:
-                if role == "free":
-                    role_label = "Free (basic)"
-                elif role == "advanced":
-                    role_label = "Advanced"
-                elif role == "pro":
-                    role_label = "Pro (internal)"
-                else:
-                    role_label = "Admin"
-                st.success(f"Signed in as: {email} ({role_label})")
-                if st.button("Log out"):
-                    st.session_state.user_email = None
-                    st.session_state.user_role = None
-                    st.session_state.usage_date = None
-                    st.session_state.usage_count = 0
-                    st.session_state.last_doc_text = ""
-                    st.session_state.last_framework_key = None
-                    st.session_state.last_analysis_output = ""
-                    st.session_state.followup_history = []
-                    st.session_state.analysis_truncated = False
-                    st.session_state.analysis_max_chars = 0
-        else:
-            # 尚未登入
-            login_email = st.text_input("Email")
-            if lang == "zh":
-                login_password = st.text_input("密碼", type="password")
-                if st.button("登入"):
-                    account = ACCOUNTS.get(login_email)
-                    if account and account["password"] == login_password:
-                        st.session_state.user_email = login_email
-                        st.session_state.user_role = account["role"]
-                        st.session_state.usage_date = None
-                        st.session_state.usage_count = 0
-                        st.session_state.last_doc_text = ""
-                        st.session_state.last_framework_key = None
-                        st.session_state.last_analysis_output = ""
-                        st.session_state.followup_history = []
-                        st.session_state.analysis_truncated = False
-                        st.session_state.analysis_max_chars = 0
-                        st.success("登入成功！")
-                    else:
-                        st.error("Email 或密碼錯誤。")
-                st.info("目前僅開放授權帳號使用，請向管理者申請帳號。")
-            else:
-                login_password = st.text_input("Password", type="password")
-                if st.button("Log in"):
-                    account = ACCOUNTS.get(login_email)
-                    if account and account["password"] == login_password:
-                        st.session_state.user_email = login_email
-                        st.session_state.user_role = account["role"]
-                        st.session_state.usage_date = None
-                        st.session_state.usage_count = 0
-                        st.session_state.last_doc_text = ""
-                        st.session_state.last_framework_key = None
-                        st.session_state.last_analysis_output = ""
-                        st.session_state.followup_history = []
-                        st.session_state.analysis_truncated = False
-                        st.session_state.analysis_max_chars = 0
-                        st.success("Login successful.")
-                    else:
-                        st.error("Invalid email or password.")
-                st.info("Access is limited to authorized accounts. Please contact the administrator.")
-
-        st.markdown("---")
-
-        # ===== 框架選擇 =====
-        if lang == "zh":
-            st.markdown("### 選擇框架")
-            framework_label = "框架"
-        else:
-            st.markdown("### Analysis framework")
-            framework_label = "Framework"
-
-        framework_key = st.selectbox(
-            framework_label,
-            options=list(FRAMEWORKS.keys()),
-            format_func=lambda k: FRAMEWORKS[k]["name_zh"]
-            if lang == "zh"
-            else FRAMEWORKS[k]["name_en"],
-        )
-
-        # ===== 使用次數資訊（登入後） =====
-        if st.session_state.user_role is not None:
-            model_name, daily_limit = get_model_and_limit(st.session_state.user_role)
-            today = datetime.date.today()
-            if st.session_state.usage_date != today:
-                today_usage = 0
-            else:
-                today_usage = st.session_state.usage_count
-            remaining = None if daily_limit is None else max(daily_limit - today_usage, 0)
-
-            if lang == "zh":
-                st.caption(f"目前使用模型：**{model_name}**")
-                if daily_limit is None:
-                    st.caption(f"今日已用次數：{today_usage}（無上限）")
-                else:
-                    st.caption(
-                        f"今日已用次數：{today_usage} / {daily_limit}，剩餘：{remaining}"
-                    )
-            else:
-                st.caption(f"Current model: **{model_name}**")
-                if daily_limit is None:
-                    st.caption(f"Today used: {today_usage} (no limit)")
-                else:
-                    st.caption(
-                        f"Today used: {today_usage} / {daily_limit}; remaining: {remaining}"
-                    )
-
-        # ===== 清除本次分析（所有角色都可以） =====
-        if st.session_state.last_analysis_output:
-            if lang == "zh":
-                if st.button("清除本次分析"):
-                    st.session_state.last_doc_text = ""
-                    st.session_state.last_framework_key = None
-                    st.session_state.last_analysis_output = ""
-                    st.session_state.followup_history = []
-                    st.session_state.analysis_truncated = False
-                    st.session_state.analysis_max_chars = 0
-                    st.success("已清除本次分析，您可以重新上傳文件並執行分析。")
-            else:
-                if st.button("Clear current analysis"):
-                    st.session_state.last_doc_text = ""
-                    st.session_state.last_framework_key = None
-                    st.session_state.last_analysis_output = ""
-                    st.session_state.followup_history = []
-                    st.session_state.analysis_truncated = False
-                    st.session_state.analysis_max_chars = 0
-                    st.success("Current analysis cleared. You can upload a new document and run analysis again.")
-
-        # ===== Admin 額外資訊（只顯示這個 session） =====
-        if st.session_state.user_role == "admin":
-            st.markdown("---")
-            if lang == "zh":
-                st.markdown("### 管理者資訊（本 Session）")
-                st.write(
-                    f"Session 使用日期 = {st.session_state.usage_date}, "
-                    f"今日次數 = {st.session_state.usage_count}"
-                )
-                if st.button("重置本 Session 今日次數"):
-                    today = datetime.date.today()
-                    st.session_state.usage_date = today
-                    st.session_state.usage_count = 0
-                    st.success("已重置本 Session 的今日使用次數。")
-            else:
-                st.markdown("### Admin panel (this session)")
-                st.write(
-                    f"Session usage_date = {st.session_state.usage_date}, "
-                    f"today usage_count = {st.session_state.usage_count}"
-                )
-                if st.button("Reset today's usage (this session)"):
-                    today = datetime.date.today()
-                    st.session_state.usage_date = today
-                    st.session_state.usage_count = 0
-                    st.success("Today's usage has been reset for this session.")
-
-    # -------- 主畫面：框架說明 + 上傳 --------
-    fw = FRAMEWORKS[framework_key]
-
-    if lang == "zh":
-        st.markdown(
-            "此平台專為專案文件、技術方案與關鍵溝通內容設計，"
-            "結合 Error-Free® 多種專業框架與 OpenAI 模型，協助你在事前發現遺漏與風險，降低錯誤成本。"
-        )
-        st.caption(f"目前選用框架：{fw['name_zh']}")
-        st.markdown(f"**框架說明：** {fw['description_zh']}")
-        upload_label = "上傳要分析的文件（支援 PDF、Word .docx、純文字 .txt）"
-        start_button_label = "開始進行 AI 分析"
-        warn_no_file = "請先上傳一個文件。"
-        warn_no_login = "請先登入授權帳號，才可執行分析。"
-        result_title = "AI 分析結果"
-        preview_label = "文件預覽"
-    else:
-        st.markdown(
-            "This platform is designed for project documents, technical proposals and critical communication. "
-            "Powered by Error-Free® frameworks and OpenAI models, it helps you detect omissions and risks "
-            "before they turn into costly errors."
-        )
-        st.caption(f"Current framework: {fw['name_en']}")
-        st.markdown(f"**Framework description:** {fw['description_en']}")
-        upload_label = "Upload a document (PDF, Word .docx, or plain .txt)"
-        start_button_label = "Run AI analysis"
-        warn_no_file = "Please upload a document first."
-        warn_no_login = "Please log in with an authorized account before running analysis."
-        result_title = "AI analysis result"
-        preview_label = "Document preview"
-
-    st.markdown("---")
-
-    uploaded_file = st.file_uploader(
-        upload_label,
-        type=["pdf", "docx", "txt"],
-    )
-
-    if uploaded_file is not None:
-        text = read_file_to_text(uploaded_file)
-        if lang == "zh":
-            st.info("✅ 文件已上傳並讀取完成。下方為前 1,000 字預覽，實際分析會使用更長內容。")
-        else:
-            st.info("✅ File uploaded and parsed. Below is a preview of the first 1,000 characters.")
-        st.text_area(preview_label, value=text[:1000], height=200)
-    else:
-        text = ""
-
-    # =====================================
-    # 第一次分析按鈕（單次分析，按鈕會鎖）
-    # =====================================
-    analysis_locked = bool(st.session_state.last_analysis_output)
-    run_clicked = st.button(start_button_label, disabled=analysis_locked)
-
-    if analysis_locked:
-        if lang == "zh":
-            st.info(
-                "本次文件已完成 AI 分析，為避免覆蓋原始結果，分析按鈕已鎖定。"
-                "若要重新分析新的文件，請先到左側按「清除本次分析」。"
-            )
-        else:
-            st.info(
-                "AI analysis for this document has been completed. "
-                "To avoid overwriting the original result, the analysis button is locked. "
-                "If you want to analyze a new document, please click "
-                "\"Clear current analysis\" in the left sidebar first."
-            )
-
-    if run_clicked and not analysis_locked:
-        if st.session_state.user_role is None:
-            st.error(warn_no_login)
-            return
-
-        if not text:
-            st.warning(warn_no_file)
-            return
-
-        today = datetime.date.today()
-        if st.session_state.usage_date != today:
-            st.session_state.usage_date = today
-            st.session_state.usage_count = 0
-
-        model_name, daily_limit = get_model_and_limit(st.session_state.user_role)
-
-        if daily_limit is not None and st.session_state.usage_count >= daily_limit:
-            if lang == "zh":
-                st.error("今天的分析次數已達上限，請明天再試，或使用更高等級帳號。")
-            else:
-                st.error(
-                    "You have reached today's analysis limit. "
-                    "Please try again tomorrow or use a higher tier."
-                )
-            return
-
-        # 字數上限（可以再調整）
-        max_chars = 120000
-        if len(text) > max_chars:
-            text_to_use = text[:max_chars]
-            truncated = True
-        else:
-            text_to_use = text
-            truncated = False
-
-        with st.spinner("正在進行 AI 分析..." if lang == "zh" else "Running AI analysis..."):
-            ai_output = run_llm_analysis(
-                framework_key, lang, text_to_use, model_name
-            )
-
-        st.session_state.usage_count += 1
-
-        # 儲存，供後續追問與下載使用
-        st.session_state.last_doc_text = text_to_use
-        st.session_state.last_framework_key = framework_key
-        st.session_state.last_analysis_output = ai_output
-        st.session_state.followup_history = []
-        st.session_state.analysis_truncated = truncated
-        st.session_state.analysis_max_chars = max_chars
-
-    # -------- 顯示分析結果（只要有就顯示，不會因為互動消失） --------
-    if st.session_state.last_analysis_output:
-        st.markdown("---")
-        st.subheader(result_title)
-        st.write(st.session_state.last_analysis_output)
-
-        truncated = st.session_state.get("analysis_truncated", False)
-        max_chars = st.session_state.get("analysis_max_chars", 0)
-        if truncated:
-            if lang == "zh":
-                st.caption(
-                    f"（提示：文件篇幅較長，為了確保穩定度與成本可控，本次僅分析前 {max_chars:,} 個字元。"
-                    "若有更長篇的專案文件，可考慮分段上傳分析。）"
-                )
-            else:
-                st.caption(
-                    f"(Note: The document is long. To ensure stability and cost control, "
-                    f"only the first {max_chars:,} characters were analyzed. "
-                    "For very long documents, consider splitting into multiple uploads.)"
-                )
-
-    # -------- 後續追問 / Q&A 區塊 --------
-    if st.session_state.last_analysis_output:
-        st.markdown("---")
-        if lang == "zh":
-            st.subheader("後續互動 / 深入提問")
-            st.markdown(
-                "根據 **上方的 AI 分析結果** 與 **原始文件內容**，你可以在這裡向「Error-Free® 文件顧問」"
-                "提出進一步問題，例如：優先順序、補寫句子、模擬客戶問題、實務落地建議等。"
-            )
-        else:
-            st.subheader("Follow-up Q&A")
-            st.markdown(
-                "Based on the **analysis above** and the **original document**, you can ask "
-                "follow-up questions to the Error-Free® consultant here. For example: "
-                "prioritization, suggested wording, example text, or practical actions."
-            )
-
-        # 顯示歷史 Q&A
-        if st.session_state.followup_history:
-            for i, (q, a) in enumerate(st.session_state.followup_history, start=1):
-                if lang == "zh":
-                    st.markdown(f"**Q{i}：{q}**")
-                    st.markdown(f"**A{i}：**")
-                else:
-                    st.markdown(f"**Q{i}: {q}**")
-                    st.markdown(f"**A{i}:**")
-                st.write(a)
-                st.markdown("---")
-
-        # 問題輸入
-        if lang == "zh":
-            followup_question = st.text_area(
-                "請輸入你想追問的問題（與本次文件與分析相關）"
-            )
-            ask_label = "送出提問"
-            warn_need_q = "請先輸入一個問題。"
-            warn_need_login = "請先登入授權帳號，才可使用後續提問功能。"
-        else:
-            followup_question = st.text_area(
-                "Enter your follow-up question (related to this document and analysis)"
-            )
-            ask_label = "Send question"
-            warn_need_q = "Please enter a question first."
-            warn_need_login = "Please log in before using follow-up Q&A."
-
-        if st.button(ask_label):
-            if st.session_state.user_role is None:
-                st.error(warn_need_login)
-            elif not followup_question.strip():
-                st.warning(warn_need_q)
-            else:
-                model_name, _ = get_model_and_limit(st.session_state.user_role)
-                with st.spinner("正在產生回覆..." if lang == "zh" else "Generating answer..."):
-                    answer = run_followup_qa(
-                        framework_key=st.session_state.last_framework_key,
-                        language=lang,
-                        document_text=st.session_state.last_doc_text,
-                        analysis_output=st.session_state.last_analysis_output,
-                        user_question=followup_question.strip(),
-                        model_name=model_name,
-                    )
-                st.session_state.followup_history.append(
-                    (followup_question.strip(), answer)
-                )
-
-                # 立即顯示最新一輪
-                st.markdown("---")
-                if lang == "zh":
-                    st.markdown(f"**Q{len(st.session_state.followup_history)}：{followup_question.strip()}**")
-                    st.markdown(f"**A{len(st.session_state.followup_history)}：**")
-                else:
-                    st.markdown(f"**Q{len(st.session_state.followup_history)}: {followup_question.strip()}**")
-                    st.markdown(f"**A{len(st.session_state.followup_history)}:**")
-                st.write(answer)
-
-        # -------- 下載完整報告 --------
-        full_report = build_full_report(lang)
-        if full_report:
-            if lang == "zh":
-                st.download_button(
-                    label="下載完整報告（文字檔）",
-                    data=full_report,
-                    file_name="errorfree_full_report.txt",
-                    mime="text/plain",
-                )
-            else:
-                st.download_button(
-                    label="Download full report (text file)",
-                    data=full_report,
-                    file_name="errorfree_full_report.txt",
-                    mime="text/plain",
-                )
+    """
 
 
-if __name__ == "__main__":
-    main()
+::contentReference[oaicite:1]{index=1}
