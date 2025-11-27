@@ -16,9 +16,11 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # 簡易帳號系統（你可以在這裡新增/修改帳號）
 # ------------------------------------
 # role 說明：
-#   - "free": 使用 gpt-4.1-mini，每天 5 次
-#   - "advanced": 使用 gpt-4.1，每天 10 次
-#   - "pro": 使用 gpt-5.1，次數不限（或你自己限制）
+#   - "guest": 訪客（無帳號），使用 gpt-4.1-mini，每天 2 次
+#   - "free":  一般註冊 / 測試帳號，gpt-4.1-mini，每天 5 次
+#   - "advanced": 進階帳號，gpt-4.1，每天 10 次
+#   - "pro":  企業 / 內部專業帳號，gpt-5.1，次數不限（或你自己限制）
+#   - "admin": 管理者帳號，與 pro 同等，但多顯示管理資訊
 ACCOUNTS = {
     "free@example.com": {
         "password": "free123",
@@ -32,8 +34,11 @@ ACCOUNTS = {
         "password": "pro123",
         "role": "pro",
     },
+    "admin@example.com": {
+        "password": "admin123",
+        "role": "admin",
+    },
 }
-
 
 # ------------------------------------
 # 多框架設定
@@ -43,15 +48,15 @@ FRAMEWORKS: Dict[str, Dict] = {
         "name_zh": "Error-Free® 遺漏錯誤檢查框架",
         "name_en": "Error-Free® Omission Error Check Framework",
         "description_zh": (
-            "使用 12 種遺漏檢查方法與 12 類遺漏錯誤型態（O1–O12），"
-            "系統性檢查文件有沒有「該出現卻沒出現」的內容。"
+            "針對文件中「該出現卻沒出現」的內容進行系統性盤點，"
+            "運用 Error-Free® 的遺漏檢查觀點，找出可能被忽略的關鍵資訊。"
         ),
         "description_en": (
-            "Uses 12 omission-check methods and 12 omission error types (O1–O12) "
-            "to systematically find content that SHOULD be present but is missing."
+            "Systematically checks for content that SHOULD be present but is missing, "
+            "using the Error-Free® omission perspective to reveal overlooked elements."
         ),
         "wrapper_zh": """
-你是一位 Error-Free® 遺漏錯誤檢查專家，精通 12 種遺漏檢查方法與 12 類遺漏錯誤型態（O1–O12）。
+你是一位 Error-Free® 遺漏錯誤檢查專家，精通遺漏檢查方法與遺漏錯誤型態。
 
 請你扮演「文件顧問」，用這個框架來分析輸入的文件，找出：
 1. 文件可能遺漏的重要內容、條件、假設、角色、步驟、風險或例外情況。
@@ -65,19 +70,18 @@ FRAMEWORKS: Dict[str, Dict] = {
 
 輸出格式請用繁體中文，依照下列結構：
 
-一、文件簡要摘要（3–5 行）
+一、文件重點摘要（3–5 行）
 
 二、可能的遺漏錯誤（條列敘述，每點說明「哪裡遺漏」與「為何重要」）
 
-三、具體修正建議（逐點對應上面的遺漏，提出可直接採用的補寫句子或段落）
+三、具體修正與補強建議（逐點對應上面的遺漏，提出可直接採用的補寫句子、段落或檢查項目）
 
 四、請額外產出一個 Markdown 表格，欄位為：
 | 遺漏類別/主題 | 發現內容（簡述） | 可能影響 | 建議補強方向 |
-表格中每一列對應一個重要的遺漏點，讓使用者可以快速掃描。
+表格中每一列對應一個重要的遺漏點，讓使用者可以快速掃描與追蹤。
         """,
         "wrapper_en": """
-You are an Error-Free® omission error expert, using 12 omission-check methods
-and 12 omission error types (O1–O12).
+You are an Error-Free® omission error expert.
 
 Your job is to review the document and identify:
 1. Important information, conditions, assumptions, roles, steps, risks, or exceptions that SHOULD
@@ -93,24 +97,24 @@ Please:
 
 Answer structure in English:
 
-1. Brief summary of the document (3–5 sentences)
+1. Concise summary of the document (3–5 sentences)
 2. Potential omission errors (bullet list, each with “what is missing” and “why it matters”)
 3. Concrete revision suggestions (bullet list with sample wording or specific guidance)
 4. Additionally, output a Markdown table with columns:
    | Category/Theme | Finding (short) | Potential impact | Recommendation |
-Each row should correspond to one important omission so that the user can quickly scan.
+Each row should correspond to one important omission so that the user can quickly scan and track it.
         """,
     },
     "technical": {
         "name_zh": "Error-Free® 技術風險檢查框架",
         "name_en": "Error-Free® Technical Risk Check Framework",
         "description_zh": (
-            "從技術正確性、假設條件、邊界情況、相容性、安全性與可維護性等面向，"
-            "檢查方案或文件中可能被忽略的技術風險。"
+            "從技術假設、邊界條件、相容性、安全性與可維護性等關鍵面向出發，"
+            "協助識別方案或文件中可能被忽略的技術風險與隱患。"
         ),
         "description_en": (
-            "Checks technical risks from perspectives such as correctness, assumptions, "
-            "edge cases, compatibility, safety and maintainability."
+            "Identifies hidden technical risks from assumptions, edge cases, compatibility, "
+            "safety and maintainability perspectives in your solution or documentation."
         ),
         "wrapper_zh": """
 你是一位 Error-Free® 技術風險檢查專家，擅長在需求文件、設計文件、方案提案中找出
@@ -125,7 +129,7 @@ Each row should correspond to one important omission so that the user can quickl
 
 輸出格式（繁體中文）請用：
 
-一、技術內容簡要摘要
+一、技術內容與設計重點的簡要摘要
 
 二、可能的技術風險（條列說明，每點包含：風險內容、成因、涉及範圍）
 
@@ -135,7 +139,7 @@ Each row should correspond to one important omission so that the user can quickl
 
 五、請額外產出一個 Markdown 表格，欄位為：
 | 風險項目 | 風險等級（高/中/低） | 影響說明 | 建議對策 |
-表格列出你認為最值得優先處理的風險項目。
+表格列出你認為最值得優先處理的風險項目，方便後續追蹤與管理。
         """,
         "wrapper_en": """
 You are an Error-Free® technical risk review expert. Your job is to find hidden
@@ -150,17 +154,16 @@ Please review the document and analyze (when applicable):
 
 Answer structure in English:
 
-1. Brief summary of the technical content
-2. Potential technical risks (bullet list, each with cause / context)
+1. Brief summary of the technical content and main design ideas
+2. Potential technical risks (bullet list, each with cause / context / affected scope)
 3. Risk level and impact (High / Medium / Low, with short justification)
 4. Concrete mitigation suggestions (design changes, additional checks, tests, documentation, etc.)
 5. Additionally, output a Markdown table with columns:
    | Risk item | Risk level (High/Medium/Low) | Impact description | Mitigation suggestion |
-Each row should correspond to one important risk that should be prioritized.
+Each row should correspond to one important risk that should be prioritized for follow-up.
         """,
     },
 }
-
 
 # ------------------------------------
 # 工具：從上傳檔案讀取文字
@@ -195,7 +198,7 @@ def read_file_to_text(uploaded_file) -> str:
 def get_model_and_limit(role: str):
     """
     回傳 (model_name, daily_limit)
-    role 可以是 "guest", "free", "advanced", "pro"
+    role 可以是 "guest", "free", "advanced", "pro", "admin"
     """
     if role == "guest":
         return "gpt-4.1-mini", 2
@@ -205,6 +208,8 @@ def get_model_and_limit(role: str):
         return "gpt-4.1", 10
     if role == "pro":
         return "gpt-5.1", None  # None 代表不限制
+    if role == "admin":
+        return "gpt-5.1", None
     # fallback
     return "gpt-4.1-mini", 2
 
@@ -246,7 +251,7 @@ def run_llm_analysis(
 # ------------------------------------
 def main():
     st.set_page_config(
-        page_title="Error-Free® Multi-framework AI Document Analyzer",
+        page_title="Error-Free® AI 文件風險稽核平台｜Multi-framework Analyzer",
         layout="wide",
     )
 
@@ -257,7 +262,7 @@ def main():
         st.session_state.usage_date = None
         st.session_state.usage_count = 0
 
-    # 側邊欄：登入區 + 語言 + 框架
+    # 側邊欄：登入區 + 語言 + 框架 + 使用資訊
     with st.sidebar:
         st.markdown("### 帳號 / Account")
 
@@ -266,13 +271,15 @@ def main():
             email = st.session_state.user_email
             role = st.session_state.user_role
             if role == "guest":
-                role_label = "訪客"
+                role_label = "訪客 Guest"
             elif role == "free":
                 role_label = "Free"
             elif role == "advanced":
                 role_label = "Advanced"
-            else:
+            elif role == "pro":
                 role_label = "Pro"
+            else:
+                role_label = "Admin（管理者）"
 
             st.success(f"已登入：{email}（{role_label}）")
             if st.button("登出 / Log out"):
@@ -314,7 +321,7 @@ def main():
         )
 
         st.markdown("---")
-        st.markdown("### 選擇框架 / Choose framework")
+        st.markdown("### 分析框架 / Analysis framework")
 
         framework_key = st.selectbox(
             "Framework",
@@ -326,38 +333,78 @@ def main():
 
         # 顯示目前使用的模型與次數限制
         model_name, daily_limit = get_model_and_limit(st.session_state.user_role)
+
+        # 計算今日使用次數 / 剩餘次數
+        today = datetime.date.today()
+        if st.session_state.usage_date != today:
+            # 這裡只更新顯示，不重設，重設會在按分析時真正處理
+            today_usage = 0
+        else:
+            today_usage = st.session_state.usage_count
+
+        if daily_limit is None:
+            remaining = None
+        else:
+            remaining = max(daily_limit - today_usage, 0)
+
         if lang == "zh":
             st.caption(f"目前使用模型：**{model_name}**")
             if daily_limit is None:
-                st.caption("每日分析次數：不限制（請留意 API 成本）")
+                st.caption(f"今日已用次數：{today_usage}（無上限，請留意 API 成本）")
             else:
-                st.caption(f"每日分析次數上限：{daily_limit} 次")
+                st.caption(
+                    f"今日已用次數：{today_usage} 次／上限 {daily_limit} 次；剩餘：{remaining} 次"
+                )
         else:
             st.caption(f"Current model: **{model_name}**")
             if daily_limit is None:
-                st.caption("Daily analysis limit: unlimited (be mindful of API cost)")
+                st.caption(f"Today used: {today_usage} (no daily limit; be mindful of API cost)")
             else:
-                st.caption(f"Daily analysis limit: {daily_limit} runs per day")
+                st.caption(
+                    f"Today used: {today_usage} / {daily_limit}; remaining: {remaining}"
+                )
+
+        # 若為管理者，顯示一些額外資訊
+        if st.session_state.user_role == "admin":
+            st.markdown("---")
+            st.markdown("### 管理者資訊 / Admin panel")
+            st.write(
+                f"Session 狀態：使用日期 = {st.session_state.usage_date}, "
+                f"今日已用次數 = {st.session_state.usage_count}"
+            )
+            if st.button("重置本 Session 今日使用次數 / Reset today's usage for this session"):
+                st.session_state.usage_date = today
+                st.session_state.usage_count = 0
+                st.success("已重置本 Session 的今日使用次數。")
 
     fw = FRAMEWORKS[framework_key]
 
-    # 主畫面
+    # 主畫面：商業版文案
     if lang == "zh":
-        st.title("Error-Free® 多框架 AI 文件分析器")
-        st.caption(f"目前框架：{fw['name_zh']}")
-        st.markdown(f"**說明：** {fw['description_zh']}")
-        upload_label = "上傳要分析的文件（PDF, Word .docx, 或純文字 .txt）"
-        start_button_label = "開始分析"
+        st.title("Error-Free® AI 文件風險稽核平台（多框架）")
+        st.markdown(
+            "這是一個專為專案文件、技術方案與關鍵溝通內容設計的 AI 輔助審查工具，"
+            "結合 Error-Free® 的多種專業框架，協助你在事前發現遺漏與風險，降低錯誤成本。"
+        )
+        st.caption(f"目前選用框架：**{fw['name_zh']}**")
+        st.markdown(f"**框架說明：** {fw['description_zh']}")
+        upload_label = "上傳要分析的文件（支援 PDF、Word .docx、純文字 .txt）"
+        start_button_label = "開始進行 AI 分析"
         warn_no_file = "請先上傳一個文件。"
-        result_title = "分析結果"
+        result_title = "AI 分析結果"
     else:
-        st.title("Error-Free® Multi-framework AI Document Analyzer")
-        st.caption(f"Current framework: {fw['name_en']}")
-        st.markdown(f"**Description:** {fw['description_en']}")
-        upload_label = "Upload a document to analyze (PDF, Word .docx, or plain .txt)"
-        start_button_label = "Start analysis"
+        st.title("Error-Free® AI Document Risk Audit Platform (Multi-framework)")
+        st.markdown(
+            "This platform is designed for project documents, technical proposals and critical communication. "
+            "Powered by Error-Free® frameworks and OpenAI models, it helps you detect omissions and risks "
+            "before they turn into costly errors."
+        )
+        st.caption(f"Current framework: **{fw['name_en']}**")
+        st.markdown(f"**Framework description:** {fw['description_en']}")
+        upload_label = "Upload a document (PDF, Word .docx, or plain .txt)"
+        start_button_label = "Run AI analysis"
         warn_no_file = "Please upload a document first."
-        result_title = "Analysis result"
+        result_title = "AI analysis result"
 
     st.markdown("---")
 
@@ -369,11 +416,11 @@ def main():
     if uploaded_file is not None:
         text = read_file_to_text(uploaded_file)
         if lang == "zh":
-            st.info("✅ 文件已上傳並讀取完成。下方可以看到前 1,000 字預覽。")
+            st.info("✅ 文件已上傳並讀取完成。下方為前 1,000 字預覽，實際分析會使用更長內容。")
         else:
-            st.info("✅ File uploaded and parsed. Preview of the first 1,000 characters below.")
+            st.info("✅ File uploaded and parsed. Below is a preview of the first 1,000 characters.")
         st.text_area(
-            "Document preview",
+            "Document preview / 文件預覽",
             value=text[:1000],
             height=200,
         )
@@ -385,10 +432,9 @@ def main():
         if not text:
             st.warning(warn_no_file)
         else:
-            # 檢查每日使用次數
+            # 檢查每日使用次數（在按下分析時才正式重置）
             today = datetime.date.today()
             if st.session_state.usage_date != today:
-                # 新的一天，重置計數
                 st.session_state.usage_date = today
                 st.session_state.usage_count = 0
 
@@ -403,7 +449,7 @@ def main():
                 return
 
             # 避免一次丟太多內容，設定較大的上限（字元）
-            max_chars = 40000
+            max_chars = 120000  # 提升上限：12 萬字元，足夠多數實務文件使用
             if len(text) > max_chars:
                 text_to_use = text[:max_chars]
                 truncated = True
@@ -426,14 +472,16 @@ def main():
             if truncated:
                 if lang == "zh":
                     st.caption(
-                        f"（提示：文件很長，為了避免超過模型限制，本次僅分析前 {max_chars:,} 個字元。）"
+                        f"（提示：文件篇幅較長，為了確保穩定度與成本可控，本次僅分析前 {max_chars:,} 個字元。"
+                        "若有更長篇的專案文件，可考慮分段上傳分析。）"
                     )
                 else:
                     st.caption(
-                        f"(Note: The document is long. For safety, only the first {max_chars:,} characters were analyzed.)"
+                        f"(Note: The document is long. To ensure stability and cost control, "
+                        f"only the first {max_chars:,} characters were analyzed. "
+                        "For very long documents, consider splitting into multiple uploads.)"
                     )
 
 
 if __name__ == "__main__":
     main()
-
