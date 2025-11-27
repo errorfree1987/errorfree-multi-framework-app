@@ -372,7 +372,7 @@ def main():
             st.caption("邱強博士零錯誤研發團隊1987年至今")
         else:
             st.title("Error-Free Multi-framework AI Document Analyzer")
-            st.caption("Dr. Chong Chiu’s Error-Free Team — Advancing Error-Free Practices")
+            st.caption("Dr. Chong Chiu’s Error-Free Team — Advancing Error-Free Practices since 1987")
 
     st.markdown("---")
 
