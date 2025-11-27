@@ -16,21 +16,24 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # -----------------------------
 # 帳號設定（請把密碼改成你自己的）
 # -----------------------------
+# -----------------------------
+# 簡易帳號系統（請自行修改密碼）
+# -----------------------------
 ACCOUNTS = {
-    "admin@errorfree": {
-        "password": "amandachiu67",   # TODO: 改成你自己的管理員密碼
+    "admin@errorfree.com": {
+        "password": "amandachiu67",   # 管理員密碼
         "role": "admin",
         "max_runs": 9999,
         "used_runs": 0,
     },
     "dr.chiu@errorfree.com": {
-        "password": "PIIcc462",  # TODO: 改成邱博士密碼
+        "password": "PIIcc462",  # 邱博士密碼
         "role": "pro",
         "max_runs": 999,
         "used_runs": 3,
     },
-    "guest@errorfree": {
-        "password": "brucepower",   # TODO: 改成內部測試帳號密碼
+    "guest@errorfree.com": {
+        "password": "brucepower",   # 內部測試帳號
         "role": "pro",
         "max_runs": 100,
         "used_runs": 7,
