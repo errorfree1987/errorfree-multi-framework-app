@@ -1,12 +1,16 @@
 import os
+import json
 import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple
+from io import BytesIO
 
 import streamlit as st
 import pdfplumber
 from docx import Document
 from openai import OpenAI
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
 
 # =========================================
 # OpenAI client（從環境變數讀取 API Key）
@@ -180,6 +184,47 @@ Each row should correspond to one important risk that should be prioritized for 
         """,
     },
 }
+
+# =========================================
+# 狀態持久化：離開網頁也保留
+# =========================================
+STATE_FILE = Path("user_state.json")
+
+
+def save_state_to_disk():
+    """把重要狀態存到本機檔案，下次開頁可以自動回復。"""
+    data = {
+        "user_email": st.session_state.get("user_email"),
+        "user_role": st.session_state.get("user_role"),
+        "is_authenticated": st.session_state.get("is_authenticated", False),
+        "lang": st.session_state.get("lang", "zh"),
+        "usage_date": st.session_state.get("usage_date"),
+        "usage_count": st.session_state.get("usage_count", 0),
+        "last_doc_text": st.session_state.get("last_doc_text", ""),
+        "last_framework_key": st.session_state.get("last_framework_key"),
+        "last_analysis_output": st.session_state.get("last_analysis_output", ""),
+        "followup_history": st.session_state.get("followup_history", []),
+        "analysis_done": st.session_state.get("analysis_done", False),
+    }
+    try:
+        STATE_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def restore_state_from_disk():
+    """如果有存過狀態，開啟網頁時自動回復，不用再登入。"""
+    if not STATE_FILE.exists():
+        return
+    try:
+        raw = STATE_FILE.read_text(encoding="utf-8")
+        data = json.loads(raw)
+    except Exception:
+        return
+
+    for key, value in data.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
 
 # =========================================
@@ -394,6 +439,35 @@ def build_full_report(lang: str) -> str:
     return "\n".join(header)
 
 
+def build_docx_bytes(text: str) -> bytes:
+    """將報告文字轉為 DOCX bytes"""
+    doc = Document()
+    for line in text.split("\n"):
+        doc.add_paragraph(line)
+    buf = BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def build_pdf_bytes(text: str) -> bytes:
+    """將報告文字轉為簡單 PDF bytes（需要 reportlab）"""
+    buf = BytesIO()
+    c = canvas.Canvas(buf, pagesize=letter)
+    width, height = letter
+    y = height - 40
+    for line in text.split("\n"):
+        # 避免太長超出右邊，簡單裁切
+        c.drawString(40, y, line[:1000])
+        y -= 14
+        if y < 40:
+            c.showPage()
+            y = height - 40
+    c.save()
+    buf.seek(0)
+    return buf.getvalue()
+
+
 # =========================================
 # Streamlit 主程式
 # =========================================
@@ -403,13 +477,21 @@ def main():
         layout="wide",
     )
 
+    # ------- 先嘗試從硬碟還原上次狀態（避免重新登入與資料遺失） -------
+    restore_state_from_disk()
+
     # -------- Session 初始狀態 --------
     if "user_email" not in st.session_state:
         st.session_state.user_email = None
+    if "user_role" not in st.session_state:
         st.session_state.user_role = None
+    if "usage_date" not in st.session_state:
         st.session_state.usage_date = None
+    if "usage_count" not in st.session_state:
         st.session_state.usage_count = 0
+    if "is_authenticated" not in st.session_state:
         st.session_state.is_authenticated = False
+    if "login_success" not in st.session_state:
         st.session_state.login_success = False
 
     if "lang" not in st.session_state:
@@ -431,7 +513,7 @@ def main():
         st.session_state.analysis_done = False
 
     # =====================================
-    # 側邊欄：語言切換（有分析時鎖定語言）
+    # 側邊欄：語言切換（有分析時鎖定語言）+ 登入狀態
     # =====================================
     with st.sidebar:
         current_lang = st.session_state.lang
@@ -468,6 +550,7 @@ def main():
                 )
             st.session_state.lang = new_lang
             lang = new_lang
+            save_state_to_disk()
 
         # 登入資訊區
         st.markdown("---")
@@ -485,6 +568,11 @@ def main():
                     st.session_state.last_analysis_output = ""
                     st.session_state.followup_history = []
                     st.session_state.analysis_done = False
+                    if STATE_FILE.exists():
+                        try:
+                            STATE_FILE.unlink()
+                        except Exception:
+                            pass
                     st.experimental_rerun()
             else:
                 st.subheader("Account")
@@ -499,6 +587,11 @@ def main():
                     st.session_state.last_analysis_output = ""
                     st.session_state.followup_history = []
                     st.session_state.analysis_done = False
+                    if STATE_FILE.exists():
+                        try:
+                            STATE_FILE.unlink()
+                        except Exception:
+                            pass
                     st.experimental_rerun()
         else:
             if lang == "zh":
@@ -514,7 +607,7 @@ def main():
     col_main = st.container()
 
     with col_main:
-        # ======= 尚未登入：顯示登入表單 =======
+        # ======= 尚未登入：顯示登入（按一次就好） =======
         if not st.session_state.is_authenticated:
             if lang == "zh":
                 st.title("Error-Free® 多框架 AI 文件分析")
@@ -523,39 +616,39 @@ def main():
                 st.title("Error-Free® Multi-framework AI Document Analyzer")
                 st.subheader("Please log in first")
 
-            with st.form("login_form"):
-                if lang == "zh":
-                    email = st.text_input("Email")
-                    password = st.text_input("密碼", type="password")
-                    submit = st.form_submit_button("登入")
-                else:
-                    email = st.text_input("Email")
-                    password = st.text_input("Password", type="password")
-                    submit = st.form_submit_button("Login")
+            # 不用 form，避免「要按兩次」的行為
+            email = st.text_input("Email")
+            if lang == "zh":
+                password = st.text_input("密碼", type="password")
+                login_btn = st.button("登入")
+            else:
+                password = st.text_input("Password", type="password")
+                login_btn = st.button("Login")
 
-                if submit:
-                    account = ACCOUNTS.get(email)
-                    if account and account["password"] == password:
-                        st.session_state.user_email = email
-                        st.session_state.user_role = account["role"]
-                        st.session_state.is_authenticated = True
-                        st.session_state.login_success = True
-                        # 重設當日使用次數
-                        st.session_state.usage_date = datetime.date.today().isoformat()
-                        st.session_state.usage_count = 0
-                        # 清空舊分析
-                        st.session_state.last_doc_text = ""
-                        st.session_state.last_framework_key = None
-                        st.session_state.last_analysis_output = ""
-                        st.session_state.followup_history = []
-                        st.session_state.analysis_done = False
-                        # 立刻跳轉主畫面（不留在登入頁）
-                        st.experimental_rerun()
+            if login_btn:
+                account = ACCOUNTS.get(email)
+                if account and account["password"] == password:
+                    st.session_state.user_email = email
+                    st.session_state.user_role = account["role"]
+                    st.session_state.is_authenticated = True
+                    st.session_state.login_success = True
+                    # 重設當日使用次數
+                    st.session_state.usage_date = datetime.date.today().isoformat()
+                    st.session_state.usage_count = 0
+                    # 清空舊分析
+                    st.session_state.last_doc_text = ""
+                    st.session_state.last_framework_key = None
+                    st.session_state.last_analysis_output = ""
+                    st.session_state.followup_history = []
+                    st.session_state.analysis_done = False
+                    save_state_to_disk()
+                    # 立刻跳轉主畫面（不留在登入頁）
+                    st.experimental_rerun()
+                else:
+                    if lang == "zh":
+                        st.error("帳號或密碼錯誤，請再試一次。")
                     else:
-                        if lang == "zh":
-                            st.error("帳號或密碼錯誤，請再試一次。")
-                        else:
-                            st.error("Invalid email or password. Please try again.")
+                        st.error("Invalid email or password. Please try again.")
 
             return  # 未登入時不顯示後續內容
 
@@ -565,11 +658,13 @@ def main():
             if st.session_state.login_success:
                 st.success("Login successful！已成功登入。")
                 st.session_state.login_success = False
+                save_state_to_disk()
         else:
             st.title("Error-Free® Multi-framework AI Document Analyzer")
             if st.session_state.login_success:
                 st.success("Login successful!")
                 st.session_state.login_success = False
+                save_state_to_disk()
 
         # 顯示當日使用次數＆模型資訊
         role = st.session_state.user_role or "free"
@@ -579,6 +674,7 @@ def main():
         if st.session_state.usage_date != today:
             st.session_state.usage_date = today
             st.session_state.usage_count = 0
+            save_state_to_disk()
 
         if lang == "zh":
             with st.expander("目前使用方案與模型", expanded=True):
@@ -642,6 +738,7 @@ def main():
         st.markdown("---")
 
         # ======= Run Analysis（只允許跑一次） =======
+        # 一旦按下去就鎖死，避免重複分析
         can_run_analysis = not st.session_state.analysis_done
 
         if can_run_analysis:
@@ -670,10 +767,15 @@ def main():
             st.session_state.last_analysis_output = ""
             st.session_state.followup_history = []
             st.session_state.analysis_done = False
+            save_state_to_disk()
             st.experimental_rerun()
 
         # 執行分析
         if run_button and can_run_analysis:
+            # 按下的瞬間就鎖死，避免被按第二次
+            st.session_state.analysis_done = True
+            save_state_to_disk()
+
             # 檢查每日使用次數限制
             if daily_limit is not None and st.session_state.usage_count >= daily_limit:
                 if lang == "zh":
@@ -694,6 +796,9 @@ def main():
                         st.error("請至少上傳一份文件或貼上一些文字內容。")
                     else:
                         st.error("Please upload a document or paste some text to analyze.")
+                    # 如果失敗，解鎖分析權限
+                    st.session_state.analysis_done = False
+                    save_state_to_disk()
                 else:
                     with st.spinner("Running analysis..."):
                         analysis_text = run_llm_analysis(
@@ -707,15 +812,15 @@ def main():
                     st.session_state.last_framework_key = selected_framework_key
                     st.session_state.last_analysis_output = analysis_text
                     st.session_state.followup_history = []
-                    st.session_state.analysis_done = True
                     st.session_state.usage_count += 1
+                    save_state_to_disk()
 
                     if lang == "zh":
                         st.success("分析完成！下方顯示第一次框架分析結果。")
                     else:
                         st.success("Analysis completed! See the initial result below.")
 
-        # ======= 顯示第一次分析結果 =======
+        # ======= 顯示第一次分析結果（最上方） =======
         if st.session_state.last_analysis_output:
             if lang == "zh":
                 st.subheader("第一次框架分析結果")
@@ -724,38 +829,78 @@ def main():
 
             st.markdown(st.session_state.last_analysis_output)
 
-        # ======= ChatGPT 風格：後續追問 Q&A =======
+        # 後續區塊 (Q&A 歷史 + Download + chat_input) 只在分析完成後出現
+        followup_q = None
+
         if st.session_state.analysis_done and st.session_state.last_analysis_output:
             st.markdown("---")
+            # ======= Q&A 歷史（中間區塊） =======
             if lang == "zh":
-                st.subheader("後續追問 / Q&A（像 ChatGPT 一樣可以一直問）")
-                st.caption("你可以就這份分析結果不斷追問，直到你準備好產出完整報告。")
+                st.subheader("後續提問歷史（Q&A）")
+                st.caption("以下是你與系統之間的所有追問與回覆。")
             else:
-                st.subheader("Follow-up Q&A (ChatGPT-style)")
-                st.caption(
-                    "You can keep asking follow-up questions about this analysis until you're ready to download the full report."
-                )
+                st.subheader("Follow-up Q&A history")
+                st.caption("All your follow-up questions and answers are listed below.")
 
-            # 顯示歷史 Q&A
             if st.session_state.followup_history:
-                if lang == "zh":
-                    st.markdown("#### 先前對話")
-                else:
-                    st.markdown("#### Previous Q&A")
                 for idx, (q, a) in enumerate(st.session_state.followup_history, start=1):
                     st.markdown(f"**Q{idx}:** {q}")
                     st.markdown(f"**A{idx}:** {a}")
                     st.markdown("---")
-
-            # 新問題輸入
-            if lang == "zh":
-                followup_q = st.text_area("請輸入你的追問", height=100, key="followup_input")
-                ask_btn = st.button("送出追問")
             else:
-                followup_q = st.text_area("Enter your follow-up question", height=100, key="followup_input")
-                ask_btn = st.button("Ask")
+                if lang == "zh":
+                    st.info("目前尚未有任何追問，歡迎在下方聊天框提出你的問題。")
+                else:
+                    st.info("No follow-up questions yet. Use the chat box below to ask.")
 
-            if ask_btn and followup_q.strip():
+            # ======= Download 區塊（TXT / Word / PDF） =======
+            st.markdown("---")
+            if lang == "zh":
+                st.subheader("下載完整報告（TXT / Word / PDF）")
+            else:
+                st.subheader("Download full report (TXT / Word / PDF)")
+
+            report_text = build_full_report(lang)
+            if report_text:
+                now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+                txt_bytes = report_text.encode("utf-8")
+                docx_bytes = build_docx_bytes(report_text)
+                pdf_bytes = build_pdf_bytes(report_text)
+
+                col_txt, col_docx, col_pdf = st.columns(3)
+                with col_txt:
+                    st.download_button(
+                        label="TXT",
+                        data=txt_bytes,
+                        file_name=f"errorfree_report_{now_str}.txt",
+                        mime="text/plain",
+                    )
+                with col_docx:
+                    st.download_button(
+                        label="Word (DOCX)",
+                        data=docx_bytes,
+                        file_name=f"errorfree_report_{now_str}.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    )
+                with col_pdf:
+                    st.download_button(
+                        label="PDF",
+                        data=pdf_bytes,
+                        file_name=f"errorfree_report_{now_str}.pdf",
+                        mime="application/pdf",
+                    )
+
+        # ======= 最底部：聊天輸入框（st.chat_input，一直固定在底端） =======
+        if st.session_state.analysis_done and st.session_state.last_analysis_output:
+            if lang == "zh":
+                prompt = "請輸入你的追問（像 ChatGPT 一樣可以一直問）"
+            else:
+                prompt = "Enter your follow-up question (you can keep asking)"
+
+            followup_q = st.chat_input(prompt)
+
+            if followup_q:
                 with st.spinner("Thinking..."):
                     answer = run_followup_qa(
                         framework_key=st.session_state.last_framework_key,
@@ -765,31 +910,18 @@ def main():
                         user_question=followup_q.strip(),
                         model_name=model_name,
                     )
-                st.session_state.followup_history.append((followup_q.strip(), answer))
-                # 立即顯示最新一次
-                st.markdown(f"**Q{len(st.session_state.followup_history)}:** {followup_q.strip()}")
-                st.markdown(f"**A{len(st.session_state.followup_history)}:** {answer}")
-
-        # ======= Download Full Report 按鈕 =======
-        if st.session_state.analysis_done and st.session_state.last_analysis_output:
-            st.markdown("---")
-            if lang == "zh":
-                st.subheader("下載完整報告（包含第一次分析＋所有追問 Q&A）")
-                report_btn_label = "Download Full Report"
-            else:
-                st.subheader("Download full report (initial analysis + all follow-up Q&A)")
-                report_btn_label = "Download Full Report"
-
-            report_text = build_full_report(lang)
-            if report_text:
-                now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                file_name = f"errorfree_report_{now_str}.txt"
-                st.download_button(
-                    label=report_btn_label,
-                    data=report_text,
-                    file_name=file_name,
-                    mime="text/plain",
+                st.session_state.followup_history.append(
+                    (followup_q.strip(), answer)
                 )
+                save_state_to_disk()
+                # 立即在畫面上加一條（這一輪 rerun 的結尾）
+                st.markdown("---")
+                idx = len(st.session_state.followup_history)
+                st.markdown(f"**Q{idx}:** {followup_q.strip()}")
+                st.markdown(f"**A{idx}:** {answer}")
+
+    # 最後再保險存一次狀態
+    save_state_to_disk()
 
 
 if __name__ == "__main__":
