@@ -260,73 +260,129 @@ def main():
         st.session_state.usage_date = None
         st.session_state.usage_count = 0
 
-    # 頂部品牌區：Logo + 標題 + 品牌線
+    # 初始化語言設定
+    if "lang" not in st.session_state:
+        st.session_state.lang = "zh"
+
+    current_lang = st.session_state.lang
+
+    # 頂部品牌區：Logo + 品牌字樣
     logo_path = Path(__file__).parent / "logo.png"
     col_logo, col_title = st.columns([1, 4])
     with col_logo:
         if logo_path.exists():
             st.image(str(logo_path), use_column_width=True)
     with col_title:
-        st.markdown(
-            "### Error-Free® AI 文件風險稽核平台\n"
-            "Error-Free® | 邱強博士團隊"
-        )
+        if current_lang == "zh":
+            st.markdown("### 邱強博士零錯誤研發團隊1987年至今")
+        else:
+            st.markdown(
+                "### Dr. Chong Chiu’s Error-Free Team — Advancing Error-Free Practices Since 1987"
+            )
 
     st.markdown("---")
 
     # 側邊欄：登入區 + 語言 + 框架 + 使用資訊
     with st.sidebar:
-        st.markdown("### 帳號 / Account")
+        # 使用目前語言狀態
+        lang = st.session_state.lang
+
+        # 帳號區
+        if lang == "zh":
+            st.markdown("### 帳號")
+        else:
+            st.markdown("### Account")
 
         if st.session_state.user_email:
             # 已登入
             email = st.session_state.user_email
             role = st.session_state.user_role
-            if role == "free":
-                role_label = "Free（一般測試）"
-            elif role == "advanced":
-                role_label = "Advanced（進階）"
-            elif role == "pro":
-                role_label = "Pro（內部專業帳號）"
+            if lang == "zh":
+                if role == "free":
+                    role_label = "Free（一般測試）"
+                elif role == "advanced":
+                    role_label = "Advanced（進階）"
+                elif role == "pro":
+                    role_label = "Pro（內部專業帳號）"
+                else:
+                    role_label = "Admin（管理者）"
+                st.success(f"已登入：{email}（{role_label}）")
+                if st.button("登出"):
+                    st.session_state.user_email = None
+                    st.session_state.user_role = None
+                    st.session_state.usage_date = None
+                    st.session_state.usage_count = 0
             else:
-                role_label = "Admin（管理者）"
-
-            st.success(f"已登入：{email}（{role_label}）")
-            if st.button("登出 / Log out"):
-                st.session_state.user_email = None
-                st.session_state.user_role = None
-                st.session_state.usage_date = None
-                st.session_state.usage_count = 0
+                if role == "free":
+                    role_label = "Free (basic test)"
+                elif role == "advanced":
+                    role_label = "Advanced"
+                elif role == "pro":
+                    role_label = "Pro (internal expert account)"
+                else:
+                    role_label = "Admin"
+                st.success(f"Signed in as: {email} ({role_label})")
+                if st.button("Log out"):
+                    st.session_state.user_email = None
+                    st.session_state.user_role = None
+                    st.session_state.usage_date = None
+                    st.session_state.usage_count = 0
         else:
             # 尚未登入：顯示登入表單（無 guest 模式）
             login_email = st.text_input("Email")
-            login_password = st.text_input("密碼 / Password", type="password")
+            if current_lang == "zh":
+                login_password = st.text_input("密碼", type="password")
+            else:
+                login_password = st.text_input("Password", type="password")
 
-            if st.button("登入 / Log in"):
-                account = ACCOUNTS.get(login_email)
-                if account and account["password"] == login_password:
-                    st.session_state.user_email = login_email
-                    st.session_state.user_role = account["role"]
-                    st.session_state.usage_date = None
-                    st.session_state.usage_count = 0
-                    st.success("登入成功！")
-                else:
-                    st.error("Email 或密碼錯誤。")
-
-            st.info("目前僅開放授權帳號使用，請向管理者申請帳號。")
+            if lang == "zh":
+                if st.button("登入"):
+                    account = ACCOUNTS.get(login_email)
+                    if account and account["password"] == login_password:
+                        st.session_state.user_email = login_email
+                        st.session_state.user_role = account["role"]
+                        st.session_state.usage_date = None
+                        st.session_state.usage_count = 0
+                        st.success("登入成功！")
+                    else:
+                        st.error("Email 或密碼錯誤。")
+                st.info("目前僅開放授權帳號使用，請向管理者申請帳號。")
+            else:
+                if st.button("Log in"):
+                    account = ACCOUNTS.get(login_email)
+                    if account and account["password"] == login_password:
+                        st.session_state.user_email = login_email
+                        st.session_state.user_role = account["role"]
+                        st.session_state.usage_date = None
+                        st.session_state.usage_count = 0
+                        st.success("Login successful.")
+                    else:
+                        st.error("Invalid email or password.")
+                st.info("Access is limited to authorized accounts. Please contact the administrator.")
 
         st.markdown("---")
 
-        st.markdown("### Language / 語言")
-        lang = st.radio(
+        # 語言切換
+        if lang == "zh":
+            st.markdown("### 語言")
+        else:
+            st.markdown("### Language")
+
+        st.session_state.lang = st.radio(
             "Language",
             ["zh", "en"],
-            index=0,
+            index=0 if st.session_state.lang == "zh" else 1,
             format_func=lambda x: "繁體中文" if x == "zh" else "English",
         )
+        lang = st.session_state.lang  # 更新後使用
 
         st.markdown("---")
-        st.markdown("### 分析框架 / Analysis framework")
+
+        # 框架選擇
+        if lang == "zh":
+            st.markdown("### 分析框架")
+        else:
+            st.markdown("### Analysis framework")
 
         framework_key = st.selectbox(
             "Framework",
@@ -357,7 +413,7 @@ def main():
             if lang == "zh":
                 st.caption(f"目前使用模型：**{model_name}**")
                 if st.session_state.user_role == "pro":
-                    st.caption("（Pro 模式僅供內部專案與重要客戶使用。）")
+                    st.caption("Pro 模式僅供內部專案與重要客戶使用。")
                 if daily_limit is None:
                     st.caption(
                         f"今日已用次數：{today_usage}（無上限，請留意 API 成本）"
@@ -383,21 +439,33 @@ def main():
             if lang == "zh":
                 st.caption("尚未登入，目前無法進行分析。")
             else:
-                st.caption("Not logged in. Analysis is disabled.")
+                st.caption("Not logged in. Analysis is currently disabled.")
 
         # 若為管理者，顯示一些額外資訊
         if st.session_state.user_role == "admin":
             st.markdown("---")
-            st.markdown("### 管理者資訊 / Admin panel")
-            st.write(
-                f"Session 狀態：使用日期 = {st.session_state.usage_date}, "
-                f"今日已用次數 = {st.session_state.usage_count}"
-            )
-            if st.button("重置本 Session 今日使用次數 / Reset today's usage for this session"):
-                today = datetime.date.today()
-                st.session_state.usage_date = today
-                st.session_state.usage_count = 0
-                st.success("已重置本 Session 的今日使用次數。")
+            if lang == "zh":
+                st.markdown("### 管理者資訊")
+                st.write(
+                    f"Session 狀態：使用日期 = {st.session_state.usage_date}, "
+                    f"今日已用次數 = {st.session_state.usage_count}"
+                )
+                if st.button("重置本 Session 今日使用次數"):
+                    today = datetime.date.today()
+                    st.session_state.usage_date = today
+                    st.session_state.usage_count = 0
+                    st.success("已重置本 Session 的今日使用次數。")
+            else:
+                st.markdown("### Admin panel")
+                st.write(
+                    f"Session status: usage_date = {st.session_state.usage_date}, "
+                    f"today usage_count = {st.session_state.usage_count}"
+                )
+                if st.button("Reset today's usage for this session"):
+                    today = datetime.date.today()
+                    st.session_state.usage_date = today
+                    st.session_state.usage_count = 0
+                    st.success("Today's usage for this session has been reset.")
 
     fw = FRAMEWORKS[framework_key]
 
@@ -405,8 +473,8 @@ def main():
     if lang == "zh":
         st.title("多框架 AI 文件分析器")
         st.markdown(
-            "這是一個專為專案文件、技術方案與關鍵溝通內容設計的 AI 輔助審查工具，"
-            "結合 Error-Free® 的多種專業框架，協助你在事前發現遺漏與風險，降低錯誤成本。"
+            "此平台專為專案文件、技術方案與關鍵溝通內容設計，"
+            "結合 Error-Free® 多種專業框架與 OpenAI 模型，協助你在事前發現遺漏與風險，降低錯誤成本。"
         )
         st.caption(f"目前選用框架：**{fw['name_zh']}**")
         st.markdown(f"**框架說明：** {fw['description_zh']}")
@@ -444,7 +512,7 @@ def main():
         else:
             st.info("✅ File uploaded and parsed. Below is a preview of the first 1,000 characters.")
         st.text_area(
-            "Document preview / 文件預覽",
+            "Document preview" if lang == "en" else "文件預覽",
             value=text[:1000],
             height=200,
         )
@@ -478,7 +546,7 @@ def main():
                 return
 
             # 避免一次丟太多內容，設定較大的上限（字元）
-            max_chars = 120000  # 提升上限：12 萬字元，足夠多數實務文件使用
+            max_chars = 120000  # 12 萬字元，足夠多數實務文件使用
             if len(text) > max_chars:
                 text_to_use = text[:max_chars]
                 truncated = True
@@ -486,7 +554,7 @@ def main():
                 text_to_use = text
                 truncated = False
 
-            with st.spinner("Running AI analysis..."):
+            with st.spinner("正在進行 AI 分析..." if lang == "zh" else "Running AI analysis..."):
                 ai_output = run_llm_analysis(
                     framework_key, lang, text_to_use, model_name
                 )
