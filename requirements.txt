@@ -1,4 +1,6 @@
 streamlit
 pdfplumber
 python-docx
+reportlab
 openai
+
