@@ -208,7 +208,6 @@ def get_model_and_limit(role: str):
         return "gpt-5.1", None  # None 代表不限制
     if role == "admin":
         return "gpt-5.1", None
-    # fallback，不應該發生
     return "gpt-4.1-mini", 2
 
 
@@ -249,11 +248,11 @@ def run_llm_analysis(
 # ------------------------------------
 def main():
     st.set_page_config(
-        page_title="Error-Free® AI 文件風險稽核平台｜Multi-framework Analyzer",
+        page_title="Multi-framework AI Document Analyzer",
         layout="wide",
     )
 
-    # 初始化 session 狀態（取消 guest 模式，預設為未登入）
+    # 初始化 session 狀態（無 guest 模式）
     if "user_email" not in st.session_state:
         st.session_state.user_email = None
         st.session_state.user_role = None
@@ -264,27 +263,27 @@ def main():
     if "lang" not in st.session_state:
         st.session_state.lang = "zh"
 
-    current_lang = st.session_state.lang
+    lang = st.session_state.lang
 
-    # 頂部品牌區：Logo + 品牌字樣
+    # 頂部：Logo（如果有）
     logo_path = Path(__file__).parent / "logo.png"
-    col_logo, col_title = st.columns([1, 4])
+    col_logo, col_space = st.columns([1, 4])
     with col_logo:
         if logo_path.exists():
             st.image(str(logo_path), use_column_width=True)
-    with col_title:
-        if current_lang == "zh":
-            st.markdown("### 邱強博士零錯誤研發團隊1987年至今")
-        else:
-            st.markdown(
-                "### Dr. Chong Chiu’s Error-Free Team — Advancing Error-Free Practices Since 1987"
-            )
+
+    # 主標題 + 品牌子標題
+    if lang == "zh":
+        st.title("多框架 AI 文件分析器")
+        st.caption("邱強博士零錯誤研發團隊1987年至今")
+    else:
+        st.title("Multi-framework AI Document Analyzer")
+        st.caption("Dr. Chong Chiu’s Error-Free Team — Advancing Error-Free Practices")
 
     st.markdown("---")
 
-    # 側邊欄：登入區 + 語言 + 框架 + 使用資訊
+    # 側邊欄
     with st.sidebar:
-        # 使用目前語言狀態
         lang = st.session_state.lang
 
         # 帳號區
@@ -294,9 +293,9 @@ def main():
             st.markdown("### Account")
 
         if st.session_state.user_email:
-            # 已登入
             email = st.session_state.user_email
             role = st.session_state.user_role
+
             if lang == "zh":
                 if role == "free":
                     role_label = "Free（一般測試）"
@@ -328,9 +327,9 @@ def main():
                     st.session_state.usage_date = None
                     st.session_state.usage_count = 0
         else:
-            # 尚未登入：顯示登入表單（無 guest 模式）
+            # 尚未登入
             login_email = st.text_input("Email")
-            if current_lang == "zh":
+            if lang == "zh":
                 login_password = st.text_input("密碼", type="password")
             else:
                 login_password = st.text_input("Password", type="password")
@@ -362,19 +361,26 @@ def main():
 
         st.markdown("---")
 
-        # 語言切換
+        # 語言切換（避免英文頁看到中文標籤）
         if lang == "zh":
             st.markdown("### 語言")
+            new_lang = st.radio(
+                "選擇語言",
+                ["zh", "en"],
+                index=0 if lang == "zh" else 1,
+                format_func=lambda x: "繁體中文" if x == "zh" else "英文",
+            )
         else:
             st.markdown("### Language")
+            new_lang = st.radio(
+                "Select language",
+                ["zh", "en"],
+                index=0 if lang == "zh" else 1,
+                format_func=lambda x: "Chinese" if x == "zh" else "English",
+            )
 
-        st.session_state.lang = st.radio(
-            "Language",
-            ["zh", "en"],
-            index=0 if st.session_state.lang == "zh" else 1,
-            format_func=lambda x: "繁體中文" if x == "zh" else "English",
-        )
-        lang = st.session_state.lang  # 更新後使用
+        st.session_state.lang = new_lang
+        lang = new_lang
 
         st.markdown("---")
 
@@ -392,32 +398,26 @@ def main():
             else FRAMEWORKS[k]["name_en"],
         )
 
-        # 顯示目前使用的模型與次數限制（僅在已登入時顯示）
+        # 已登入時顯示模型與次數限制
         if st.session_state.user_role is not None:
-            model_name, daily_limit = get_model_and_limit(
-                st.session_state.user_role
-            )
+            model_name, daily_limit = get_model_and_limit(st.session_state.user_role)
 
-            # 計算今日使用次數 / 剩餘次數
             today = datetime.date.today()
             if st.session_state.usage_date != today:
                 today_usage = 0
             else:
                 today_usage = st.session_state.usage_count
 
-            if daily_limit is None:
-                remaining = None
-            else:
-                remaining = max(daily_limit - today_usage, 0)
+            remaining = None if daily_limit is None else max(
+                daily_limit - today_usage, 0
+            )
 
             if lang == "zh":
                 st.caption(f"目前使用模型：**{model_name}**")
                 if st.session_state.user_role == "pro":
                     st.caption("Pro 模式僅供內部專案與重要客戶使用。")
                 if daily_limit is None:
-                    st.caption(
-                        f"今日已用次數：{today_usage}（無上限，請留意 API 成本）"
-                    )
+                    st.caption(f"今日已用次數：{today_usage}（無上限）")
                 else:
                     st.caption(
                         f"今日已用次數：{today_usage} 次／上限 {daily_limit} 次；剩餘：{remaining} 次"
@@ -425,23 +425,22 @@ def main():
             else:
                 st.caption(f"Current model: **{model_name}**")
                 if st.session_state.user_role == "pro":
-                    st.caption("Pro mode is reserved for internal projects and key clients.")
-                if daily_limit is None:
                     st.caption(
-                        f"Today used: {today_usage} (no daily limit; be mindful of API cost)"
+                        "Pro mode is reserved for internal projects and key clients."
                     )
+                if daily_limit is None:
+                    st.caption(f"Today used: {today_usage} (no daily limit)")
                 else:
                     st.caption(
                         f"Today used: {today_usage} / {daily_limit}; remaining: {remaining}"
                     )
         else:
-            # 未登入時提示
             if lang == "zh":
                 st.caption("尚未登入，目前無法進行分析。")
             else:
                 st.caption("Not logged in. Analysis is currently disabled.")
 
-        # 若為管理者，顯示一些額外資訊
+        # 管理者區塊
         if st.session_state.user_role == "admin":
             st.markdown("---")
             if lang == "zh":
@@ -469,14 +468,13 @@ def main():
 
     fw = FRAMEWORKS[framework_key]
 
-    # 主畫面：商業版文案
+    # 主畫面說明
     if lang == "zh":
-        st.title("多框架 AI 文件分析器")
         st.markdown(
             "此平台專為專案文件、技術方案與關鍵溝通內容設計，"
             "結合 Error-Free® 多種專業框架與 OpenAI 模型，協助你在事前發現遺漏與風險，降低錯誤成本。"
         )
-        st.caption(f"目前選用框架：**{fw['name_zh']}**")
+        st.caption(f"目前選用框架：{fw['name_zh']}")
         st.markdown(f"**框架說明：** {fw['description_zh']}")
         upload_label = "上傳要分析的文件（支援 PDF、Word .docx、純文字 .txt）"
         start_button_label = "開始進行 AI 分析"
@@ -484,13 +482,12 @@ def main():
         warn_no_login = "請先登入授權帳號，才可執行分析。"
         result_title = "AI 分析結果"
     else:
-        st.title("Multi-framework AI Document Analyzer")
         st.markdown(
             "This platform is designed for project documents, technical proposals and critical communication. "
             "Powered by Error-Free® frameworks and OpenAI models, it helps you detect omissions and risks "
             "before they turn into costly errors."
         )
-        st.caption(f"Current framework: **{fw['name_en']}**")
+        st.caption(f"Current framework: {fw['name_en']}")
         st.markdown(f"**Framework description:** {fw['description_en']}")
         upload_label = "Upload a document (PDF, Word .docx, or plain .txt)"
         start_button_label = "Run AI analysis"
@@ -509,10 +506,13 @@ def main():
         text = read_file_to_text(uploaded_file)
         if lang == "zh":
             st.info("✅ 文件已上傳並讀取完成。下方為前 1,000 字預覽，實際分析會使用更長內容。")
+            preview_label = "文件預覽"
         else:
             st.info("✅ File uploaded and parsed. Below is a preview of the first 1,000 characters.")
+            preview_label = "Document preview"
+
         st.text_area(
-            "Document preview" if lang == "en" else "文件預覽",
+            preview_label,
             value=text[:1000],
             height=200,
         )
@@ -521,63 +521,60 @@ def main():
 
     # 按鈕：開始分析
     if st.button(start_button_label):
-        # 一定要登入才能分析
         if st.session_state.user_role is None:
             st.error(warn_no_login)
             return
 
         if not text:
             st.warning(warn_no_file)
-        else:
-            # 檢查每日使用次數（在按下分析時才正式重置）
-            today = datetime.date.today()
-            if st.session_state.usage_date != today:
-                st.session_state.usage_date = today
-                st.session_state.usage_count = 0
+            return
 
-            model_name, daily_limit = get_model_and_limit(st.session_state.user_role)
+        # 每日使用次數
+        today = datetime.date.today()
+        if st.session_state.usage_date != today:
+            st.session_state.usage_date = today
+            st.session_state.usage_count = 0
 
-            if daily_limit is not None and st.session_state.usage_count >= daily_limit:
-                # 超過今日上限
-                if lang == "zh":
-                    st.error("今天的分析次數已達上限，請明天再試，或使用更高等級帳號。")
-                else:
-                    st.error("You have reached today's analysis limit. Please try again tomorrow or use a higher plan.")
-                return
+        model_name, daily_limit = get_model_and_limit(st.session_state.user_role)
 
-            # 避免一次丟太多內容，設定較大的上限（字元）
-            max_chars = 120000  # 12 萬字元，足夠多數實務文件使用
-            if len(text) > max_chars:
-                text_to_use = text[:max_chars]
-                truncated = True
+        if daily_limit is not None and st.session_state.usage_count >= daily_limit:
+            if lang == "zh":
+                st.error("今天的分析次數已達上限，請明天再試，或使用更高等級帳號。")
             else:
-                text_to_use = text
-                truncated = False
+                st.error("You have reached today's analysis limit. Please try again tomorrow or use a higher plan.")
+            return
 
-            with st.spinner("正在進行 AI 分析..." if lang == "zh" else "Running AI analysis..."):
-                ai_output = run_llm_analysis(
-                    framework_key, lang, text_to_use, model_name
+        max_chars = 120000
+        if len(text) > max_chars:
+            text_to_use = text[:max_chars]
+            truncated = True
+        else:
+            text_to_use = text
+            truncated = False
+
+        with st.spinner("正在進行 AI 分析..." if lang == "zh" else "Running AI analysis..."):
+            ai_output = run_llm_analysis(
+                framework_key, lang, text_to_use, model_name
+            )
+
+        st.session_state.usage_count += 1
+
+        st.markdown("---")
+        st.subheader(result_title)
+        st.write(ai_output)
+
+        if truncated:
+            if lang == "zh":
+                st.caption(
+                    f"（提示：文件篇幅較長，為了確保穩定度與成本可控，本次僅分析前 {max_chars:,} 個字元。"
+                    "若有更長篇的專案文件，可考慮分段上傳分析。）"
                 )
-
-            # 使用次數 +1
-            st.session_state.usage_count += 1
-
-            st.markdown("---")
-            st.subheader(result_title)
-            st.write(ai_output)
-
-            if truncated:
-                if lang == "zh":
-                    st.caption(
-                        f"（提示：文件篇幅較長，為了確保穩定度與成本可控，本次僅分析前 {max_chars:,} 個字元。"
-                        "若有更長篇的專案文件，可考慮分段上傳分析。）"
-                    )
-                else:
-                    st.caption(
-                        f"(Note: The document is long. To ensure stability and cost control, "
-                        f"only the first {max_chars:,} characters were analyzed. "
-                        "For very long documents, consider splitting into multiple uploads.)"
-                    )
+            else:
+                st.caption(
+                    f"(Note: The document is long. To ensure stability and cost control, "
+                    f"only the first {max_chars:,} characters were analyzed. "
+                    "For very long documents, consider splitting into multiple uploads.)"
+                )
 
 
 if __name__ == "__main__":
