@@ -17,23 +17,49 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # 簡易帳號系統
 # -----------------------------
 ACCOUNTS = {
-    "free@example.com": {
-        "password": "free123",
-        "role": "free",
-    },
-    "advanced@example.com": {
-        "password": "adv123",
-        "role": "advanced",
-    },
-    "pro@example.com": {
-        "password": "pro123",
-        "role": "pro",
-    },
-    "admin@example.com": {
-        "password": "admin123",
-        "role": "admin",
+"admin@errorfree": {
+"'password"："amandachiu67"，＃ 改成你自己的管理員密碼
+"role": "admin"
+"max_runs": 9999,
+"used_runs": 0,
+}
+"dr.chiu@errorfree.com": {
+"password"： "PIIcC@462"，＃ 改成邱博士的密碼
+"role": "pro",
+"max_runs": 999,
+"used_runs": 3,
+"guest@errorfree": {
+"password"： "brucepower"，# 這是內部測試帳號，不是匿名guest
+"role": "pro",
+"max_runs": 100,
+"used_runs": 7,
     },
 }
+import streamlit as st
+import pdfplumber
+import docx
+from openai import OpenAI
+import os
+import base64
+
+# ===== 帳號設定 =====
+ACCOUNTS = {
+    "admin@errorfree": {...},
+    "dr.chiu@errorfree.com": {...},
+    "guest@errorfree": {...},
+}
+
+def get_current_user_email() -> str:
+    """從 session 拿目前登入的 email，沒有就回傳 'anonymous'。"""
+    return st.session_state.get("user_email", "anonymous")
+
+
+def is_admin() -> bool:
+    """判斷目前登入者是不是 admin。"""
+    return st.session_state.get("user_role") == "admin"
+
+
+# ===== 下面才會開始你的登入頁、語言切換、主畫面 =====
 
 def get_model_and_limit(role: str):
     """依照帳號角色決定模型與每日次數上限"""
@@ -372,7 +398,7 @@ def main():
             st.caption("邱強博士零錯誤研發團隊1987年至今")
         else:
             st.title("Error-Free Multi-framework AI Document Analyzer")
-            st.caption("Dr. Chong Chiu’s Error-Free Team — Advancing Error-Free Practices")
+            st.caption("Dr. Chong Chiu’s Error-Free Team — Advancing Error-Free Practices since 1987")
 
     st.markdown("---")
 
