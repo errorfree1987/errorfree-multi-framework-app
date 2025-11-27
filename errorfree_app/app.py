@@ -722,4 +722,166 @@ def main():
                 st.info("已對本份文件完成一次分析。如要重新分析，請上傳新文件並按下 Reset。")
             else:
                 st.info(
-                    "Analysis fo
+                    "Analysis for this document has already been run once. To analyze a new document, upload a new file and click Reset."
+                )
+
+        # Reset 功能：用來重新上傳新文件與重新分析
+        if lang == "zh":
+            reset_clicked = st.button("Reset / 重新開始（新文件）")
+        else:
+            reset_clicked = st.button("Reset / Start with new document")
+
+        if reset_clicked:
+            st.session_state.last_doc_text = ""
+            st.session_state.last_framework_key = None
+            st.session_state.last_analysis_output = ""
+            st.session_state.followup_history = []
+            st.session_state.analysis_done = False
+            save_state_to_disk()
+            st.experimental_rerun()
+
+        # 執行分析
+        if run_button and can_run_analysis:
+            # 按下的瞬間就鎖死，避免被按第二次
+            st.session_state.analysis_done = True
+            save_state_to_disk()
+
+            # 檢查每日使用次數限制
+            if daily_limit is not None and st.session_state.usage_count >= daily_limit:
+                if lang == "zh":
+                    st.error("已達今日使用次數上限。請明天再試，或聯絡管理者提升方案。")
+                else:
+                    st.error(
+                        "You have reached your daily usage limit. Please try again tomorrow or contact the admin."
+                    )
+            else:
+                # 取得文件文字
+                if uploaded_file is not None:
+                    doc_text = read_file_to_text(uploaded_file)
+                else:
+                    doc_text = manual_text.strip()
+
+                if not doc_text:
+                    if lang == "zh":
+                        st.error("請至少上傳一份文件或貼上一些文字內容。")
+                    else:
+                        st.error("Please upload a document or paste some text to analyze.")
+                    # 如果失敗，解鎖分析權限
+                    st.session_state.analysis_done = False
+                    save_state_to_disk()
+                else:
+                    with st.spinner("Running analysis..."):
+                        analysis_text = run_llm_analysis(
+                            framework_key=selected_framework_key,
+                            language=lang,
+                            document_text=doc_text,
+                            model_name=model_name,
+                        )
+
+                    st.session_state.last_doc_text = doc_text
+                    st.session_state.last_framework_key = selected_framework_key
+                    st.session_state.last_analysis_output = analysis_text
+                    st.session_state.followup_history = []
+                    st.session_state.usage_count += 1
+                    save_state_to_disk()
+
+                    if lang == "zh":
+                        st.success("分析完成！下方顯示第一次框架分析結果。")
+                    else:
+                        st.success("Analysis completed! See the initial result below.")
+
+        # ======= 顯示第一次分析結果 =======
+        if st.session_state.last_analysis_output:
+            if lang == "zh":
+                st.subheader("第一次框架分析結果")
+            else:
+                st.subheader("Initial framework analysis result")
+
+            st.markdown(st.session_state.last_analysis_output)
+
+        # ======= ChatGPT 風格：後續追問 Q&A（可連續） =======
+        if st.session_state.analysis_done and st.session_state.last_analysis_output:
+            st.markdown("---")
+            if lang == "zh":
+                st.subheader("後續追問 / Q&A（像 ChatGPT 一樣可以一直問）")
+                st.caption("你可以就這份分析結果不斷追問，直到你準備好產出完整報告。")
+            else:
+                st.subheader("Follow-up Q&A (ChatGPT-style)")
+                st.caption(
+                    "You can keep asking follow-up questions about this analysis until you're ready to download the full report."
+                )
+
+            # 顯示歷史 Q&A
+            if st.session_state.followup_history:
+                if lang == "zh":
+                    st.markdown("#### 先前對話")
+                else:
+                    st.markdown("#### Previous Q&A")
+                for idx, (q, a) in enumerate(st.session_state.followup_history, start=1):
+                    st.markdown(f"**Q{idx}:** {q}")
+                    st.markdown(f"**A{idx}:** {a}")
+                    st.markdown("---")
+
+            # 新問題輸入（永遠存在，不會消失）
+            if lang == "zh":
+                followup_q = st.text_area(
+                    "請輸入你的追問（可以連續追問多次）",
+                    height=100,
+                    key="followup_input",
+                )
+                ask_btn = st.button("送出追問")
+            else:
+                followup_q = st.text_area(
+                    "Enter your follow-up question (you can ask multiple times)",
+                    height=100,
+                    key="followup_input",
+                )
+                ask_btn = st.button("Ask")
+
+            if ask_btn and followup_q.strip():
+                with st.spinner("Thinking..."):
+                    answer = run_followup_qa(
+                        framework_key=st.session_state.last_framework_key,
+                        language=lang,
+                        document_text=st.session_state.last_doc_text,
+                        analysis_output=st.session_state.last_analysis_output,
+                        user_question=followup_q.strip(),
+                        model_name=model_name,
+                    )
+                st.session_state.followup_history.append(
+                    (followup_q.strip(), answer)
+                )
+                save_state_to_disk()
+                # 立即顯示最新一次
+                st.markdown(
+                    f"**Q{len(st.session_state.followup_history)}:** {followup_q.strip()}"
+                )
+                st.markdown(
+                    f"**A{len(st.session_state.followup_history)}:** {answer}"
+                )
+                st.markdown("---")
+
+        # ======= Download Full Report 按鈕（與 Q&A 並存） =======
+        if st.session_state.analysis_done and st.session_state.last_analysis_output:
+            st.markdown("---")
+            if lang == "zh":
+                st.subheader("下載完整報告（包含第一次分析＋所有追問 Q&A）")
+                report_btn_label = "Download Full Report"
+            else:
+                st.subheader("Download full report (initial analysis + all follow-up Q&A)")
+                report_btn_label = "Download Full Report"
+
+            report_text = build_full_report(lang)
+            if report_text:
+                now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                file_name = f"errorfree_report_{now_str}.txt"
+                st.download_button(
+                    label=report_btn_label,
+                    data=report_text,
+                    file_name=file_name,
+                    mime="text/plain",
+                )
+
+
+if __name__ == "__main__":
+    main()
