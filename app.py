@@ -1,355 +1,272 @@
+import os
+from typing import Dict
 
 import streamlit as st
-from io import StringIO
 import pdfplumber
 from docx import Document
+from openai import OpenAI
 
-# 注意：上傳大小限制現在改由 .streamlit/config.toml 控制
-# 這裡不再呼叫 st.set_option("server.maxUploadSize", ...)
+# ------------------------------------
+# OpenAI 設定（讀取 Railway 的環境變數）
+# ------------------------------------
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# ===============================
-# Config: languages & frameworks
-# ===============================
-
-LANGS = {
-    "zh": "繁體中文",
-    "en": "English",
-}
-
-FRAMEWORKS = {
+# ------------------------------------
+# 多框架設定
+# ------------------------------------
+FRAMEWORKS: Dict[str, Dict] = {
     "omission": {
-        "name": {
-            "zh": "Error-Free® 遺漏錯誤檢查框架（Omission）",
-            "en": "Error-Free® Omission Error Check Framework",
-        },
-        "description": {
-            "zh": "運用 12 種查漏方法與 12 類遺漏錯誤（O1–O12），系統性檢查文件中可能的遺漏與缺口。",
-            "en": "Use 12 omission-check methods and 12 omission error types (O1–O12) to systematically find missing content in the document.",
-        },
-        "template": {
-            "zh": """你是一名受過 Error-Free® 訓練的「遺漏錯誤檢查顧問」。
+        "name_zh": "Error-Free® 遺漏錯誤檢查框架",
+        "name_en": "Error-Free® Omission Error Check Framework",
+        "description_zh": (
+            "使用 12 種遺漏檢查方法與 12 類遺漏錯誤型態（O1–O12），"
+            "系統性檢查文件有沒有「該出現卻沒出現」的內容。"
+        ),
+        "description_en": (
+            "Uses 12 omission-check methods and 12 omission error types (O1–O12) "
+            "to systematically find content that SHOULD be present but is missing."
+        ),
+        "wrapper_zh": """
+你是一位 Error-Free® 遺漏錯誤檢查專家，精通 12 種遺漏檢查方法與 12 類遺漏錯誤型態（O1–O12）。
 
-【分析對象】
-以下是使用者提供的文件內容，請僅根據明示資訊進行分析，不得自行杜撰：
+請你扮演「文件顧問」，用這個框架來分析輸入的文件，找出：
+1. 文件可能遺漏的重要內容、條件、假設、角色、步驟、風險或例外情況。
+2. 這些遺漏，可能在實務上造成什麼後果（例如專案失敗、誤解、作業風險、客訴…）。
+3. 文件撰寫人應該如何具體補強、修改或新增內容。
 
-------------------------------------------------------------
-{document_text}
-------------------------------------------------------------
+請特別注意：
+- 不只是改錯字，而是針對「沒有寫出來」但應該要寫的地方。
+- 你可以引用文件中的關鍵句子來說明，但不要原封不動複製太長的段落。
+- 回答時請用條列方式，讓使用者可以直接依序修正文件。
 
-請依照四個階段輸出嚴謹、可追溯的分析結果：
+輸出格式請用繁體中文，依照下列結構：
 
-一、文件摘要（禁止推測）
-- 條列式整理：目的、主體內容、重要流程、角色、決策、假設與前提。
-- 僅可引用文件文字，不得補充未出現的內容。
+一、文件簡要摘要（3–5 行）
+二、可能的遺漏錯誤（逐點列出，每點說明「哪裡遺漏」與「為何重要」）
+三、具體修正建議（逐點對應上面的遺漏，提出可直接採用的補寫句子或段落）
+        """,
+        "wrapper_en": """
+You are an Error-Free® omission error expert, using 12 omission-check methods
+and 12 omission error types (O1–O12).
 
-二、依 12 種查漏方法檢查是否有遺漏
-1 Exception（例外）  
-2 Balance（平衡）  
-3 Continuity（連續）  
-4 Difference（差異）  
-5 Expectation（期望）  
-6 Framework（框架比對）  
-7 Independent Verification（獨立驗證）  
-8 Cause–Effect（三元素）  
-9 Causal Probability（因果機率）  
-10 Association（連想）  
-11 Experience（經驗）  
-12 Unmet Requirements（未滿足需求）  
+Your job is to review the document and identify:
+1. Important information, conditions, assumptions, roles, steps, risks, or exceptions that SHOULD
+   be present but are missing.
+2. The potential practical impact of those omissions (e.g. project failure, misunderstandings,
+   operational risk, customer complaints).
+3. Concrete and actionable suggestions on how to revise or extend the document.
 
-對於每一種方法，請回答：
-- 是否發現疑似遺漏？（是／否）
-- 引用的文件原文或段落位置為何？
-- 你推定可能的遺漏情況為何？說明理由（不可超出文件內容）。
-若未發現遺漏，請簡要說明理由。
+Please:
+- Focus on omissions (missing content), not minor wording issues.
+- You may quote short phrases from the document as examples, but do not copy long sections.
+- Use a clear bullet-list style so the user can directly revise the document.
 
-三、將每一項問題對應到 12 類遺漏錯誤（O1–O12）
-請為每一個疑似問題標註：
-- 遺漏類型（O1–O12）
-- 使用到的查漏方法（上述 12 種之一）
-- 涉及的原文片段
-- 為何判定為該類遺漏？
-- 可能造成的後果？
-- 建議補充或修正的具體內容（可直接寫進文件的句子或段落）。
+Answer structure in English:
 
-四、輸出《Error-Free® 遺漏錯誤修正清單》
-請按照優先級（高／中／低）列出所有問題，格式包含：
-- 問題編號與遺漏類型
-- 優先級
-- 問題摘要
-- 建議補充內容
-- 風險說明
-
-重要原則：
-- 不得虛構文件未出現的資訊。
-- 每一項判定都需有原文依據。
-- 用專案稽核與品質工程顧問語氣撰寫。
-""",
-            "en": """You are an Error-Free® consultant specializing in omission errors.
-
-[Document to review]
-The user has provided the following document. Base all analysis only on what is explicitly written. Do not invent new facts.
-
-------------------------------------------------------------
-{document_text}
-------------------------------------------------------------
-
-Follow these four stages and provide a structured, auditable report:
-
-I. Document summary (no guessing)
-- Bullet-point the purpose, main content, key processes, roles, decisions, assumptions.
-- Only quote or paraphrase what is present in the document.
-
-II. Check for omissions using 12 methods
-Use the following methods one by one:
-1 Exception  
-2 Balance  
-3 Continuity  
-4 Difference  
-5 Expectation  
-6 Framework comparison  
-7 Independent verification  
-8 Cause–effect (cause, mechanism, result)  
-9 Causal probability  
-10 Association  
-11 Experience  
-12 Unmet requirements  
-
-For each method, state:
-- Whether you find a possible omission.
-- Which part of the document it relates to (quote or describe).
-- Why this may indicate something important is missing.
-If nothing is found, briefly explain why.
-
-III. Map issues to the 12 omission error types (O1–O12)
-For every suspected issue, label:
-- Error type (O1–O12)
-- Which omission method found it
-- The related text
-- Why it fits this type
-- Possible consequences
-- Concrete content the document should add or clarify.
-
-IV. Output an "Error-Free® Omission Correction Action List"
-List all issues with:
-- ID and error type
-- Priority (High / Medium / Low)
-- Short description
-- Recommended added / revised content
-- Risk explanation
-
-Principles:
-- Do not hallucinate or create information not in the document.
-- Every judgment must be traceable to the text.
-- Use a professional tone suitable for an audit / quality report.
-""",
-        },
+1. Brief summary of the document (3–5 sentences)
+2. Potential omission errors (bullet list, each with “what is missing” and “why it matters”)
+3. Concrete revision suggestions (bullet list with sample wording or specific guidance)
+        """,
     },
-
     "technical": {
-        "name": {
-            "zh": "Error-Free® 技術性錯誤檢查框架（Technical）",
-            "en": "Error-Free® Technical Error Check Framework",
-        },
-        "description": {
-            "zh": "依據 39 種技術錯誤檢查方法與 12 類技術錯誤（T1–T4），審查模型、計算與技術假設。",
-            "en": "Use 39 technical error-finding methods and 12 technical error types (T1–T4) to review models, calculations and technical assumptions.",
-        },
-        "template": {
-            "zh": """你是一名 Error-Free® 技術性錯誤檢查顧問。
+        "name_zh": "Error-Free® 技術風險檢查框架",
+        "name_en": "Error-Free® Technical Risk Check Framework",
+        "description_zh": (
+            "從技術正確性、假設條件、邊界情況、相容性、安全性與可維護性等面向，"
+            "檢查方案或文件中可能被忽略的技術風險。"
+        ),
+        "description_en": (
+            "Checks technical risks from perspectives such as correctness, assumptions, "
+            "edge cases, compatibility, safety and maintainability."
+        ),
+        "wrapper_zh": """
+你是一位 Error-Free® 技術風險檢查專家，擅長在需求文件、設計文件、方案提案中找出
+常被忽略的技術風險與隱患。
 
-【分析對象】
-以下是使用者提供的技術文件，可能包含模型、公式、假設、分析與結論：
+請針對輸入的文件，依下列面向進行分析（如適用）：
+- 技術假設是否合理？有沒有沒說清楚的前提或限制？
+- 邊界條件與例外情況是否有被考慮？
+- 與其他系統／模組／流程的相容性與整合風險是什麼？
+- 安全性、可靠度、可維護性、可監控性，有沒有潛在風險？
+- 有沒有容易被忽略的「單點失敗」、「人為操作風險」或「外部依賴」？
 
-------------------------------------------------------------
-{document_text}
-------------------------------------------------------------
+輸出格式（繁體中文）請用：
 
-請依四個階段輸出嚴謹、可稽核的技術審查報告：
+一、技術內容簡要摘要
+二、可能的技術風險（逐點列出，每點說明風險內容與成因）
+三、風險等級判斷與影響說明（高／中／低，並說明理由）
+四、具體改善建議（可以是設計調整、補充檢查點、額外文件、測試建議等）
+        """,
+        "wrapper_en": """
+You are an Error-Free® technical risk review expert. Your job is to find hidden
+technical risks in requirements, design documents or solution proposals.
 
-一、技術內容摘要
-- 條列說明：使用了哪些模型、公式、方法、資料、統計或實驗？有哪些前提與限制條件？
-- 僅可根據文件原文，不得自行補充假設。
+Please review the document and analyze (when applicable):
+- Are the technical assumptions reasonable and clearly stated?
+- Are edge cases and exceptional conditions considered?
+- What are the compatibility / integration risks with other systems or processes?
+- Are there potential risks regarding safety, reliability, maintainability, observability?
+- Are there single points of failure, human-operation risks, or external dependencies?
 
-二、依 39 種技術錯誤檢查方法審查
-依類別檢查是否存在：
-- 規範與法規違反
-- 需求與顧客要求違反
-- 邏輯錯誤（演繹、歸納、因果、數學邏輯）
-- 數學公式使用錯誤
-- 科學原理與工程原理違反
-- 統計原則錯誤
-- 社會倫理原則違反
-- 從現象推回技術錯誤（異常、平衡、連續性、差異、期望、獨立驗證、因果三要素、因果機率、經驗等）
+Answer structure in English:
 
-對於每一類別，說明：
-- 是否發現疑似技術錯誤？
-- 相關的文件原文或段落位置？
-- 推定錯誤的原因與機制（不可超出文件內容）。
-
-三、將問題對應到 12 類技術錯誤（T1–T4）
-請為每一項疑似錯誤標註：
-- 類型：T1（方法執行）、T2（適用性）、T3（準確性）、T4（技術保證）
-- 更細分類（例如 T1.2 計算錯誤、T3.1 樣本量不足等）
-- 涉及原文片段
-- 可能後果
-- 建議補充或修正的具體技術內容。
-
-四、輸出《Error-Free® 技術性錯誤修正清單》
-以優先級（高／中／低）列出所有項目：
-- 問題編號與錯誤類型
-- 優先級
-- 問題摘要
-- 建議修正或補充的內容
-- 風險說明
-
-原則：
-- 嚴禁虛構技術細節。
-- 所有判定需可追溯到文件文字。
-- 使用工程安全與技術審查的專業語氣。
-""",
-            "en": """You are an Error-Free® consultant specializing in technical commission errors.
-
-[Document to review]
-The user provides a technical document that may include models, formulas, assumptions, analyses and conclusions:
-
-------------------------------------------------------------
-{document_text}
-------------------------------------------------------------
-
-Produce a rigorous, auditable technical review in four stages:
-
-I. Technical summary
-- Bullet-point the models, formulas, methods, data, statistics or experiments used.
-- List key assumptions, boundary conditions and limitations.
-- Do not add assumptions that are not in the document.
-
-II. Review using the 39 technical error-finding methods
-Check for issues such as:
-- Violations of regulations, codes, standards or internal rules
-- Violations of requirements or customer needs
-- Logical errors (deductive, inductive, causal, mathematical logic)
-- Incorrect use of mathematical formulas
-- Violations of scientific / engineering principles
-- Misuse of statistics
-- Violations of social or professional ethics
-- Errors inferred from phenomena (anomalies, imbalance, broken continuity, unexplained differences, unmet expectations, lack of independent verification, incomplete cause–effect chain, wrong causal probability, conflicts with experience)
-
-For each category, state:
-- Whether you find a possible technical error.
-- The related text in the document.
-- The likely mechanism of error, staying within the evidence of the document.
-
-III. Map issues to the 12 technical error types (T1–T4)
-For each suspected error, label:
-- Category: T1 Method execution, T2 Applicability, T3 Accuracy, or T4 Assurance
-- More specific subtype if applicable (e.g. T1.2 calculation error, T3.1 small sample size).
-- Related text, possible consequences, and concrete additions or corrections needed.
-
-IV. Output an "Error-Free® Technical Correction Action List"
-List all items with:
-- ID and error type
-- Priority (High / Medium / Low)
-- Short description
-- Recommended correction or additional content
-- Risk explanation
-
-Principles:
-- Do not hallucinate or invent technical details.
-- Every conclusion must be traceable to the text.
-- Use a professional, engineering-audit tone.
-""",
-        },
+1. Brief summary of the technical content
+2. Potential technical risks (bullet list, each with cause / context)
+3. Risk level and impact (High / Medium / Low, with short justification)
+4. Concrete mitigation suggestions (design changes, additional checks, tests, documentation, etc.)
+        """,
     },
 }
 
-# ===============================
-# Helper functions
-# ===============================
 
-def read_uploaded_file(uploaded_file):
+# ------------------------------------
+# 工具：從上傳檔案讀取文字
+# ------------------------------------
+def read_file_to_text(uploaded_file) -> str:
     if uploaded_file is None:
         return ""
+
     name = uploaded_file.name.lower()
+    try:
+        if name.endswith(".pdf"):
+            text = []
+            with pdfplumber.open(uploaded_file) as pdf:
+                for page in pdf.pages:
+                    t = page.extract_text() or ""
+                    text.append(t)
+            return "\n".join(text)
+        elif name.endswith(".docx"):
+            doc = Document(uploaded_file)
+            return "\n".join(p.text for p in doc.paragraphs)
+        elif name.endswith(".txt"):
+            return uploaded_file.read().decode("utf-8", errors="ignore")
+        else:
+            return ""
+    except Exception as e:
+        return f"[讀取檔案時發生錯誤: {e}]"
 
-    if name.endswith(".txt"):
-        return uploaded_file.getvalue().decode("utf-8", errors="ignore")
 
-    if name.endswith(".pdf"):
-        text = ""
-        with pdfplumber.open(uploaded_file) as pdf:
-            for page in pdf.pages:
-                text += (page.extract_text() or "") + "\n"
-        return text.strip()
+# ------------------------------------
+# 工具：呼叫 OpenAI 進行分析
+# ------------------------------------
+def run_llm_analysis(
+    framework_key: str, language: str, document_text: str
+) -> str:
+    fw = FRAMEWORKS[framework_key]
+    if language == "zh":
+        system_prompt = fw["wrapper_zh"]
+    else:
+        system_prompt = fw["wrapper_en"]
 
-    if name.endswith(".docx"):
-        doc = Document(uploaded_file)
-        return "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
-
-    return ""
-
-def build_prompt(template, doc_text):
-    return template.format(document_text=doc_text or "")
-
-def call_llm(prompt):
-    # Demo：目前只回傳部分 Prompt，之後可改成實際 LLM 呼叫
-    return "【Demo output / 模擬輸出】\n\nBelow is the first part of the prompt sent to the model:\n\n" + prompt[:1500]
-
-# ===============================
-# Streamlit App
-# ===============================
-
-def main():
-    st.set_page_config(page_title="Error-Free® 多框架 / Multi-framework")
-
-    # 語言選擇
-    lang = st.sidebar.radio("Language / 語言", options=list(LANGS.keys()),
-                            format_func=lambda k: LANGS[k])
-
-    # 框架選擇
-    framework_key = st.sidebar.selectbox(
-        "選擇框架 / Choose framework",
-        options=list(FRAMEWORKS.keys()),
-        format_func=lambda k: FRAMEWORKS[k]["name"][lang],
+    user_prompt = (
+        ("以下是要分析的文件內容：\n\n" if language == "zh" else "Here is the document to analyze:\n\n")
+        + document_text
     )
+
+    response = client.responses.create(
+        model="gpt-4.1-mini",
+        input=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        max_output_tokens=2000,
+    )
+
+    # responses API 的便利屬性，會把所有文字組合好
+    return response.output_text
+
+
+# ------------------------------------
+# Streamlit 介面
+# ------------------------------------
+def main():
+    st.set_page_config(
+        page_title="Error-Free® Multi-framework AI Document Analyzer",
+        layout="wide",
+    )
+
+    # 側邊欄：語言與框架選擇
+    with st.sidebar:
+        st.markdown("### Language / 語言")
+        lang = st.radio("Language", ["zh", "en"], format_func=lambda x: "繁體中文" if x == "zh" else "English")
+
+        st.markdown("---")
+        st.markdown("### 選擇框架 / Choose framework")
+
+        framework_key = st.selectbox(
+            "Framework",
+            options=list(FRAMEWORKS.keys()),
+            format_func=lambda k: FRAMEWORKS[k]["name_zh"] if lang == "zh" else FRAMEWORKS[k]["name_en"],
+        )
+
     fw = FRAMEWORKS[framework_key]
 
     # 主畫面
     if lang == "zh":
-        st.title("Error-Free® 多框架 AI 文檔分析")
-        st.caption(f"目前使用框架：{fw['name']['zh']}")
-        st.markdown(f"**說明：** {fw['description']['zh']}")
-        uploader_label = "上傳要分析的文件（支援：PDF、Word（.docx）、純文字 .txt）"
-        button_label = "開始分析"
-        warn_no_file = "請先上傳一份文件。"
-        result_title = "分析結果（示意）"
-        expander_label = "查看送入模型的完整 Prompt"
+        st.title("Error-Free® 多框架 AI 文件分析器")
+        st.caption(f"目前框架：{fw['name_zh']}")
+        st.markdown(f"**說明：** {fw['description_zh']}")
+        upload_label = "上傳要分析的文件（PDF, Word .docx, 或純文字 .txt）"
+        start_button_label = "開始分析"
+        warn_no_file = "請先上傳一個文件。"
+        result_title = "分析結果"
     else:
         st.title("Error-Free® Multi-framework AI Document Analyzer")
-        st.caption(f"Current framework: {fw['name']['en']}")
-        st.markdown(f"**Description:** {fw['description']['en']}")
-        uploader_label = "Upload a document to analyze (PDF, Word .docx, or plain .txt)"
-        button_label = "Start analysis"
-        warn_no_file = "Please upload a file first."
-        result_title = "Analysis result (demo)"
-        expander_label = "View full prompt sent to the model"
+        st.caption(f"Current framework: {fw['name_en']}")
+        st.markdown(f"**Description:** {fw['description_en']}")
+        upload_label = "Upload a document to analyze (PDF, Word .docx, or plain .txt)"
+        start_button_label = "Start analysis"
+        warn_no_file = "Please upload a document first."
+        result_title = "Analysis result"
 
-    uploaded = st.file_uploader(uploader_label, type=["pdf", "docx", "txt"])
+    st.markdown("---")
 
-    if st.button(button_label):
-        if not uploaded:
+    uploaded_file = st.file_uploader(
+        upload_label,
+        type=["pdf", "docx", "txt"],
+    )
+
+    if uploaded_file is not None:
+        text = read_file_to_text(uploaded_file)
+        if lang == "zh":
+            st.info("✅ 文件已上傳並讀取完成。下方可以看到前 1,000 字預覽。")
+        else:
+            st.info("✅ File uploaded and parsed. Preview of the first 1,000 characters below.")
+        st.text_area(
+            "Document preview",
+            value=text[:1000],
+            height=200,
+        )
+    else:
+        text = ""
+
+    # 按鈕：開始分析
+    if st.button(start_button_label):
+        if not text:
             st.warning(warn_no_file)
         else:
-            with st.spinner("Processing... / 分析中…"):
-                text = read_uploaded_file(uploaded)
-                template = fw["template"][lang]
-                prompt = build_prompt(template, text)
-                result = call_llm(prompt)
+            # 避免 token 過大，適度截斷
+            max_chars = 8000
+            if len(text) > max_chars:
+                text_to_use = text[:max_chars]
+                truncated = True
+            else:
+                text_to_use = text
+                truncated = False
 
+            with st.spinner("Running AI analysis..."):
+                ai_output = run_llm_analysis(framework_key, lang, text_to_use)
+
+            st.markdown("---")
             st.subheader(result_title)
-            st.write(result)
+            st.write(ai_output)
 
-            with st.expander(expander_label):
-                st.code(prompt)
+            if truncated:
+                if lang == "zh":
+                    st.caption("（提示：文件很長，為了避免超過模型限制，本次僅分析前 8,000 字。）")
+                else:
+                    st.caption("(Note: The document is long. For safety, only the first 8,000 characters were analyzed.)")
+
 
 if __name__ == "__main__":
     main()
