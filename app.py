@@ -457,7 +457,6 @@ def build_pdf_bytes(text: str) -> bytes:
     width, height = letter
     y = height - 40
     for line in text.split("\n"):
-        # 避免太長超出右邊，簡單裁切
         c.drawString(40, y, line[:1000])
         y -= 14
         if y < 40:
@@ -699,46 +698,55 @@ def main():
 
         st.markdown("---")
 
-        # ======= 文件上傳 & 框架選擇 =======
+        # ======= 文件上傳（拿掉貼文字） & 框架選擇 =======
         if lang == "zh":
-            st.subheader("步驟一：上傳文件或貼上文字")
+            st.subheader("步驟一：上傳文件")
             uploaded_file = st.file_uploader(
-                "請上傳 PDF / DOCX / TXT 檔案（擇一），或在下方文字框貼上內容",
+                "請上傳 PDF / DOCX / TXT 檔案",
                 type=["pdf", "docx", "txt"],
             )
-            manual_text = st.text_area(
-                "或直接在此貼上要分析的文字內容（如果同時上傳檔案與貼文字，系統以上傳檔案為主）",
-                height=180,
-            )
+            manual_text = ""  # 不再提供貼上文字
             st.subheader("步驟二：選擇分析框架")
         else:
-            st.subheader("Step 1: Upload a document or paste text")
+            st.subheader("Step 1: Upload a document")
             uploaded_file = st.file_uploader(
-                "Upload a PDF / DOCX / TXT file, or paste your content below",
+                "Upload a PDF / DOCX / TXT file",
                 type=["pdf", "docx", "txt"],
             )
-            manual_text = st.text_area(
-                "Or paste the text to analyze (if both file and text are provided, the file will take precedence).",
-                height=180,
-            )
+            manual_text = ""  # no manual text input
             st.subheader("Step 2: Choose an analysis framework")
 
         framework_keys = list(FRAMEWORKS.keys())
-        if lang == "zh":
-            framework_labels = [FRAMEWORKS[k]["name_zh"] for k in framework_keys]
-            framework_label_to_key = dict(zip(framework_labels, framework_keys))
-            selected_label = st.selectbox("請選擇框架", framework_labels)
-            selected_framework_key = framework_label_to_key[selected_label]
+
+        # 分析完成後：鎖定框架，不能再切換
+        if st.session_state.analysis_done and st.session_state.last_framework_key:
+            locked_key = st.session_state.last_framework_key
+            fw = FRAMEWORKS[locked_key]
+            if lang == "zh":
+                st.markdown(
+                    f"本次分析框架：**{fw['name_zh']}**（如需更換，請按 *Reset* 後重新分析）"
+                )
+            else:
+                st.markdown(
+                    f"Framework for this analysis: **{fw['name_en']}** "
+                    "(to change it, click *Reset* and run a new analysis)."
+                )
+            selected_framework_key = locked_key
         else:
-            framework_labels = [FRAMEWORKS[k]["name_en"] for k in framework_keys]
-            framework_label_to_key = dict(zip(framework_labels, framework_keys))
-            selected_label = st.selectbox("Select framework", framework_labels)
-            selected_framework_key = framework_label_to_key[selected_label]
+            if lang == "zh":
+                framework_labels = [FRAMEWORKS[k]["name_zh"] for k in framework_keys]
+                framework_label_to_key = dict(zip(framework_labels, framework_keys))
+                selected_label = st.selectbox("請選擇框架", framework_labels)
+                selected_framework_key = framework_label_to_key[selected_label]
+            else:
+                framework_labels = [FRAMEWORKS[k]["name_en"] for k in framework_keys]
+                framework_label_to_key = dict(zip(framework_labels, framework_keys))
+                selected_label = st.selectbox("Select framework", framework_labels)
+                selected_framework_key = framework_label_to_key[selected_label]
 
         st.markdown("---")
 
         # ======= Run Analysis（只允許跑一次） =======
-        # 一旦按下去就鎖死，避免重複分析
         can_run_analysis = not st.session_state.analysis_done
 
         if can_run_analysis:
@@ -752,7 +760,8 @@ def main():
                 st.info("已對本份文件完成一次分析。如要重新分析，請上傳新文件並按下 Reset。")
             else:
                 st.info(
-                    "Analysis for this document has already been run once. To analyze a new document, upload a new file and click Reset."
+                    "Analysis for this document has already been run once. "
+                    "To analyze a new document, upload a new file and click Reset."
                 )
 
         # Reset 功能：用來重新上傳新文件與重新分析
@@ -782,20 +791,21 @@ def main():
                     st.error("已達今日使用次數上限。請明天再試，或聯絡管理者提升方案。")
                 else:
                     st.error(
-                        "You have reached your daily usage limit. Please try again tomorrow or contact the admin."
+                        "You have reached your daily usage limit. "
+                        "Please try again tomorrow or contact the admin."
                     )
             else:
-                # 取得文件文字
+                # 取得文件文字（現在只支援上傳）
                 if uploaded_file is not None:
                     doc_text = read_file_to_text(uploaded_file)
                 else:
-                    doc_text = manual_text.strip()
+                    doc_text = ""
 
                 if not doc_text:
                     if lang == "zh":
-                        st.error("請至少上傳一份文件或貼上一些文字內容。")
+                        st.error("請上傳一份要分析的文件。")
                     else:
-                        st.error("Please upload a document or paste some text to analyze.")
+                        st.error("Please upload a document to analyze.")
                     # 如果失敗，解鎖分析權限
                     st.session_state.analysis_done = False
                     save_state_to_disk()
@@ -829,12 +839,10 @@ def main():
 
             st.markdown(st.session_state.last_analysis_output)
 
-        # 後續區塊 (Q&A 歷史 + Download + chat_input) 只在分析完成後出現
-        followup_q = None
-
+        # ======= 分析完成後：Q&A 歷史 + 連續提問 + 下載（依序往下排） =======
         if st.session_state.analysis_done and st.session_state.last_analysis_output:
             st.markdown("---")
-            # ======= Q&A 歷史（中間區塊） =======
+            # Q&A 歷史
             if lang == "zh":
                 st.subheader("後續提問歷史（Q&A）")
                 st.caption("以下是你與系統之間的所有追問與回覆。")
@@ -849,58 +857,32 @@ def main():
                     st.markdown("---")
             else:
                 if lang == "zh":
-                    st.info("目前尚未有任何追問，歡迎在下方聊天框提出你的問題。")
+                    st.info("目前尚未有任何追問，歡迎在下方輸入你的問題。")
                 else:
-                    st.info("No follow-up questions yet. Use the chat box below to ask.")
+                    st.info("No follow-up questions yet. Use the box below to ask.")
 
-            # ======= Download 區塊（TXT / Word / PDF） =======
+            # 連續提問輸入框（接在 Q&A 歷史之後）
             st.markdown("---")
             if lang == "zh":
-                st.subheader("下載完整報告（TXT / Word / PDF）")
+                st.subheader("連續提問")
+                st.caption("像 ChatGPT 一樣，可以一直追問。")
+                followup_q = st.text_area(
+                    "請輸入你的追問",
+                    height=100,
+                    key="followup_input",
+                )
+                ask_btn = st.button("送出追問")
             else:
-                st.subheader("Download full report (TXT / Word / PDF)")
+                st.subheader("Follow-up questions")
+                st.caption("You can keep asking follow-up questions about this analysis.")
+                followup_q = st.text_area(
+                    "Enter your follow-up question",
+                    height=100,
+                    key="followup_input",
+                )
+                ask_btn = st.button("Send question")
 
-            report_text = build_full_report(lang)
-            if report_text:
-                now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-                txt_bytes = report_text.encode("utf-8")
-                docx_bytes = build_docx_bytes(report_text)
-                pdf_bytes = build_pdf_bytes(report_text)
-
-                col_txt, col_docx, col_pdf = st.columns(3)
-                with col_txt:
-                    st.download_button(
-                        label="TXT",
-                        data=txt_bytes,
-                        file_name=f"errorfree_report_{now_str}.txt",
-                        mime="text/plain",
-                    )
-                with col_docx:
-                    st.download_button(
-                        label="Word (DOCX)",
-                        data=docx_bytes,
-                        file_name=f"errorfree_report_{now_str}.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    )
-                with col_pdf:
-                    st.download_button(
-                        label="PDF",
-                        data=pdf_bytes,
-                        file_name=f"errorfree_report_{now_str}.pdf",
-                        mime="application/pdf",
-                    )
-
-        # ======= 最底部：聊天輸入框（st.chat_input，一直固定在底端） =======
-        if st.session_state.analysis_done and st.session_state.last_analysis_output:
-            if lang == "zh":
-                prompt = "請輸入你的追問（像 ChatGPT 一樣可以一直問）"
-            else:
-                prompt = "Enter your follow-up question (you can keep asking)"
-
-            followup_q = st.chat_input(prompt)
-
-            if followup_q:
+            if ask_btn and followup_q.strip():
                 with st.spinner("Thinking..."):
                     answer = run_followup_qa(
                         framework_key=st.session_state.last_framework_key,
@@ -914,13 +896,69 @@ def main():
                     (followup_q.strip(), answer)
                 )
                 save_state_to_disk()
-                # 立即在畫面上加一條（這一輪 rerun 的結尾）
+                # 立即顯示最新一筆
                 st.markdown("---")
                 idx = len(st.session_state.followup_history)
                 st.markdown(f"**Q{idx}:** {followup_q.strip()}")
                 st.markdown(f"**A{idx}:** {answer}")
 
-    # 最後再保險存一次狀態
+            # 下載區塊：放在連續提問區塊之下，只有一顆 Download 按鈕 + 下拉選擇格式
+            st.markdown("---")
+            if lang == "zh":
+                st.subheader("下載完整報告")
+                st.caption("請選擇格式後按下 Download。")
+            else:
+                st.subheader("Download full report")
+                st.caption("Choose a format, then click Download.")
+
+            report_text = build_full_report(lang)
+            if report_text:
+                now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+                txt_bytes = report_text.encode("utf-8")
+                docx_bytes = build_docx_bytes(report_text)
+                pdf_bytes = build_pdf_bytes(report_text)
+
+                # 格式選擇（隱藏三顆大按鈕，只用一個 Download）
+                if lang == "zh":
+                    fmt = st.selectbox(
+                        "選擇下載格式",
+                        ["TXT", "Word (DOCX)", "PDF"],
+                        key="download_format",
+                    )
+                    download_label = "Download"
+                else:
+                    fmt = st.selectbox(
+                        "Select format",
+                        ["TXT", "Word (DOCX)", "PDF"],
+                        key="download_format",
+                    )
+                    download_label = "Download"
+
+                if fmt == "TXT":
+                    data = txt_bytes
+                    mime = "text/plain"
+                    ext = "txt"
+                elif fmt == "Word (DOCX)":
+                    data = docx_bytes
+                    mime = (
+                        "application/vnd.openxmlformats-officedocument."
+                        "wordprocessingml.document"
+                    )
+                    ext = "docx"
+                else:  # PDF
+                    data = pdf_bytes
+                    mime = "application/pdf"
+                    ext = "pdf"
+
+                st.download_button(
+                    label=download_label,
+                    data=data,
+                    file_name=f"errorfree_report_{now_str}.{ext}",
+                    mime=mime,
+                )
+
+    # 最後保險存一次狀態
     save_state_to_disk()
 
 
