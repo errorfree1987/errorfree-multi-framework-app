@@ -1,5 +1,6 @@
 import os
 import datetime
+from pathlib import Path
 from typing import Dict
 
 import streamlit as st
@@ -16,7 +17,6 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # 簡易帳號系統（你可以在這裡新增/修改帳號）
 # ------------------------------------
 # role 說明：
-#   - "guest": 訪客（無帳號），使用 gpt-4.1-mini，每天 2 次
 #   - "free":  一般註冊 / 測試帳號，gpt-4.1-mini，每天 5 次
 #   - "advanced": 進階帳號，gpt-4.1，每天 10 次
 #   - "pro":  企業 / 內部專業帳號，gpt-5.1，次數不限（或你自己限制）
@@ -198,10 +198,8 @@ def read_file_to_text(uploaded_file) -> str:
 def get_model_and_limit(role: str):
     """
     回傳 (model_name, daily_limit)
-    role 可以是 "guest", "free", "advanced", "pro", "admin"
+    role 可以是 "free", "advanced", "pro", "admin"
     """
-    if role == "guest":
-        return "gpt-4.1-mini", 2
     if role == "free":
         return "gpt-4.1-mini", 5
     if role == "advanced":
@@ -210,7 +208,7 @@ def get_model_and_limit(role: str):
         return "gpt-5.1", None  # None 代表不限制
     if role == "admin":
         return "gpt-5.1", None
-    # fallback
+    # fallback，不應該發生
     return "gpt-4.1-mini", 2
 
 
@@ -255,12 +253,26 @@ def main():
         layout="wide",
     )
 
-    # 初始化 session 狀態
+    # 初始化 session 狀態（取消 guest 模式，預設為未登入）
     if "user_email" not in st.session_state:
         st.session_state.user_email = None
-        st.session_state.user_role = "guest"
+        st.session_state.user_role = None
         st.session_state.usage_date = None
         st.session_state.usage_count = 0
+
+    # 頂部品牌區：Logo + 標題 + 品牌線
+    logo_path = Path(__file__).parent / "logo.png"
+    col_logo, col_title = st.columns([1, 4])
+    with col_logo:
+        if logo_path.exists():
+            st.image(str(logo_path), use_column_width=True)
+    with col_title:
+        st.markdown(
+            "### Error-Free® AI 文件風險稽核平台\n"
+            "Error-Free® | 邱強博士團隊"
+        )
+
+    st.markdown("---")
 
     # 側邊欄：登入區 + 語言 + 框架 + 使用資訊
     with st.sidebar:
@@ -270,25 +282,23 @@ def main():
             # 已登入
             email = st.session_state.user_email
             role = st.session_state.user_role
-            if role == "guest":
-                role_label = "訪客 Guest"
-            elif role == "free":
-                role_label = "Free"
+            if role == "free":
+                role_label = "Free（一般測試）"
             elif role == "advanced":
-                role_label = "Advanced"
+                role_label = "Advanced（進階）"
             elif role == "pro":
-                role_label = "Pro"
+                role_label = "Pro（內部專業帳號）"
             else:
                 role_label = "Admin（管理者）"
 
             st.success(f"已登入：{email}（{role_label}）")
             if st.button("登出 / Log out"):
                 st.session_state.user_email = None
-                st.session_state.user_role = "guest"
+                st.session_state.user_role = None
                 st.session_state.usage_date = None
                 st.session_state.usage_count = 0
         else:
-            # 尚未登入：顯示登入表單 + 訪客模式
+            # 尚未登入：顯示登入表單（無 guest 模式）
             login_email = st.text_input("Email")
             login_password = st.text_input("密碼 / Password", type="password")
 
@@ -303,12 +313,7 @@ def main():
                 else:
                     st.error("Email 或密碼錯誤。")
 
-            if st.button("以訪客身份繼續 / Continue as guest"):
-                st.session_state.user_email = "Guest"
-                st.session_state.user_role = "guest"
-                st.session_state.usage_date = None
-                st.session_state.usage_count = 0
-                st.info("目前以訪客模式使用（每天分析次數有限）。")
+            st.info("目前僅開放授權帳號使用，請向管理者申請帳號。")
 
         st.markdown("---")
 
@@ -331,38 +336,54 @@ def main():
             else FRAMEWORKS[k]["name_en"],
         )
 
-        # 顯示目前使用的模型與次數限制
-        model_name, daily_limit = get_model_and_limit(st.session_state.user_role)
+        # 顯示目前使用的模型與次數限制（僅在已登入時顯示）
+        if st.session_state.user_role is not None:
+            model_name, daily_limit = get_model_and_limit(
+                st.session_state.user_role
+            )
 
-        # 計算今日使用次數 / 剩餘次數
-        today = datetime.date.today()
-        if st.session_state.usage_date != today:
-            # 這裡只更新顯示，不重設，重設會在按分析時真正處理
-            today_usage = 0
-        else:
-            today_usage = st.session_state.usage_count
-
-        if daily_limit is None:
-            remaining = None
-        else:
-            remaining = max(daily_limit - today_usage, 0)
-
-        if lang == "zh":
-            st.caption(f"目前使用模型：**{model_name}**")
-            if daily_limit is None:
-                st.caption(f"今日已用次數：{today_usage}（無上限，請留意 API 成本）")
+            # 計算今日使用次數 / 剩餘次數
+            today = datetime.date.today()
+            if st.session_state.usage_date != today:
+                today_usage = 0
             else:
-                st.caption(
-                    f"今日已用次數：{today_usage} 次／上限 {daily_limit} 次；剩餘：{remaining} 次"
-                )
-        else:
-            st.caption(f"Current model: **{model_name}**")
+                today_usage = st.session_state.usage_count
+
             if daily_limit is None:
-                st.caption(f"Today used: {today_usage} (no daily limit; be mindful of API cost)")
+                remaining = None
             else:
-                st.caption(
-                    f"Today used: {today_usage} / {daily_limit}; remaining: {remaining}"
-                )
+                remaining = max(daily_limit - today_usage, 0)
+
+            if lang == "zh":
+                st.caption(f"目前使用模型：**{model_name}**")
+                if st.session_state.user_role == "pro":
+                    st.caption("（Pro 模式僅供內部專案與重要客戶使用。）")
+                if daily_limit is None:
+                    st.caption(
+                        f"今日已用次數：{today_usage}（無上限，請留意 API 成本）"
+                    )
+                else:
+                    st.caption(
+                        f"今日已用次數：{today_usage} 次／上限 {daily_limit} 次；剩餘：{remaining} 次"
+                    )
+            else:
+                st.caption(f"Current model: **{model_name}**")
+                if st.session_state.user_role == "pro":
+                    st.caption("Pro mode is reserved for internal projects and key clients.")
+                if daily_limit is None:
+                    st.caption(
+                        f"Today used: {today_usage} (no daily limit; be mindful of API cost)"
+                    )
+                else:
+                    st.caption(
+                        f"Today used: {today_usage} / {daily_limit}; remaining: {remaining}"
+                    )
+        else:
+            # 未登入時提示
+            if lang == "zh":
+                st.caption("尚未登入，目前無法進行分析。")
+            else:
+                st.caption("Not logged in. Analysis is disabled.")
 
         # 若為管理者，顯示一些額外資訊
         if st.session_state.user_role == "admin":
@@ -373,6 +394,7 @@ def main():
                 f"今日已用次數 = {st.session_state.usage_count}"
             )
             if st.button("重置本 Session 今日使用次數 / Reset today's usage for this session"):
+                today = datetime.date.today()
                 st.session_state.usage_date = today
                 st.session_state.usage_count = 0
                 st.success("已重置本 Session 的今日使用次數。")
@@ -381,7 +403,7 @@ def main():
 
     # 主畫面：商業版文案
     if lang == "zh":
-        st.title("Error-Free® AI 文件風險稽核平台（多框架）")
+        st.title("多框架 AI 文件分析器")
         st.markdown(
             "這是一個專為專案文件、技術方案與關鍵溝通內容設計的 AI 輔助審查工具，"
             "結合 Error-Free® 的多種專業框架，協助你在事前發現遺漏與風險，降低錯誤成本。"
@@ -391,9 +413,10 @@ def main():
         upload_label = "上傳要分析的文件（支援 PDF、Word .docx、純文字 .txt）"
         start_button_label = "開始進行 AI 分析"
         warn_no_file = "請先上傳一個文件。"
+        warn_no_login = "請先登入授權帳號，才可執行分析。"
         result_title = "AI 分析結果"
     else:
-        st.title("Error-Free® AI Document Risk Audit Platform (Multi-framework)")
+        st.title("Multi-framework AI Document Analyzer")
         st.markdown(
             "This platform is designed for project documents, technical proposals and critical communication. "
             "Powered by Error-Free® frameworks and OpenAI models, it helps you detect omissions and risks "
@@ -404,6 +427,7 @@ def main():
         upload_label = "Upload a document (PDF, Word .docx, or plain .txt)"
         start_button_label = "Run AI analysis"
         warn_no_file = "Please upload a document first."
+        warn_no_login = "Please log in with an authorized account before running analysis."
         result_title = "AI analysis result"
 
     st.markdown("---")
@@ -429,6 +453,11 @@ def main():
 
     # 按鈕：開始分析
     if st.button(start_button_label):
+        # 一定要登入才能分析
+        if st.session_state.user_role is None:
+            st.error(warn_no_login)
+            return
+
         if not text:
             st.warning(warn_no_file)
         else:
