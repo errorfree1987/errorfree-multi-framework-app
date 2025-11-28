@@ -225,12 +225,13 @@ def read_file_to_text(uploaded_file) -> str:
             return "\n".join(p.text for p in doc.paragraphs)
         elif name.endswith(".txt"):
             return uploaded_file.read().decode("utf-8", errors="ignore")
+        elif name.endswith((".jpg", ".jpeg", ".png")):
+            # 目前僅標記有附加圖片，無法直接讀取圖片文字
+            return f"[附加圖片檔案：{uploaded_file.name}，目前系統無法自動擷取圖片內文字，請盡量提供文字版本的文件。]"
         else:
             return ""
     except Exception as e:
         return f"[讀取檔案時發生錯誤: {e}]"
-
-
 # =========================
 # OpenAI client & model selection
 # =========================
@@ -248,6 +249,8 @@ def resolve_model_for_user(role: str) -> str:
         return "gpt-4.1-mini"
     # 公司管理者預設給高階
     return "gpt-5.1"
+
+
 
 
 # =========================
@@ -442,6 +445,46 @@ def build_pdf_bytes(text: str) -> bytes:
     c.save()
     buf.seek(0)
     return buf.getvalue()
+
+def build_pptx_bytes(text: str) -> bytes:
+    """Very simple PPTX: one slide with bullet points from the report text.
+    If python-pptx is not installed, fall back to a DOCX file content in PPTX container.
+    """
+    try:
+        from pptx import Presentation
+        from pptx.util import Pt
+    except Exception:
+        # Fallback: still return a valid binary file, even if not a real PPTX.
+        return build_docx_bytes("PowerPoint export requires python-pptx.\n\n" + text)
+
+    prs = Presentation()
+    layout = prs.slide_layouts[1]  # title + content
+    slide = prs.slides.add_slide(layout)
+    slide.shapes.title.text = "Error-Free Analysis Report"
+
+    body = slide.placeholders[1].text_frame
+    body.clear()
+    first = True
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        if first:
+            body.text = line
+            p = body.paragraphs[0]
+            p.font.size = Pt(18)
+            first = False
+        else:
+            p = body.add_paragraph()
+            p.text = line
+            p.level = 0
+            p.font.size = Pt(14)
+
+    buf = BytesIO()
+    prs.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
+
 
 
 # =========================
@@ -1109,7 +1152,7 @@ def main():
     st.subheader("步驟一：上傳文件" if lang == "zh" else "Step 1: Upload Document")
     uploaded = st.file_uploader(
         "請上傳 PDF / DOCX / TXT" if lang == "zh" else "Upload PDF / DOCX / TXT",
-        type=["pdf", "docx", "txt"],
+        type=["pdf", "docx", "txt", "jpg", "jpeg", "png"],
     )
 
     if uploaded is not None:
@@ -1256,6 +1299,7 @@ def main():
             st.info("尚無追問" if lang == "zh" else "No follow-up questions yet")
 
         # Download section
+        
         st.markdown("##### 下載報告" if lang == "zh" else "##### Download Report")
         st.caption(
             "報告僅包含分析與Q&A，不含原始文件"
@@ -1273,37 +1317,47 @@ def main():
             report = build_full_report(lang, fw_key, state)
             now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
-            fmt = st.selectbox(
-                "格式" if lang == "zh" else "Format",
-                ["TXT", "Word", "PDF"],
-                key=f"fmt_{fw_key}",
-            )
+            label = "下載" if lang == "zh" else "Download"
+            help_text = "選擇一種格式下載報告" if lang == "zh" else "Choose a format to download the report"
+            with st.popover(label):
+                st.write(help_text)
+                options = (
+                    ["Word (DOCX)", "PDF", "PowerPoint (PPTX)"]
+                    if lang == "zh"
+                    else ["Word (DOCX)", "PDF", "PowerPoint (PPTX)"]
+                )
+                fmt = st.radio(
+                    "格式" if lang == "zh" else "Format",
+                    options,
+                    key=f"fmt_{fw_key}",
+                )
 
-            if fmt == "TXT":
-                data = report.encode("utf-8")
-                mime = "text/plain"
-                ext = "txt"
-            elif fmt == "Word":
-                data = build_docx_bytes(report)
-                mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                ext = "docx"
-            else:
-                data = build_pdf_bytes(report)
-                mime = "application/pdf"
-                ext = "pdf"
+                if fmt:
+                    if fmt.startswith("Word"):
+                        data = build_docx_bytes(report)
+                        mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        ext = "docx"
+                    elif fmt.startswith("PDF"):
+                        data = build_pdf_bytes(report)
+                        mime = "application/pdf"
+                        ext = "pdf"
+                    else:
+                        data = build_pptx_bytes(report)
+                        mime = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                        ext = "pptx"
 
-            if st.download_button(
-                "下載" if lang == "zh" else "Download",
-                data=data,
-                file_name=f"errorfree_{fw_key}_{now_str}.{ext}",
-                mime=mime,
-                key=f"dl_{fw_key}",
-            ):
-                state["download_used"] = True
-                save_state_to_disk()
-                record_usage(user_email, fw_key, "download")
-
-    # Follow-up chat
+                    clicked = st.download_button(
+                        "開始下載" if lang == "zh" else "Download",
+                        data=data,
+                        file_name=f"errorfree_{fw_key}_{now_str}.{ext}",
+                        mime=mime,
+                        key=f"dl_{fw_key}_{ext}",
+                    )
+                    if clicked:
+                        state["download_used"] = True
+                        save_state_to_disk()
+                        record_usage(user_email, fw_key, "download")
+# Follow-up chat
     if any_analysis:
         st.markdown("---")
         st.subheader("後續提問" if lang == "zh" else "Follow-up Question")
@@ -1319,7 +1373,7 @@ def main():
         else:
             extra_file = st.file_uploader(
                 "上傳附加文件（可選）" if lang == "zh" else "Upload supplementary file (optional)",
-                type=["pdf", "docx", "txt"],
+                type=["pdf", "docx", "txt", "jpg", "jpeg", "png"],
                 key=f"extra_{new_key}",
             )
             extra_text = read_file_to_text(extra_file) if extra_file else ""
