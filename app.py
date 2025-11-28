@@ -6,9 +6,31 @@ from io import BytesIO
 import streamlit as st
 import pdfplumber
 from docx import Document
-from openai import OpenAI
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
+from PIL import Image
+
+# optional pptx (for PPTX report)
+try:
+    from pptx import Presentation  # python-pptx
+
+    HAS_PPTX = True
+except Exception:
+    Presentation = None  # type: ignore
+    HAS_PPTX = False
+
+# optional OCR (for image to text)
+try:
+    import pytesseract  # type: ignore
+
+    HAS_TESSERACT = True
+except Exception:
+    HAS_TESSERACT = False
+
+from openai import OpenAI
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 # =========================
 # Company multi-tenant support
@@ -101,12 +123,12 @@ FRAMEWORKS: Dict[str, Dict] = {
 }
 
 # =========================
-# State persistence & usage tracking (4A)
+# State persistence & usage tracking
 # =========================
 
 STATE_FILE = Path("user_state.json")
 DOC_TRACK_FILE = Path("user_docs.json")
-USAGE_FILE = Path("usage_stats.json")  # 新增：使用量統計
+USAGE_FILE = Path("usage_stats.json")
 
 
 def load_doc_tracking() -> Dict[str, List[str]]:
@@ -138,25 +160,25 @@ def load_usage_stats() -> Dict[str, Dict]:
 
 def save_usage_stats(data: Dict[str, Dict]):
     try:
-        USAGE_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        USAGE_FILE.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
     except Exception:
         pass
 
 
 def record_usage(user_email: str, framework_key: str, kind: str):
-    """
-    kind: 'analysis', 'followup', 'download'
-    """
+    """kind: 'analysis', 'followup', 'download'"""
     if not user_email:
         return
     data = load_usage_stats()
     user_entry = data.get(user_email, {})
     fw_map = user_entry.get("frameworks", {})
-    fw_entry = fw_map.get(framework_key, {
-        "analysis_runs": 0,
-        "followups": 0,
-        "downloads": 0,
-    })
+    fw_entry = fw_map.get(
+        framework_key,
+        {"analysis_runs": 0, "followups": 0, "downloads": 0},
+    )
+
     if kind == "analysis":
         fw_entry["analysis_runs"] = fw_entry.get("analysis_runs", 0) + 1
     elif kind == "followup":
@@ -204,7 +226,7 @@ def restore_state_from_disk():
 
 
 # =========================
-# File reading
+# File reading (含圖片 OCR)
 # =========================
 
 
@@ -225,6 +247,15 @@ def read_file_to_text(uploaded_file) -> str:
             return "\n".join(p.text for p in doc.paragraphs)
         elif name.endswith(".txt"):
             return uploaded_file.read().decode("utf-8", errors="ignore")
+        elif name.endswith((".jpg", ".jpeg", ".png")):
+            img = Image.open(uploaded_file)
+            if HAS_TESSERACT:
+                text = pytesseract.image_to_string(img)
+                if not text.strip():
+                    return "[圖片已成功讀取，但未偵測到可辨識文字，請確認圖片內容。]"
+                return text
+            else:
+                return "[目前伺服器尚未安裝 OCR 模組，無法直接辨識圖片文字，請改上傳 PDF / DOCX / TXT 檔案。]"
         else:
             return ""
     except Exception as e:
@@ -232,21 +263,15 @@ def read_file_to_text(uploaded_file) -> str:
 
 
 # =========================
-# OpenAI client & model selection
+# Model selection
 # =========================
-
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 
 def resolve_model_for_user(role: str) -> str:
-    # 高階帳號 → GPT-5.1
     if role in ["admin", "pro"]:
         return "gpt-5.1"
-    # Guest 走 mini
     if role == "free":
         return "gpt-4.1-mini"
-    # 公司管理者預設給高階
     return "gpt-5.1"
 
 
@@ -271,7 +296,7 @@ def run_llm_analysis(
         return "[Error] OPENAI_API_KEY 尚未設定，無法連線至 OpenAI。"
 
     try:
-        response = client.responses.create(
+        resp = client.responses.create(
             model=model_name,
             input=[
                 {"role": "system", "content": system_prompt},
@@ -279,7 +304,7 @@ def run_llm_analysis(
             ],
             max_output_tokens=2500,
         )
-        return response.output_text
+        return resp.output_text
     except Exception as e:
         return f"[呼叫 OpenAI API 時發生錯誤: {e}]"
 
@@ -330,7 +355,7 @@ def run_followup_qa(
         return "[Error] OPENAI_API_KEY 尚未設定。"
 
     try:
-        response = client.responses.create(
+        resp = client.responses.create(
             model=model_name,
             input=[
                 {"role": "system", "content": system_prompt},
@@ -338,23 +363,18 @@ def run_followup_qa(
             ],
             max_output_tokens=2000,
         )
-        return response.output_text
+        return resp.output_text
     except Exception as e:
         return f"[呼叫 OpenAI API 時發生錯誤: {e}]"
 
 
 # =========================
-# Report formatting
+# Report formatting + exporters
 # =========================
 
 
 def clean_report_text(text: str) -> str:
-    replacements = {
-        "■": "-",
-        "•": "-",
-        "–": "-",
-        "—": "-",
-    }
+    replacements = {"■": "-", "•": "-", "–": "-", "—": "-"}
     for old, new in replacements.items():
         text = text.replace(old, new)
     return text
@@ -444,13 +464,61 @@ def build_pdf_bytes(text: str) -> bytes:
     return buf.getvalue()
 
 
+def build_pptx_bytes(text: str) -> bytes:
+    if not HAS_PPTX or Presentation is None:
+        raise RuntimeError("python-pptx not installed on server.")
+    prs = Presentation()
+    lines = [l for l in text.split("\n") if l.strip()]
+    if not lines:
+        lines = ["Error-Free Report", "No content"]
+
+    # title slide
+    title_slide_layout = prs.slide_layouts[0]
+    slide = prs.slides.add_slide(title_slide_layout)
+    slide.shapes.title.text = lines[0][:100]
+    if len(lines) > 1:
+        subtitle = slide.placeholders[1]
+        subtitle.text = "Generated by Error-Free® Analyzer"
+
+    # content slides: 8 lines per slide
+    body_layout = prs.slide_layouts[1]
+    chunk: List[str] = []
+    for line in lines[1:]:
+        chunk.append(line)
+        if len(chunk) >= 8:
+            slide = prs.slides.add_slide(body_layout)
+            slide.shapes.title.text = "Details"
+            tf = slide.placeholders[1].text_frame
+            for c_line in chunk:
+                if tf.text:
+                    p = tf.add_paragraph()
+                else:
+                    p = tf.paragraphs[0]
+                p.text = c_line
+            chunk = []
+    if chunk:
+        slide = prs.slides.add_slide(body_layout)
+        slide.shapes.title.text = "Details"
+        tf = slide.placeholders[1].text_frame
+        for c_line in chunk:
+            if tf.text:
+                p = tf.add_paragraph()
+            else:
+                p = tf.paragraphs[0]
+            p.text = c_line
+
+    buf = BytesIO()
+    prs.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
+
+
 # =========================
 # Dashboards
 # =========================
 
 
 def company_admin_dashboard():
-    """Dashboard for company_admin role, scoped to a single company_code."""
     companies = load_companies()
     code = st.session_state.get("company_code")
     email = st.session_state.get("user_email")
@@ -524,10 +592,8 @@ def company_admin_dashboard():
                 )
             else:
                 if content_access:
-                    # 4C：啟用內容相關使用量檢視（基本版，不顯示實際文字內容）
                     st.write(
-                        "最後使用時間："
-                        + u_stats.get("last_used", "-")
+                        "最後使用時間：" + u_stats.get("last_used", "-")
                         if lang == "zh"
                         else "Last used: " + u_stats.get("last_used", "-")
                     )
@@ -538,16 +604,19 @@ def company_admin_dashboard():
                             if lang == "zh"
                             else FRAMEWORKS[fw_key]["name_en"]
                         )
-                        st.markdown(
-                            f"- {fw_name}：分析 {fw_data.get('analysis_runs', 0)} 次，"
-                            f"追問 {fw_data.get('followups', 0)} 次，"
-                            f"下載 {fw_data.get('downloads', 0)} 次"
-                            if lang == "zh"
-                            else f"- {fw_name}: "
-                            f"analysis {fw_data.get('analysis_runs', 0)} times, "
-                            f"follow-ups {fw_data.get('followups', 0)} times, "
-                            f"downloads {fw_data.get('downloads', 0)} times"
-                        )
+                        if lang == "zh":
+                            st.markdown(
+                                f"- {fw_name}：分析 {fw_data.get('analysis_runs', 0)} 次，"
+                                f"追問 {fw_data.get('followups', 0)} 次，"
+                                f"下載 {fw_data.get('downloads', 0)} 次"
+                            )
+                        else:
+                            st.markdown(
+                                f"- {fw_name}: "
+                                f"analysis {fw_data.get('analysis_runs', 0)} times, "
+                                f"follow-ups {fw_data.get('followups', 0)} times, "
+                                f"downloads {fw_data.get('downloads', 0)} times"
+                            )
                 else:
                     st.caption(
                         "（僅顯示使用量總數，未啟用內容檢視權限）"
@@ -563,7 +632,6 @@ def admin_dashboard():
     st.title("Admin Dashboard — Error-Free®")
     st.markdown("---")
 
-    # 1) Guest accounts
     st.subheader("📌 Guest 帳號列表" if lang == "zh" else "📌 Guest accounts")
     guests = load_guest_accounts()
     if not guests:
@@ -575,7 +643,6 @@ def admin_dashboard():
             )
             st.markdown("---")
 
-    # 2) Guest document usage
     st.subheader("📁 Guest 文件使用狀況" if lang == "zh" else "📁 Guest document usage")
     doc_tracking = load_doc_tracking()
     if not doc_tracking:
@@ -584,16 +651,16 @@ def admin_dashboard():
         )
     else:
         for email, docs in doc_tracking.items():
-            st.markdown(
-                f"**{email}** — 上傳文件數：{len(docs)} / 3"
-                if lang == "zh"
-                else f"**{email}** — uploaded documents: {len(docs)} / 3"
-            )
+            if lang == "zh":
+                st.markdown(f"**{email}** — 上傳文件數：{len(docs)} / 3")
+            else:
+                st.markdown(
+                    f"**{email}** — uploaded documents: {len(docs)} / 3"
+                )
             for d in docs:
                 st.markdown(f"- {d}")
             st.markdown("---")
 
-    # 3) Framework state in current session
     st.subheader(
         "🧩 模組分析與追問狀況 (Session-based)"
         if lang == "zh"
@@ -610,32 +677,24 @@ def admin_dashboard():
                 else FRAMEWORKS[fw_key]["name_en"]
             )
             st.markdown(f"### ▶ {fw_name}")
-            st.write(
-                f"分析完成：{state.get('analysis_done')}"
-                if lang == "zh"
-                else f"Analysis done: {state.get('analysis_done')}"
-            )
-            st.write(
-                f"追問次數：{len(state.get('followup_history', []))}"
-                if lang == "zh"
-                else f"Follow-up count: {len(state.get('followup_history', []))}"
-            )
-            st.write(
-                f"已下載報告：{state.get('download_used')}"
-                if lang == "zh"
-                else f"Downloaded report: {state.get('download_used')}"
-            )
+            if lang == "zh":
+                st.write(f"分析完成：{state.get('analysis_done')}")
+                st.write(f"追問次數：{len(state.get('followup_history', []))}")
+                st.write(f"已下載報告：{state.get('download_used')}")
+            else:
+                st.write(f"Analysis done: {state.get('analysis_done')}")
+                st.write(f"Follow-up count: {len(state.get('followup_history', []))}")
+                st.write(f"Downloaded report: {state.get('download_used')}")
             st.markdown("---")
 
-    # 4) 公司使用量總覽（4A）
     st.subheader("🏢 公司使用量總覽" if lang == "zh" else "🏢 Company usage overview")
     companies = load_companies()
     usage_stats = load_usage_stats()
-    guests = load_guest_accounts()
 
     if not companies:
         st.info("目前尚未建立任何公司。" if lang == "zh" else "No companies registered yet.")
     else:
+        doc_tracking = load_doc_tracking()
         for code, entry in companies.items():
             company_name = entry.get("company_name") or code
             users = entry.get("users", [])
@@ -645,8 +704,6 @@ def admin_dashboard():
             total_analysis = 0
             total_followups = 0
             total_downloads = 0
-
-            doc_tracking = load_doc_tracking()
 
             for u in users:
                 total_docs += len(doc_tracking.get(u, []))
@@ -658,50 +715,44 @@ def admin_dashboard():
                     total_downloads += fw_data.get("downloads", 0)
 
             st.markdown(f"### {company_name} (code: {code})")
-            st.write(
-                f"學生 / 使用者數：{len(users)}"
-                if lang == "zh"
-                else f"Users: {len(users)}"
-            )
-            st.write(
-                f"總上傳文件數：{total_docs}"
-                if lang == "zh"
-                else f"Total uploaded documents: {total_docs}"
-            )
-            st.write(
-                f"總分析次數：{total_analysis}"
-                if lang == "zh"
-                else f"Total analysis runs: {total_analysis}"
-            )
-            st.write(
-                f"總追問次數：{total_followups}"
-                if lang == "zh"
-                else f"Total follow-ups: {total_followups}"
-            )
-            st.write(
-                f"總下載次數：{total_downloads}"
-                if lang == "zh"
-                else f"Total downloads: {total_downloads}"
-            )
-            st.write(
-                "content_access：" + ("啟用" if content_access else "關閉")
-                if lang == "zh"
-                else "content_access: " + ("enabled" if content_access else "disabled")
-            )
+            if lang == "zh":
+                st.write(f"學生 / 使用者數：{len(users)}")
+                st.write(f"總上傳文件數：{total_docs}")
+                st.write(f"總分析次數：{total_analysis}")
+                st.write(f"總追問次數：{total_followups}")
+                st.write(f"總下載次數：{total_downloads}")
+                st.write("content_access：" + ("啟用" if content_access else "關閉"))
+            else:
+                st.write(f"Users: {len(users)}")
+                st.write(f"Total uploaded documents: {total_docs}")
+                st.write(f"Total analysis runs: {total_analysis}")
+                st.write(f"Total follow-ups: {total_followups}")
+                st.write(f"Total downloads: {total_downloads}")
+                st.write(
+                    "content_access: " + ("enabled" if content_access else "disabled")
+                )
             st.markdown("---")
 
-    # 5) 公司權限設定（4C 控制開關）
-    st.subheader("🔐 公司內容檢視權限設定" if lang == "zh" else "🔐 Company content access settings")
+    st.subheader(
+        "🔐 公司內容檢視權限設定"
+        if lang == "zh"
+        else "🔐 Company content access settings"
+    )
+    companies = load_companies()
     if not companies:
         st.info("尚無公司可設定。" if lang == "zh" else "No companies to configure.")
     else:
-        # 先顯示 checkbox
         for code, entry in companies.items():
             label = f"{entry.get('company_name') or code} ({code})"
             key = f"content_access_{code}"
             current_val = entry.get("content_access", False)
             st.checkbox(
-                label + (" — 可檢視學生分析使用量" if lang == "zh" else " — can view user usage details"),
+                label
+                + (
+                    " — 可檢視學生分析使用量"
+                    if lang == "zh"
+                    else " — can view user usage details"
+                ),
                 value=current_val,
                 key=key,
             )
@@ -711,11 +762,15 @@ def admin_dashboard():
         ):
             for code, entry in companies.items():
                 key = f"content_access_{code}"
-                new_val = bool(st.session_state.get(key, entry.get("content_access", False)))
+                new_val = bool(
+                    st.session_state.get(key, entry.get("content_access", False))
+                )
                 entry["content_access"] = new_val
                 companies[code] = entry
             save_companies(companies)
-            st.success("已更新公司權限設定。" if lang == "zh" else "Company settings updated.")
+            st.success(
+                "已更新公司權限設定。" if lang == "zh" else "Company settings updated."
+            )
 
 
 if "show_admin" not in st.session_state:
@@ -741,16 +796,20 @@ def admin_router() -> bool:
 
 
 # =========================
-# Main app
+# UI helpers
 # =========================
 
 
 def language_selector():
-    """Top-level language toggle: English (on top) / 中文 (below)."""
     current = st.session_state.get("lang", "zh")
     index = 0 if current == "en" else 1
     choice = st.radio("Language / 語言", ("English", "中文"), index=index)
     st.session_state.lang = "en" if choice == "English" else "zh"
+
+
+# =========================
+# Main app
+# =========================
 
 
 def main():
@@ -759,7 +818,6 @@ def main():
     )
     restore_state_from_disk()
 
-    # 初始化 session
     defaults = [
         ("user_email", None),
         ("user_role", None),
@@ -805,9 +863,8 @@ def main():
         else:
             st.subheader("尚未登入" if lang == "zh" else "Not Logged In")
 
-    # ======= Login screen =======
+    # Login page
     if not st.session_state.is_authenticated:
-        # 語言切換
         language_selector()
         lang = st.session_state.lang
 
@@ -819,7 +876,6 @@ def main():
         st.title(title)
         st.markdown("---")
 
-        # 登入說明
         if lang == "zh":
             st.markdown(
                 "- 左側為公司內部員工使用。\n"
@@ -829,42 +885,38 @@ def main():
         else:
             st.markdown(
                 "- Left: internal Error-Free employees.\n"
-                "- Middle: **Company Admins** for each client company.\n"
-                "- Right: students / end-users using **Guest trial accounts**."
+                "- Middle: Company Admins for each client company.\n"
+                "- Right: students / end-users using Guest trial accounts."
             )
 
         st.markdown("---")
 
-        # 1. 內部員工 / 會員登入（獨立一行）
+        # 1. 內部員工 / 會員登入
         st.markdown(
-            "### 內部員工 / 會員登入" if lang == "zh" else "### Internal Employee / Member Login"
+            "### 內部員工 / 會員登入"
+            if lang == "zh"
+            else "### Internal Employee / Member Login"
         )
-        emp_col = st.container()
-        with emp_col:
-            emp_email = st.text_input("Email", key="emp_email")
-            emp_pw = st.text_input(
-                "密碼" if lang == "zh" else "Password",
-                type="password",
-                key="emp_pw",
-            )
-            if st.button("登入" if lang == "zh" else "Login", key="emp_login_btn"):
-                account = ACCOUNTS.get(emp_email)
-                if account and account["password"] == emp_pw:
-                    st.session_state.user_email = emp_email
-                    st.session_state.user_role = account["role"]
-                    st.session_state.is_authenticated = True
-                    save_state_to_disk()
-                    st.rerun()
-                else:
-                    st.error(
-                        "帳號或密碼錯誤"
-                        if lang == "zh"
-                        else "Invalid email or password"
-                    )
+        emp_email = st.text_input("Email", key="emp_email")
+        emp_pw = st.text_input(
+            "密碼" if lang == "zh" else "Password",
+            type="password",
+            key="emp_pw",
+        )
+        if st.button("登入" if lang == "zh" else "Login", key="emp_login_btn"):
+            account = ACCOUNTS.get(emp_email)
+            if account and account["password"] == emp_pw:
+                st.session_state.user_email = emp_email
+                st.session_state.user_role = account["role"]
+                st.session_state.is_authenticated = True
+                save_state_to_disk()
+                st.rerun()
+            else:
+                st.error("帳號或密碼錯誤" if lang == "zh" else "Invalid email or password")
 
         st.markdown("---")
 
-        # 2. 公司管理者註冊 － 公司管理者登入（同一橫排）
+        # 2. 公司管理者：註冊 + 登入
         st.markdown(
             "### 公司管理者（企業窗口）"
             if lang == "zh"
@@ -872,7 +924,6 @@ def main():
         )
         col_ca_signup, col_ca_login = st.columns(2)
 
-        # 公司管理者註冊
         with col_ca_signup:
             st.markdown("**公司管理者註冊**" if lang == "zh" else "**Company Admin Signup**")
             ca_new_email = st.text_input(
@@ -941,7 +992,6 @@ def main():
                             else "Company admin account created"
                         )
 
-        # 公司管理者登入
         with col_ca_login:
             st.markdown("**公司管理者登入**" if lang == "zh" else "**Company Admin Login**")
             ca_email = st.text_input(
@@ -979,11 +1029,10 @@ def main():
 
         st.markdown("---")
 
-        # 3. Guest 註冊 － Guest 登入（同一橫排）
+        # 3. Guest 註冊 + 登入
         st.markdown("### Guest 試用帳號" if lang == "zh" else "### Guest Trial Accounts")
         col_guest_signup, col_guest_login = st.columns(2)
 
-        # Guest 註冊
         with col_guest_signup:
             st.markdown("**Guest 試用註冊**" if lang == "zh" else "**Guest Signup**")
             new_guest_email = st.text_input(
@@ -1057,7 +1106,6 @@ def main():
                             else f"Guest account created! Password: {pw}"
                         )
 
-        # Guest 登入
         with col_guest_login:
             st.markdown("**Guest 試用登入**" if lang == "zh" else "**Guest Login**")
             g_email = st.text_input("Guest Email", key="g_email")
@@ -1086,9 +1134,9 @@ def main():
                         else "Invalid guest credentials"
                     )
 
-        return  # login page end
+        return
 
-    # ======= Main app (logged in) =======
+    # Authenticated main app
     if admin_router():
         return
 
@@ -1105,11 +1153,13 @@ def main():
     is_guest = user_role == "free"
     model_name = resolve_model_for_user(user_role)
 
-    # Step 1: upload
+    # Step 1: upload document
     st.subheader("步驟一：上傳文件" if lang == "zh" else "Step 1: Upload Document")
     uploaded = st.file_uploader(
-        "請上傳 PDF / DOCX / TXT" if lang == "zh" else "Upload PDF / DOCX / TXT",
-        type=["pdf", "docx", "txt"],
+        "請上傳 PDF / DOCX / TXT / 圖片"
+        if lang == "zh"
+        else "Upload PDF / DOCX / TXT / Image",
+        type=["pdf", "docx", "txt", "jpg", "jpeg", "png"],
     )
 
     if uploaded is not None:
@@ -1220,7 +1270,6 @@ def main():
             current_state["analysis_output"] = analysis_text
             current_state["followup_history"] = []
             save_state_to_disk()
-            # 記錄使用量（4A）
             record_usage(user_email, new_key, "analysis")
             st.success("分析完成！" if lang == "zh" else "Analysis completed!")
 
@@ -1251,11 +1300,11 @@ def main():
             for i, (q, a) in enumerate(state["followup_history"], start=1):
                 st.markdown(f"**Q{i}:** {q}")
                 st.markdown(f"**A{i}:** {a}")
-                st.markdown("---")
+                st.markmarkdown("---")
         else:
             st.info("尚無追問" if lang == "zh" else "No follow-up questions yet")
 
-        # Download section
+        # Download section with popover
         st.markdown("##### 下載報告" if lang == "zh" else "##### Download Report")
         st.caption(
             "報告僅包含分析與Q&A，不含原始文件"
@@ -1273,35 +1322,47 @@ def main():
             report = build_full_report(lang, fw_key, state)
             now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
-            fmt = st.selectbox(
-                "格式" if lang == "zh" else "Format",
-                ["TXT", "Word", "PDF"],
-                key=f"fmt_{fw_key}",
-            )
+            label = "下載" if lang == "zh" else "Download"
+            with st.popover(label, key=f"popover_{fw_key}"):
+                st.write("選擇格式：" if lang == "zh" else "Choose a format:")
+                options = ["Word", "PDF"]
+                if HAS_PPTX:
+                    options.append("PPTX")
+                fmt = st.radio(
+                    "Format",
+                    options,
+                    key=f"fmt_{fw_key}",
+                )
 
-            if fmt == "TXT":
-                data = report.encode("utf-8")
-                mime = "text/plain"
-                ext = "txt"
-            elif fmt == "Word":
-                data = build_docx_bytes(report)
-                mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                ext = "docx"
-            else:
-                data = build_pdf_bytes(report)
-                mime = "application/pdf"
-                ext = "pdf"
+                try:
+                    if fmt == "Word":
+                        data = build_docx_bytes(report)
+                        mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        ext = "docx"
+                    elif fmt == "PDF":
+                        data = build_pdf_bytes(report)
+                        mime = "application/pdf"
+                        ext = "pdf"
+                    else:
+                        data = build_pptx_bytes(report)
+                        mime = (
+                            "application/vnd.openxmlformats-officedocument."
+                            "presentationml.presentation"
+                        )
+                        ext = "pptx"
 
-            if st.download_button(
-                "下載" if lang == "zh" else "Download",
-                data=data,
-                file_name=f"errorfree_{fw_key}_{now_str}.{ext}",
-                mime=mime,
-                key=f"dl_{fw_key}",
-            ):
-                state["download_used"] = True
-                save_state_to_disk()
-                record_usage(user_email, fw_key, "download")
+                    if st.download_button(
+                        "下載報告" if lang == "zh" else "Download report",
+                        data=data,
+                        file_name=f"errorfree_{fw_key}_{now_str}.{ext}",
+                        mime=mime,
+                        key=f"dl_{fw_key}",
+                    ):
+                        state["download_used"] = True
+                        save_state_to_disk()
+                        record_usage(user_email, fw_key, "download")
+                except RuntimeError as e:
+                    st.error(str(e))
 
     # Follow-up chat
     if any_analysis:
@@ -1318,8 +1379,10 @@ def main():
             )
         else:
             extra_file = st.file_uploader(
-                "上傳附加文件（可選）" if lang == "zh" else "Upload supplementary file (optional)",
-                type=["pdf", "docx", "txt"],
+                "上傳附加文件（可選）"
+                if lang == "zh"
+                else "Upload supplementary file (optional)",
+                type=["pdf", "docx", "txt", "jpg", "jpeg", "png"],
                 key=f"extra_{new_key}",
             )
             extra_text = read_file_to_text(extra_file) if extra_file else ""
@@ -1348,10 +1411,6 @@ def main():
 
     save_state_to_disk()
 
-
-# =========================
-# Entry point
-# =========================
 
 if __name__ == "__main__":
     main()
