@@ -199,10 +199,10 @@ def resolve_model_for_user(role: str) -> str:
     # 高階帳號 → GPT-5.1
     if role in ["admin", "pro"]:
         return "gpt-5.1"
-    # Guest / company_admin 都走 4.1-mini 嗎？目前規格：只有 guest 是低階
+    # Guest 走 mini
     if role == "free":
         return "gpt-4.1-mini"
-    # company_admin 預設給高階
+    # 公司管理者預設給高階
     return "gpt-5.1"
 
 
@@ -562,7 +562,7 @@ def admin_router() -> bool:
             else "Back to analysis"
         ):
             st.session_state.show_admin = False
-            st.experimental_rerun()
+            st.rerun()
         return True
     return False
 
@@ -570,6 +570,14 @@ def admin_router() -> bool:
 # =========================
 # Main app
 # =========================
+
+
+def language_selector():
+    """Top-level language toggle: English (on top) / 中文 (below)."""
+    current = st.session_state.get("lang", "zh")
+    index = 0 if current == "en" else 1
+    choice = st.radio("Language / 語言", ("English", "中文"), index=index)
+    st.session_state.lang = "en" if choice == "English" else "zh"
 
 
 def main():
@@ -598,7 +606,7 @@ def main():
 
     doc_tracking = load_doc_tracking()
 
-    # Sidebar
+    # Sidebar（不再顯示語言切換，只顯示帳號資訊）
     with st.sidebar:
         lang = st.session_state.lang
 
@@ -608,7 +616,7 @@ def main():
         ):
             if st.button("管理後台 Admin Dashboard"):
                 st.session_state.show_admin = True
-                st.experimental_rerun()
+                st.rerun()
 
         if st.session_state.is_authenticated:
             st.subheader("帳號資訊" if lang == "zh" else "Account")
@@ -620,29 +628,46 @@ def main():
                 st.session_state.framework_states = {}
                 st.session_state.last_doc_text = ""
                 save_state_to_disk()
-                st.experimental_rerun()
+                st.rerun()
         else:
             st.subheader("尚未登入" if lang == "zh" else "Not Logged In")
 
     # ======= Login screen =======
     if not st.session_state.is_authenticated:
+        # 語言切換（English 在上，中文在下）
+        language_selector()
         lang = st.session_state.lang
-        st.title(
+
+        title = (
             "Error-Free® 多框架文件分析"
             if lang == "zh"
-            else "Error-Free® Multi-framework Analyzer"
+            else "Error-Free® Multi-framework Document Analyzer"
         )
+        st.title(title)
         st.markdown("---")
 
-        col_emp, col_guest = st.columns(2)
-
-        # 內部員工 / 會員
-        with col_emp:
+        # 登入說明
+        if lang == "zh":
             st.markdown(
-                "### 內部員工 / 會員登入"
-                if lang == "zh"
-                else "### Employee / Member Login"
+                "- 左側為公司內部員工使用。\n"
+                "- 中間為「公司管理者」（企業端窗口）登入 / 註冊。\n"
+                "- 右側為學生 / 客戶的 Guest 試用登入 / 註冊。"
             )
+        else:
+            st.markdown(
+                "- Left: internal Error-Free employees.\n"
+                "- Middle: **Company Admins** for each client company.\n"
+                "- Right: students / end-users using **Guest trial accounts**."
+            )
+
+        st.markdown("---")
+
+        # 1. 內部員工 / 會員登入（獨立一行）
+        st.markdown(
+            "### 內部員工 / 會員登入" if lang == "zh" else "### Internal Employee / Member Login"
+        )
+        emp_col = st.container()
+        with emp_col:
             emp_email = st.text_input("Email", key="emp_email")
             emp_pw = st.text_input(
                 "密碼" if lang == "zh" else "Password",
@@ -656,7 +681,7 @@ def main():
                     st.session_state.user_role = account["role"]
                     st.session_state.is_authenticated = True
                     save_state_to_disk()
-                    st.experimental_rerun()
+                    st.rerun()
                 else:
                     st.error(
                         "帳號或密碼錯誤"
@@ -664,48 +689,19 @@ def main():
                         else "Invalid email or password"
                     )
 
-            # 公司管理者登入
-            st.markdown("---")
-            st.markdown(
-                "### 公司管理者登入" if lang == "zh" else "### Company Admin Login"
-            )
-            ca_email = st.text_input(
-                "管理者 Email" if lang == "zh" else "Admin Email", key="ca_email"
-            )
-            ca_pw = st.text_input(
-                "管理者密碼" if lang == "zh" else "Admin Password",
-                type="password",
-                key="ca_pw",
-            )
-            if st.button(
-                "管理者登入" if lang == "zh" else "Login as Company Admin",
-                key="ca_login_btn",
-            ):
-                guests = load_guest_accounts()
-                acc = guests.get(ca_email)
-                if (
-                    acc
-                    and acc.get("password") == ca_pw
-                    and acc.get("role") == "company_admin"
-                ):
-                    st.session_state.user_email = ca_email
-                    st.session_state.user_role = "company_admin"
-                    st.session_state.company_code = acc.get("company_code")
-                    st.session_state.is_authenticated = True
-                    save_state_to_disk()
-                    st.experimental_rerun()
-                else:
-                    st.error(
-                        "管理者帳號或密碼錯誤"
-                        if lang == "zh"
-                        else "Invalid company admin credentials"
-                    )
+        st.markdown("---")
 
-            # 公司管理者註冊
-            st.markdown("---")
-            st.markdown(
-                "### 公司管理者註冊" if lang == "zh" else "### Company Admin Signup"
-            )
+        # 2. 公司管理者註冊 － 公司管理者登入（同一橫排）
+        st.markdown(
+            "### 公司管理者（企業窗口）"
+            if lang == "zh"
+            else "### Company Admin (Client-side)"
+        )
+        col_ca_signup, col_ca_login = st.columns(2)
+
+        # 公司管理者註冊
+        with col_ca_signup:
+            st.markdown("**公司管理者註冊**" if lang == "zh" else "**Company Admin Signup**")
             ca_new_email = st.text_input(
                 "管理者註冊 Email" if lang == "zh" else "Admin signup email",
                 key="ca_new_email",
@@ -754,6 +750,7 @@ def main():
                         }
                         save_guest_accounts(guests)
 
+                        companies = load_companies()
                         entry = companies.get(ca_company_code, {})
                         admins = entry.get("admins", [])
                         if ca_new_email not in admins:
@@ -765,48 +762,58 @@ def main():
                             entry["content_access"] = False
                         companies[ca_company_code] = entry
                         save_companies(companies)
+
                         st.success(
                             "公司管理者帳號已建立"
                             if lang == "zh"
                             else "Company admin account created"
                         )
 
-        # Guest 區
-        with col_guest:
-            st.markdown(
-                "### Guest 試用登入" if lang == "zh" else "### Guest Login"
+        # 公司管理者登入
+        with col_ca_login:
+            st.markdown("**公司管理者登入**" if lang == "zh" else "**Company Admin Login**")
+            ca_email = st.text_input(
+                "管理者 Email" if lang == "zh" else "Admin Email",
+                key="ca_email",
             )
-
-            g_email = st.text_input("Guest Email", key="g_email")
-            g_pw = st.text_input(
-                "密碼" if lang == "zh" else "Password",
+            ca_pw = st.text_input(
+                "管理者密碼" if lang == "zh" else "Admin Password",
                 type="password",
-                key="g_pw",
+                key="ca_pw",
             )
             if st.button(
-                "登入 Guest" if lang == "zh" else "Login as Guest",
-                key="guest_login_btn",
+                "管理者登入" if lang == "zh" else "Login as Company Admin",
+                key="ca_login_btn",
             ):
                 guests = load_guest_accounts()
-                g_acc = guests.get(g_email)
-                if g_acc and g_acc.get("password") == g_pw:
-                    st.session_state.company_code = g_acc.get("company_code")
-                    st.session_state.user_email = g_email
-                    st.session_state.user_role = "free"
+                acc = guests.get(ca_email)
+                if (
+                    acc
+                    and acc.get("password") == ca_pw
+                    and acc.get("role") == "company_admin"
+                ):
+                    st.session_state.user_email = ca_email
+                    st.session_state.user_role = "company_admin"
+                    st.session_state.company_code = acc.get("company_code")
                     st.session_state.is_authenticated = True
                     save_state_to_disk()
-                    st.experimental_rerun()
+                    st.rerun()
                 else:
                     st.error(
-                        "帳號或密碼錯誤"
+                        "管理者帳號或密碼錯誤"
                         if lang == "zh"
-                        else "Invalid guest credentials"
+                        else "Invalid company admin credentials"
                     )
 
-            st.markdown("---")
-            st.markdown(
-                "### Guest 試用註冊" if lang == "zh" else "### Guest Signup"
-            )
+        st.markdown("---")
+
+        # 3. Guest 註冊 － Guest 登入（同一橫排）
+        st.markdown("### Guest 試用帳號" if lang == "zh" else "### Guest Trial Accounts")
+        col_guest_signup, col_guest_login = st.columns(2)
+
+        # Guest 註冊
+        with col_guest_signup:
+            st.markdown("**Guest 試用註冊**" if lang == "zh" else "**Guest Signup**")
             new_guest_email = st.text_input(
                 "註冊 Email" if lang == "zh" else "Email for signup",
                 key="new_guest_email",
@@ -866,7 +873,8 @@ def main():
                             users.append(new_guest_email)
                         entry["users"] = users
                         if "company_name" not in entry:
-                            entry["company_name"] = ""
+                            company_name = entry.get("company_name", "")
+                            entry["company_name"] = company_name
                         if "content_access" not in entry:
                             entry["content_access"] = False
                         companies[guest_company_code] = entry
@@ -877,7 +885,37 @@ def main():
                             if lang == "zh"
                             else f"Guest account created! Password: {pw}"
                         )
-        return
+
+        # Guest 登入
+        with col_guest_login:
+            st.markdown("**Guest 試用登入**" if lang == "zh" else "**Guest Login**")
+            g_email = st.text_input("Guest Email", key="g_email")
+            g_pw = st.text_input(
+                "密碼" if lang == "zh" else "Password",
+                type="password",
+                key="g_pw",
+            )
+            if st.button(
+                "登入 Guest" if lang == "zh" else "Login as Guest",
+                key="guest_login_btn",
+            ):
+                guests = load_guest_accounts()
+                g_acc = guests.get(g_email)
+                if g_acc and g_acc.get("password") == g_pw:
+                    st.session_state.company_code = g_acc.get("company_code")
+                    st.session_state.user_email = g_email
+                    st.session_state.user_role = "free"
+                    st.session_state.is_authenticated = True
+                    save_state_to_disk()
+                    st.rerun()
+                else:
+                    st.error(
+                        "帳號或密碼錯誤"
+                        if lang == "zh"
+                        else "Invalid guest credentials"
+                    )
+
+        return  # login page end
 
     # ======= Main app (logged in) =======
     if admin_router():
@@ -902,6 +940,7 @@ def main():
         "請上傳 PDF / DOCX / TXT" if lang == "zh" else "Upload PDF / DOCX / TXT",
         type=["pdf", "docx", "txt"],
     )
+
     if uploaded is not None:
         doc_text = read_file_to_text(uploaded)
         if doc_text:
@@ -989,7 +1028,7 @@ def main():
             st.session_state.last_doc_text = ""
             st.session_state.current_doc_id = None
             save_state_to_disk()
-            st.experimental_rerun()
+            st.rerun()
 
     if run_btn and can_run:
         if not st.session_state.last_doc_text:
@@ -1090,7 +1129,7 @@ def main():
                 state["download_used"] = True
                 save_state_to_disk()
 
-    # Follow-up chat (底部固定)
+    # Follow-up chat
     if any_analysis:
         st.markdown("---")
         st.subheader("後續提問" if lang == "zh" else "Follow-up Question")
@@ -1130,7 +1169,7 @@ def main():
                     )
                 curr_state["followup_history"].append((prompt, answer))
                 save_state_to_disk()
-                st.experimental_rerun()
+                st.rerun()
 
     save_state_to_disk()
 
