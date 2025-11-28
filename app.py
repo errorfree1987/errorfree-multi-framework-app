@@ -436,7 +436,7 @@ def main():
     # =========================
     with st.sidebar:
         # ============= Admin Dashboard Entry Button =============
-        if st.session_state.is_authenticated and st.session_state.user_role in ["admin", "pro", "company_admin"]:
+        if st.session_state.is_authenticated and st.session_state.user_role in ["admin", "pro"]:
             if st.button("管理後台 Admin Dashboard"):
                 st.session_state.show_admin = True
                 st.rerun()
