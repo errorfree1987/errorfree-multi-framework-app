@@ -101,11 +101,12 @@ FRAMEWORKS: Dict[str, Dict] = {
 }
 
 # =========================
-# State persistence
+# State persistence & usage tracking (4A)
 # =========================
 
 STATE_FILE = Path("user_state.json")
 DOC_TRACK_FILE = Path("user_docs.json")
+USAGE_FILE = Path("usage_stats.json")  # 新增：使用量統計
 
 
 def load_doc_tracking() -> Dict[str, List[str]]:
@@ -124,6 +125,50 @@ def save_doc_tracking(data: Dict[str, List[str]]):
         )
     except Exception:
         pass
+
+
+def load_usage_stats() -> Dict[str, Dict]:
+    if not USAGE_FILE.exists():
+        return {}
+    try:
+        return json.loads(USAGE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def save_usage_stats(data: Dict[str, Dict]):
+    try:
+        USAGE_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def record_usage(user_email: str, framework_key: str, kind: str):
+    """
+    kind: 'analysis', 'followup', 'download'
+    """
+    if not user_email:
+        return
+    data = load_usage_stats()
+    user_entry = data.get(user_email, {})
+    fw_map = user_entry.get("frameworks", {})
+    fw_entry = fw_map.get(framework_key, {
+        "analysis_runs": 0,
+        "followups": 0,
+        "downloads": 0,
+    })
+    if kind == "analysis":
+        fw_entry["analysis_runs"] = fw_entry.get("analysis_runs", 0) + 1
+    elif kind == "followup":
+        fw_entry["followups"] = fw_entry.get("followups", 0) + 1
+    elif kind == "download":
+        fw_entry["downloads"] = fw_entry.get("downloads", 0) + 1
+
+    fw_map[framework_key] = fw_entry
+    user_entry["frameworks"] = fw_map
+    user_entry["last_used"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    data[user_email] = user_entry
+    save_usage_stats(data)
 
 
 def save_state_to_disk():
@@ -153,7 +198,6 @@ def restore_state_from_disk():
         data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
     except Exception:
         return
-
     for k, v in data.items():
         if k not in st.session_state:
             st.session_state[k] = v
@@ -454,6 +498,7 @@ def company_admin_dashboard():
 
     users = entry.get("users", [])
     doc_tracking = load_doc_tracking()
+    usage_stats = load_usage_stats()
 
     if not users:
         st.info(
@@ -469,12 +514,47 @@ def company_admin_dashboard():
                 ("上傳文件數：" if lang == "zh" else "Uploaded documents: ")
                 + str(len(docs))
             )
-            if content_access:
+
+            u_stats = usage_stats.get(u)
+            if not u_stats:
                 st.caption(
-                    "（未來可擴充檢視分析內容與 Q&A）"
+                    "尚無分析記錄"
                     if lang == "zh"
-                    else "(Future: view analysis & Q&A content)"
+                    else "No analysis usage recorded yet."
                 )
+            else:
+                if content_access:
+                    # 4C：啟用內容相關使用量檢視（基本版，不顯示實際文字內容）
+                    st.write(
+                        "最後使用時間："
+                        + u_stats.get("last_used", "-")
+                        if lang == "zh"
+                        else "Last used: " + u_stats.get("last_used", "-")
+                    )
+                    fw_map = u_stats.get("frameworks", {})
+                    for fw_key, fw_data in fw_map.items():
+                        fw_name = (
+                            FRAMEWORKS[fw_key]["name_zh"]
+                            if lang == "zh"
+                            else FRAMEWORKS[fw_key]["name_en"]
+                        )
+                        st.markdown(
+                            f"- {fw_name}：分析 {fw_data.get('analysis_runs', 0)} 次，"
+                            f"追問 {fw_data.get('followups', 0)} 次，"
+                            f"下載 {fw_data.get('downloads', 0)} 次"
+                            if lang == "zh"
+                            else f"- {fw_name}: "
+                            f"analysis {fw_data.get('analysis_runs', 0)} times, "
+                            f"follow-ups {fw_data.get('followups', 0)} times, "
+                            f"downloads {fw_data.get('downloads', 0)} times"
+                        )
+                else:
+                    st.caption(
+                        "（僅顯示使用量總數，未啟用內容檢視權限）"
+                        if lang == "zh"
+                        else "(Only aggregate usage visible; content access disabled.)"
+                    )
+
             st.markdown("---")
 
 
@@ -483,6 +563,7 @@ def admin_dashboard():
     st.title("Admin Dashboard — Error-Free®")
     st.markdown("---")
 
+    # 1) Guest accounts
     st.subheader("📌 Guest 帳號列表" if lang == "zh" else "📌 Guest accounts")
     guests = load_guest_accounts()
     if not guests:
@@ -494,6 +575,7 @@ def admin_dashboard():
             )
             st.markdown("---")
 
+    # 2) Guest document usage
     st.subheader("📁 Guest 文件使用狀況" if lang == "zh" else "📁 Guest document usage")
     doc_tracking = load_doc_tracking()
     if not doc_tracking:
@@ -511,6 +593,7 @@ def admin_dashboard():
                 st.markdown(f"- {d}")
             st.markdown("---")
 
+    # 3) Framework state in current session
     st.subheader(
         "🧩 模組分析與追問狀況 (Session-based)"
         if lang == "zh"
@@ -543,6 +626,96 @@ def admin_dashboard():
                 else f"Downloaded report: {state.get('download_used')}"
             )
             st.markdown("---")
+
+    # 4) 公司使用量總覽（4A）
+    st.subheader("🏢 公司使用量總覽" if lang == "zh" else "🏢 Company usage overview")
+    companies = load_companies()
+    usage_stats = load_usage_stats()
+    guests = load_guest_accounts()
+
+    if not companies:
+        st.info("目前尚未建立任何公司。" if lang == "zh" else "No companies registered yet.")
+    else:
+        for code, entry in companies.items():
+            company_name = entry.get("company_name") or code
+            users = entry.get("users", [])
+            content_access = entry.get("content_access", False)
+
+            total_docs = 0
+            total_analysis = 0
+            total_followups = 0
+            total_downloads = 0
+
+            doc_tracking = load_doc_tracking()
+
+            for u in users:
+                total_docs += len(doc_tracking.get(u, []))
+                u_stats = usage_stats.get(u, {})
+                fw_map = u_stats.get("frameworks", {})
+                for fw_data in fw_map.values():
+                    total_analysis += fw_data.get("analysis_runs", 0)
+                    total_followups += fw_data.get("followups", 0)
+                    total_downloads += fw_data.get("downloads", 0)
+
+            st.markdown(f"### {company_name} (code: {code})")
+            st.write(
+                f"學生 / 使用者數：{len(users)}"
+                if lang == "zh"
+                else f"Users: {len(users)}"
+            )
+            st.write(
+                f"總上傳文件數：{total_docs}"
+                if lang == "zh"
+                else f"Total uploaded documents: {total_docs}"
+            )
+            st.write(
+                f"總分析次數：{total_analysis}"
+                if lang == "zh"
+                else f"Total analysis runs: {total_analysis}"
+            )
+            st.write(
+                f"總追問次數：{total_followups}"
+                if lang == "zh"
+                else f"Total follow-ups: {total_followups}"
+            )
+            st.write(
+                f"總下載次數：{total_downloads}"
+                if lang == "zh"
+                else f"Total downloads: {total_downloads}"
+            )
+            st.write(
+                "content_access：" + ("啟用" if content_access else "關閉")
+                if lang == "zh"
+                else "content_access: " + ("enabled" if content_access else "disabled")
+            )
+            st.markdown("---")
+
+    # 5) 公司權限設定（4C 控制開關）
+    st.subheader("🔐 公司內容檢視權限設定" if lang == "zh" else "🔐 Company content access settings")
+    if not companies:
+        st.info("尚無公司可設定。" if lang == "zh" else "No companies to configure.")
+    else:
+        # 先顯示 checkbox
+        for code, entry in companies.items():
+            label = f"{entry.get('company_name') or code} ({code})"
+            key = f"content_access_{code}"
+            current_val = entry.get("content_access", False)
+            st.checkbox(
+                label + (" — 可檢視學生分析使用量" if lang == "zh" else " — can view user usage details"),
+                value=current_val,
+                key=key,
+            )
+
+        if st.button(
+            "儲存公司權限設定" if lang == "zh" else "Save company access settings"
+        ):
+            for code, entry in companies.items():
+                key = f"content_access_{code}"
+                new_val = bool(st.session_state.get(key, entry.get("content_access", False)))
+                entry["content_access"] = new_val
+                companies[code] = entry
+            save_companies(companies)
+            st.success("已更新公司權限設定。" if lang == "zh" else "Company settings updated.")
 
 
 if "show_admin" not in st.session_state:
@@ -606,7 +779,7 @@ def main():
 
     doc_tracking = load_doc_tracking()
 
-    # Sidebar（不再顯示語言切換，只顯示帳號資訊）
+    # Sidebar
     with st.sidebar:
         lang = st.session_state.lang
 
@@ -634,7 +807,7 @@ def main():
 
     # ======= Login screen =======
     if not st.session_state.is_authenticated:
-        # 語言切換（English 在上，中文在下）
+        # 語言切換
         language_selector()
         lang = st.session_state.lang
 
@@ -750,7 +923,6 @@ def main():
                         }
                         save_guest_accounts(guests)
 
-                        companies = load_companies()
                         entry = companies.get(ca_company_code, {})
                         admins = entry.get("admins", [])
                         if ca_new_email not in admins:
@@ -873,8 +1045,7 @@ def main():
                             users.append(new_guest_email)
                         entry["users"] = users
                         if "company_name" not in entry:
-                            company_name = entry.get("company_name", "")
-                            entry["company_name"] = company_name
+                            entry["company_name"] = entry.get("company_name", "")
                         if "content_access" not in entry:
                             entry["content_access"] = False
                         companies[guest_company_code] = entry
@@ -1049,6 +1220,8 @@ def main():
             current_state["analysis_output"] = analysis_text
             current_state["followup_history"] = []
             save_state_to_disk()
+            # 記錄使用量（4A）
+            record_usage(user_email, new_key, "analysis")
             st.success("分析完成！" if lang == "zh" else "Analysis completed!")
 
     # Step 4: show all framework results
@@ -1128,6 +1301,7 @@ def main():
             ):
                 state["download_used"] = True
                 save_state_to_disk()
+                record_usage(user_email, fw_key, "download")
 
     # Follow-up chat
     if any_analysis:
@@ -1169,6 +1343,7 @@ def main():
                     )
                 curr_state["followup_history"].append((prompt, answer))
                 save_state_to_disk()
+                record_usage(user_email, new_key, "followup")
                 st.rerun()
 
     save_state_to_disk()
