@@ -4,6 +4,7 @@ import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple
 from io import BytesIO
+import secrets  # 用來產生 guest 密碼
 
 import streamlit as st
 import pdfplumber
@@ -21,21 +22,47 @@ client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 # =========================
 # Account config
 # =========================
+# 固定帳號（管理者 / Pro）
 ACCOUNTS = {
     "admin@errorfree.com": {"password": "1111", "role": "admin"},
     "dr.chiu@errorfree.com": {"password": "2222", "role": "pro"},
     "guest@errorfree.com": {"password": "3333", "role": "pro"},
 }
 
+# 動態 guest 帳號會存成 JSON 檔
+GUEST_FILE = Path("guest_accounts.json")
+
+
+def load_guest_accounts() -> Dict[str, Dict]:
+    if not GUEST_FILE.exists():
+        return {}
+    try:
+        raw = GUEST_FILE.read_text(encoding="utf-8")
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            return data
+        return {}
+    except Exception:
+        return {}
+
+
+def save_guest_accounts(data: Dict[str, Dict]):
+    try:
+        GUEST_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
 
 def get_model_and_limit(role: str):
     """Return (model_name, daily_limit). daily_limit=None means unlimited."""
+    # 低階免費版：給 guest / free
     if role == "free":
         return "gpt-4.1-mini", 5
     if role == "advanced":
         return "gpt-4.1", 10
     if role in ["pro", "admin"]:
         return "gpt-5.1", None
+    # 預設也當作 free
     return "gpt-4.1-mini", 2
 
 
@@ -245,7 +272,7 @@ def run_followup_qa(
 def clean_report_text(text: str) -> str:
     """整理報告文字，避免黑色方塊與怪符號，讓 TXT / DOCX / PDF 看起來專業。"""
     replacements = {
-        "■": "-",      # 你檔案裡看到的黑色方塊
+        "■": "-",      # 常見黑色方塊
         "\u2022": "-",  # bullet
         "\u2013": "-",  # en dash
         "\u2014": "-",  # em dash
@@ -449,33 +476,45 @@ def main():
         else:
             if lang == "zh":
                 st.subheader("尚未登入")
-                st.caption("請在主畫面輸入帳號密碼登入")
+                st.caption("請在主畫面輸入帳號密碼登入或申請 guest 試用帳號")
             else:
                 st.subheader("Not logged in")
-                st.caption("Please log in on the main page.")
+                st.caption("Please log in on the main page or sign up for a guest account.")
 
-    # login page
+    # login / signup page
     if not st.session_state.is_authenticated:
         if lang == "zh":
             st.title("Error-Free® 多框架 AI 文件分析")
-            st.subheader("請先登入")
+            st.subheader("請先登入或申請 guest 試用帳號")
         else:
             st.title("Error-Free® Multi-framework AI Document Analyzer")
-            st.subheader("Please log in first")
+            st.subheader("Please log in or sign up as guest")
+
+        # ---- Login 區塊 ----
+        if lang == "zh":
+            st.markdown("### 登入 Login")
+        else:
+            st.markdown("### Login")
 
         email = st.text_input("Email")
         if lang == "zh":
-            password = st.text_input("密碼", type="password")
-            login_btn = st.button("登入")
+            password = st.text_input("密碼 Password", type="password")
+            login_btn = st.button("登入 Login")
         else:
             password = st.text_input("Password", type="password")
             login_btn = st.button("Login")
 
         if login_btn:
+            # 先從固定帳號找，再從 guest 檔案找
             account = ACCOUNTS.get(email)
-            if account and account["password"] == password:
+            guest_accounts = load_guest_accounts()
+            if account is None:
+                account = guest_accounts.get(email)
+
+            if account and account.get("password") == password:
+                role = account.get("role", "free")
                 st.session_state.user_email = email
-                st.session_state.user_role = account["role"]
+                st.session_state.user_role = role
                 st.session_state.is_authenticated = True
                 st.session_state.login_success = True
                 st.session_state.usage_date = datetime.date.today().isoformat()
@@ -487,9 +526,71 @@ def main():
                     st.error("帳號或密碼錯誤，請再試一次。")
                 else:
                     st.error("Invalid email or password. Please try again.")
-        return
 
-    # logged-in main UI
+        st.markdown("---")
+
+        # ---- Guest 註冊區塊 ----
+        if lang == "zh":
+            st.markdown("### 申請 guest 試用帳號")
+            st.caption(
+                "適用於學生 / 客戶試用。功能與正式版相同，但使用較低階、免費的模型，"
+                "每日使用次數有限。請輸入 Email 取得一組 guest 密碼。"
+            )
+            guest_email_label = "Guest Email（請填寫你的 Email）"
+            signup_btn_label = "取得 guest 密碼"
+        else:
+            st.markdown("### Sign up for guest account")
+            st.caption(
+                "For students / trial users. All features are available, "
+                "but it uses a lower-tier free model with a daily usage limit. "
+                "Enter your email to generate a guest password."
+            )
+            guest_email_label = "Guest email"
+            signup_btn_label = "Generate guest password"
+
+        guest_email = st.text_input(guest_email_label, key="guest_email_input")
+
+        if st.button(signup_btn_label):
+            if not guest_email:
+                if lang == "zh":
+                    st.error("請先輸入 Email。")
+                else:
+                    st.error("Please enter an email.")
+            else:
+                guest_accounts = load_guest_accounts()
+                if guest_email in ACCOUNTS or guest_email in guest_accounts:
+                    if lang == "zh":
+                        st.error("此 Email 已經有帳號，請直接使用登入功能。")
+                    else:
+                        st.error("This email already has an account. Please log in instead.")
+                else:
+                    # 產生 8 碼數字密碼
+                    password = "".join(secrets.choice("0123456789") for _ in range(8))
+                    guest_accounts[guest_email] = {
+                        "password": password,
+                        "role": "free",  # 使用低階免費模型
+                    }
+                    save_guest_accounts(guest_accounts)
+                    if lang == "zh":
+                        st.success(
+                            f"已為你建立 guest 帳號。\n\n"
+                            f"登入 Email：{guest_email}\n"
+                            f"登入密碼：{password}\n\n"
+                            "請務必先把密碼抄下來，之後用上面的 Email / 密碼登入系統。"
+                        )
+                    else:
+                        st.success(
+                            f"Guest account created.\n\n"
+                            f"Login email: {guest_email}\n"
+                            f"Password: {password}\n\n"
+                            "Please copy this password now and use it to log in."
+                        )
+
+        return  # 未登入時這一頁就結束
+
+    # ===== 以下是登入後主畫面 =====
+    lang = st.session_state.lang
+
     if lang == "zh":
         st.title("Error-Free® 多框架 AI 文件分析")
         if st.session_state.login_success:
