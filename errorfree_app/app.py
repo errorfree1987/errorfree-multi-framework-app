@@ -4,198 +4,110 @@ import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple
 from io import BytesIO
-import textwrap
+import secrets  # 用來產生 guest 密碼
 
 import streamlit as st
 import pdfplumber
 from docx import Document
 from openai import OpenAI
-
-# PDF 產生（請確認你的環境有安裝 reportlab）
-from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
 
-# =========================================
-# OpenAI client（從環境變數讀取 API Key）
-# =========================================
+# =========================
+# OpenAI client
+# =========================
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
-# =========================================
-# 簡易帳號系統（你可以在這裡改帳號密碼）
-# =========================================
+# =========================
+# Account config
+# =========================
+# 固定帳號（管理者 / Pro）
 ACCOUNTS = {
-    # 管理者帳號
-    "admin@errorfree.com": {
-        "password": "1111",
-        "role": "admin",
-    },
-    # 內部 Pro 使用者
-    "dr.chiu@errorfree.com": {
-        "password": "2222",
-        "role": "pro",
-    },
-    # 內部測試用帳號（不是匿名 guest）
-    "guest@errorfree.com": {
-        "password": "3333",
-        "role": "pro",
-    },
+    "admin@errorfree.com": {"password": "1111", "role": "admin"},
+    "dr.chiu@errorfree.com": {"password": "2222", "role": "pro"},
+    "guest@errorfree.com": {"password": "3333", "role": "pro"},
 }
 
-# =========================================
-# 依角色選模型 + 每日次數上限
-# =========================================
+# 動態 guest 帳號會存成 JSON 檔
+GUEST_FILE = Path("guest_accounts.json")
+
+
+def load_guest_accounts() -> Dict[str, Dict]:
+    if not GUEST_FILE.exists():
+        return {}
+    try:
+        raw = GUEST_FILE.read_text(encoding="utf-8")
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            return data
+        return {}
+    except Exception:
+        return {}
+
+
+def save_guest_accounts(data: Dict[str, Dict]):
+    try:
+        GUEST_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def get_model_and_limit(role: str):
-    """
-    回傳 (model_name, daily_limit)
-    daily_limit = None 表示無上限
-    """
+    """Return (model_name, daily_limit). daily_limit=None means unlimited."""
+    # 低階免費版：給 guest / free
     if role == "free":
         return "gpt-4.1-mini", 5
     if role == "advanced":
         return "gpt-4.1", 10
-    if role == "pro":
+    if role in ["pro", "admin"]:
         return "gpt-5.1", None
-    if role == "admin":
-        return "gpt-5.1", None
-    # 預設
+    # 預設也當作 free
     return "gpt-4.1-mini", 2
 
 
-# =========================================
-# Multi-framework 設定（可再增加）
-# =========================================
+# =========================
+# Framework definitions
+# =========================
 FRAMEWORKS: Dict[str, Dict] = {
     "omission": {
         "name_zh": "Error-Free® 遺漏錯誤檢查框架",
         "name_en": "Error-Free® Omission Error Check Framework",
-        "description_zh": (
-            "針對文件中「該出現卻沒出現」的內容進行系統性盤點，"
-            "運用 Error-Free® 的遺漏檢查觀點，找出可能被忽略的關鍵資訊。"
+        "wrapper_zh": (
+            "你是一位 Error-Free® 遺漏錯誤檢查專家。"
+            "請分析文件中可能遺漏的重要內容、條件、假設、角色、步驟、風險或例外，"
+            "並說明遺漏的影響與具體補強建議，最後整理成條列與一個簡單的 Markdown 表格。"
         ),
-        "description_en": (
-            "Systematically checks for content that SHOULD be present but is missing, "
-            "using the Error-Free® omission perspective to reveal overlooked elements."
+        "wrapper_en": (
+            "You are an Error-Free® omission error expert. "
+            "Review the document, find important missing information or conditions, "
+            "explain the impact, and give concrete suggestions, plus a simple Markdown table."
         ),
-        "wrapper_zh": """
-你是一位 Error-Free® 遺漏錯誤檢查專家，精通遺漏檢查方法與遺漏錯誤型態。
-
-請你扮演「文件顧問」，用這個框架來分析輸入的文件，找出：
-1. 文件可能遺漏的重要內容、條件、假設、角色、步驟、風險或例外情況。
-2. 這些遺漏，可能在實務上造成什麼後果（例如專案失敗、誤解、作業風險、客訴…）。
-3. 文件撰寫人應該如何具體補強、修改或新增內容。
-
-請特別注意：
-- 不只是改錯字，而是針對「沒有寫出來」但應該要寫的地方。
-- 你可以引用文件中的關鍵句子來說明，但不要原封不動複製太長的段落。
-- 回答時請用條列方式，讓使用者可以直接依序修正文件。
-
-輸出格式請用繁體中文，依照下列結構：
-
-一、文件重點摘要（3–5 行）
-
-二、可能的遺漏錯誤（條列敘述，每點說明「哪裡遺漏」與「為何重要」）
-
-三、具體修正與補強建議（逐點對應上面的遺漏，提出可直接採用的補寫句子、段落或檢查項目）
-
-四、請額外產出一個 Markdown 表格，欄位為：
-| 遺漏類別/主題 | 發現內容（簡述） | 可能影響 | 建議補強方向 |
-表格中每一列對應一個重要的遺漏點，讓使用者可以快速掃描與追蹤。
-        """,
-        "wrapper_en": """
-You are an Error-Free® omission error expert.
-
-Your job is to review the document and identify:
-1. Important information, conditions, assumptions, roles, steps, risks, or exceptions that SHOULD
-   be present but are missing.
-2. The potential practical impact of those omissions (e.g. project failure, misunderstandings,
-   operational risk, customer complaints).
-3. Concrete and actionable suggestions on how to revise or extend the document.
-
-Please:
-- Focus on omissions (missing content), not minor wording issues.
-- You may quote short phrases from the document as examples, but do not copy long sections.
-- Use a clear bullet-list style so the user can directly revise the document.
-
-Answer structure in English:
-
-1. Concise summary of the document (3–5 sentences)
-2. Potential omission errors (bullet list, each with “what is missing” and “why it matters”)
-3. Concrete revision suggestions (bullet list with sample wording or specific guidance)
-4. Additionally, output a Markdown table with columns:
-   | Category/Theme | Finding (short) | Potential impact | Recommendation |
-Each row should correspond to one important omission so that the user can quickly scan and track it.
-        """,
     },
     "technical": {
         "name_zh": "Error-Free® 技術風險檢查框架",
         "name_en": "Error-Free® Technical Risk Check Framework",
-        "description_zh": (
-            "從技術假設、邊界條件、相容性、安全性與可維護性等關鍵面向出發，"
-            "協助識別方案或文件中可能被忽略的技術風險與隱患。"
+        "wrapper_zh": (
+            "你是一位 Error-Free® 技術風險檢查專家。"
+            "請從技術假設、邊界條件、相容性、安全性、可靠度與單點失敗等面向分析文件，"
+            "列出技術風險、風險等級與實務改善建議，並以 Markdown 表格整理重點。"
         ),
-        "description_en": (
-            "Identifies hidden technical risks from assumptions, edge cases, compatibility, "
-            "safety and maintainability perspectives in your solution or documentation."
+        "wrapper_en": (
+            "You are an Error-Free® technical risk review expert. "
+            "Analyze the document for technical assumptions, edge cases, compatibility, "
+            "safety and single points of failure. List risks, risk level and mitigation, "
+            "and provide a summary Markdown table."
         ),
-        "wrapper_zh": """
-你是一位 Error-Free® 技術風險檢查專家，擅長在需求文件、設計文件、方案提案中找出
-常被忽略的技術風險與隱患。
-
-請針對輸入的文件，依下列面向進行分析（如適用）：
-- 技術假設是否合理？有沒有沒說清楚的前提或限制？
-- 邊界條件與例外情況是否有被考慮？
-- 與其他系統／模組／流程的相容性與整合風險是什麼？
-- 安全性、可靠度、可維護性、可監控性，有沒有潛在風險？
-- 有沒有容易被忽略的「單點失敗」、「人為操作風險」或「外部依賴」？
-
-輸出格式（繁體中文）請用：
-
-一、技術內容與設計重點的簡要摘要
-
-二、可能的技術風險（條列說明，每點包含：風險內容、成因、涉及範圍）
-
-三、風險等級判斷與影響說明（高／中／低，並說明理由）
-
-四、具體改善建議（可以是設計調整、補充檢查點、額外文件、測試建議等）
-
-五、請額外產出一個 Markdown 表格，欄位為：
-| 風險項目 | 風險等級（高/中/低） | 影響說明 | 建議對策 |
-表格列出你認為最值得優先處理的風險項目，方便後續追蹤與管理。
-        """,
-        "wrapper_en": """
-You are an Error-Free® technical risk review expert. Your job is to find hidden
-technical risks in requirements, design documents or solution proposals.
-
-Please review the document and analyze (when applicable):
-- Are the technical assumptions reasonable and clearly stated?
-- Are edge cases and exceptional conditions considered?
-- What are the compatibility / integration risks with other systems or processes?
-- Are there potential risks regarding safety, reliability, maintainability, observability?
-- Are there single points of failure, human-operation risks, or external dependencies?
-
-Answer structure in English:
-
-1. Brief summary of the technical content and main design ideas
-2. Potential technical risks (bullet list, each with cause / context / affected scope)
-3. Risk level and impact (High/Medium/Low, with short justification)
-4. Concrete mitigation suggestions (design changes, additional checks, tests, documentation, etc.)
-5. Additionally, output a Markdown table with columns:
-   | Risk item | Risk level (High/Medium/Low) | Impact description | Mitigation suggestion |
-Each row should correspond to one important risk that should be prioritized for follow-up.
-        """,
     },
 }
 
-# =========================================
-# 持久化：把狀態存到檔案，離開網頁後仍可還原
-# （單機、單人使用情境優先）
-# =========================================
+# =========================
+# State persistence
+# =========================
 STATE_FILE = Path("user_state.json")
 
 
 def save_state_to_disk():
-    """把重要狀態存到本機檔案，下次開頁可以自動回復。"""
     data = {
         "user_email": st.session_state.get("user_email"),
         "user_role": st.session_state.get("user_role"),
@@ -204,20 +116,16 @@ def save_state_to_disk():
         "usage_date": st.session_state.get("usage_date"),
         "usage_count": st.session_state.get("usage_count", 0),
         "last_doc_text": st.session_state.get("last_doc_text", ""),
-        "last_framework_key": st.session_state.get("last_framework_key"),
-        "last_analysis_output": st.session_state.get("last_analysis_output", ""),
-        "followup_history": st.session_state.get("followup_history", []),
-        "analysis_done": st.session_state.get("analysis_done", False),
+        "framework_states": st.session_state.get("framework_states", {}),
+        "selected_framework_key": st.session_state.get("selected_framework_key"),
     }
     try:
         STATE_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     except Exception:
-        # 如果寫檔失敗，不要讓整個 app 掛掉
         pass
 
 
 def restore_state_from_disk():
-    """如果有存過狀態，開啟網頁時自動回復，不用再登入。"""
     if not STATE_FILE.exists():
         return
     try:
@@ -225,19 +133,17 @@ def restore_state_from_disk():
         data = json.loads(raw)
     except Exception:
         return
-
     for key, value in data.items():
         if key not in st.session_state:
             st.session_state[key] = value
 
 
-# =========================================
-# 工具：讀取上傳檔案文字
-# =========================================
+# =========================
+# File reading
+# =========================
 def read_file_to_text(uploaded_file) -> str:
     if uploaded_file is None:
         return ""
-
     name = uploaded_file.name.lower()
     try:
         if name.endswith(".pdf"):
@@ -258,18 +164,14 @@ def read_file_to_text(uploaded_file) -> str:
         return f"[讀取檔案時發生錯誤: {e}]"
 
 
-# =========================================
-# 工具：第一次框架分析
-# =========================================
+# =========================
+# LLM helpers
+# =========================
 def run_llm_analysis(
-    framework_key: str,
-    language: str,
-    document_text: str,
-    model_name: str,
+    framework_key: str, language: str, document_text: str, model_name: str
 ) -> str:
     fw = FRAMEWORKS[framework_key]
     system_prompt = fw["wrapper_zh"] if language == "zh" else fw["wrapper_en"]
-
     if language == "zh":
         user_prompt = "以下是要分析的文件內容：\n\n" + document_text
     else:
@@ -292,9 +194,6 @@ def run_llm_analysis(
         return f"[呼叫 OpenAI API 時發生錯誤: {e}]"
 
 
-# =========================================
-# 工具：後續追問 / Q&A
-# =========================================
 def run_followup_qa(
     framework_key: str,
     language: str,
@@ -302,55 +201,53 @@ def run_followup_qa(
     analysis_output: str,
     user_question: str,
     model_name: str,
+    extra_text: str = "",
 ) -> str:
+    """Follow-up QA, 可附加一份額外上傳文件內容（extra_text）。"""
     fw = FRAMEWORKS[framework_key]
 
+    # 全部用 ASCII，避免任何未結束字串問題
     if language == "zh":
-        system_prompt = f"""
-你是一位 Error-Free® 文件與風險顧問，熟悉以下框架：
-- {fw['name_zh']}
-
-你已經對這份文件做過一次完整的框架分析，現在使用者想要在此基礎上進一步追問，
-請你扮演「後續諮詢顧問」，根據原始文件與先前的分析結果，回答使用者的新問題。
-
-請特別注意：
-- 不要重新產生一整份完整分析報告，也不要重覆貼出長篇的舊內容。
-- 以「補充說明、優先排序、具體寫法、範例句子、實務建議」為主。
-- 回答要清楚、條列、有行動建議，可以引用少量原文作為說明。
-        """
-        doc_label = "以下是原始文件內容（節錄）："
-        analysis_label = "以下是你過去產出的分析重點（節錄）："
-        question_label = "使用者的新提問如下："
+        system_prompt = (
+            "You are an Error-Free consultant familiar with framework: "
+            + fw["name_zh"]
+            + ". You have already produced one full analysis for this document. "
+              "Now you only need to answer follow-up questions based on the original "
+              "document and your previous analysis. Avoid repeating the full report; "
+              "focus on additional explanations and concrete recommendations."
+        )
     else:
-        system_prompt = f"""
-You are an Error-Free® consultant, familiar with the following framework:
-- {fw['name_en']}
+        system_prompt = (
+            "You are an Error-Free consultant for framework: "
+            + fw["name_en"]
+            + ". You have already produced an initial analysis. "
+              "Now answer follow-up questions based on the original document "
+              "and your previous analysis, without recreating the full report. "
+              "Focus on clarifications and practical suggestions."
+        )
 
-You have already produced an initial structured analysis for this document.
-Now the user is asking follow-up questions. Act as a consultant who knows
-both the original document and your previous analysis.
-
-Important:
-- Do NOT re-generate a full analysis report.
-- Focus on deeper explanation, prioritization, concrete wording, examples,
-  and practical recommendations.
-- Keep the answer structured and actionable. You may quote short phrases
-  from the document or your previous analysis, but avoid long repetition.
-        """
-        doc_label = "Here is an excerpt of the original document:"
-        analysis_label = "Here is an excerpt of your previous analysis:"
-        question_label = "The user's new question is:"
+    doc_label = "Original document excerpt:"
+    analysis_label = "Previous analysis excerpt:"
+    question_label = "User's new question:"
+    extra_label = "Extra reference content (from uploaded file):"
 
     max_doc_chars = 8000
     max_analysis_chars = 8000
+    max_extra_chars = 4000
+
     doc_excerpt = document_text[:max_doc_chars]
     analysis_excerpt = analysis_output[:max_analysis_chars]
+    extra_excerpt = extra_text[:max_extra_chars] if extra_text else ""
 
-    user_content = (
-        f"{doc_label}\n{doc_excerpt}\n\n"
-        f"{analysis_label}\n{analysis_excerpt}\n\n"
-        f"{question_label}\n{user_question}"
-    )
+    user_parts = [
+        f"{doc_label}\n{doc_excerpt}",
+        f"{analysis_label}\n{analysis_excerpt}",
+        f"{question_label}\n{user_question}",
+    ]
+    if extra_excerpt:
+        user_parts.append(f"{extra_label}\n{extra_excerpt}")
+
+    user_content = "\n\n".join(user_parts)
 
     if client is None:
         return "[Error] OPENAI_API_KEY 尚未設定，無法連線至 OpenAI。"
@@ -369,45 +266,49 @@ Important:
         return f"[呼叫 OpenAI API 時發生錯誤: {e}]"
 
 
-# =========================================
-# 工具：組合「完整報告」文字，供下載
-# =========================================
-def build_full_report(lang: str) -> str:
-    doc_text = st.session_state.get("last_doc_text", "")
-    framework_key = st.session_state.get("last_framework_key")
-    analysis_output = st.session_state.get("last_analysis_output", "")
-    followup_history: List[Tuple[str, str]] = st.session_state.get(
-        "followup_history", []
-    )
+# =========================
+# Report text cleaning
+# =========================
+def clean_report_text(text: str) -> str:
+    """整理報告文字，避免黑色方塊與怪符號，讓 TXT / DOCX / PDF 看起來專業。"""
+    replacements = {
+        "■": "-",      # 常見黑色方塊
+        "\u2022": "-",  # bullet
+        "\u2013": "-",  # en dash
+        "\u2014": "-",  # em dash
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return text
 
-    if not framework_key:
-        return ""
 
+# =========================
+# Report building
+# 下載報告：只包含「分析結果 + Q&A」，不含原始文件
+# =========================
+def build_full_report(lang: str, framework_key: str, state: Dict) -> str:
+    analysis_output = state.get("analysis_output", "")
+    followup_history: List[Tuple[str, str]] = state.get("followup_history", [])
     fw = FRAMEWORKS[framework_key]
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     user_email = st.session_state.get("user_email", "anonymous")
 
     if lang == "zh":
         header = [
-            "Error-Free® 多框架 AI 文件分析完整報告",
+            "Error-Free® 多框架 AI 文件分析報告（僅分析 + Q&A）",
             f"產生時間：{now}",
             f"使用者帳號：{user_email}",
             f"使用框架：{fw['name_zh']}",
             "",
             "==============================",
-            "一、原始文件內容（節錄）",
-            "==============================",
-            doc_text,
-            "",
-            "==============================",
-            "二、第一次 AI 框架分析結果",
+            "一、AI 框架分析結果",
             "==============================",
             analysis_output,
         ]
         if followup_history:
             header.append("")
             header.append("==============================")
-            header.append("三、後續提問與回覆（Q&A）")
+            header.append("二、後續提問與回覆（Q&A）")
             header.append("==============================")
             for i, (q, a) in enumerate(followup_history, start=1):
                 header.append(f"[Q{i}] {q}")
@@ -415,83 +316,69 @@ def build_full_report(lang: str) -> str:
                 header.append("")
     else:
         header = [
-            "Error-Free® Multi-framework AI Document Analysis - Full Report",
+            "Error-Free® Multi-framework AI Analysis Report (Analysis + Q&A only)",
             f"Generated at: {now}",
             f"User account: {user_email}",
             f"Framework: {fw['name_en']}",
             "",
             "==============================",
-            "1. Original document (excerpt)",
-            "==============================",
-            doc_text,
-            "",
-            "==============================",
-            "2. Initial AI framework analysis",
+            "1. Framework analysis result",
             "==============================",
             analysis_output,
         ]
         if followup_history:
             header.append("")
             header.append("==============================")
-            header.append("3. Follow-up Q&A")
+            header.append("2. Follow-up Q&A")
             header.append("==============================")
             for i, (q, a) in enumerate(followup_history, start=1):
                 header.append(f"[Q{i}] {q}")
                 header.append(f"[A{i}] {a}")
                 header.append("")
 
-    return "\n".join(header)
+    raw_text = "\n".join(header)
+    return clean_report_text(raw_text)
 
 
-# =========================================
-# 工具：把報告文字轉成 Word 與 PDF
-# =========================================
-def build_word_bytes(report_text: str) -> bytes:
+def build_docx_bytes(text: str) -> bytes:
     doc = Document()
-    for line in report_text.splitlines():
+    for line in text.split("\n"):
         doc.add_paragraph(line)
-    bio = BytesIO()
-    doc.save(bio)
-    bio.seek(0)
-    return bio.getvalue()
+    buf = BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
 
 
-def build_pdf_bytes(report_text: str) -> bytes:
-    buffer = BytesIO()
-    c = canvas.Canvas(buffer, pagesize=A4)
-    width, height = A4
-    x_margin = 40
-    y_margin = 40
-    y = height - y_margin
-
-    for line in report_text.splitlines():
-        wrapped_lines = textwrap.wrap(line, width=90) or [""]
-        for wline in wrapped_lines:
-            if y < y_margin:
-                c.showPage()
-                y = height - y_margin
-            c.drawString(x_margin, y, wline)
-            y -= 14
-
+def build_pdf_bytes(text: str) -> bytes:
+    # 這裡假設文字已經先經過 clean_report_text
+    buf = BytesIO()
+    c = canvas.Canvas(buf, pagesize=letter)
+    width, height = letter
+    y = height - 40
+    for line in text.split("\n"):
+        c.drawString(40, y, line[:1000])
+        y -= 14
+        if y < 40:
+            c.showPage()
+            y = height - 40
     c.save()
-    pdf = buffer.getvalue()
-    buffer.close()
-    return pdf
+    buf.seek(0)
+    return buf.getvalue()
 
 
-# =========================================
-# Streamlit 主程式
-# =========================================
+# =========================
+# Main app
+# =========================
 def main():
     st.set_page_config(
         page_title="Error-Free Multi-framework AI Document Analyzer",
         layout="wide",
     )
 
-    # ------- 先嘗試從硬碟還原上次狀態（避免重新登入與資料遺失） -------
     restore_state_from_disk()
 
-    # -------- Session 初始狀態 --------
+    # init session
     if "user_email" not in st.session_state:
         st.session_state.user_email = None
     if "user_role" not in st.session_state:
@@ -504,40 +391,31 @@ def main():
         st.session_state.is_authenticated = False
     if "login_success" not in st.session_state:
         st.session_state.login_success = False
-
     if "lang" not in st.session_state:
         st.session_state.lang = "zh"
-
     if "last_doc_text" not in st.session_state:
         st.session_state.last_doc_text = ""
-    if "last_framework_key" not in st.session_state:
-        st.session_state.last_framework_key = None
-    if "last_analysis_output" not in st.session_state:
-        st.session_state.last_analysis_output = ""
-    if "followup_history" not in st.session_state:
-        st.session_state.followup_history = []
-    if "analysis_truncated" not in st.session_state:
-        st.session_state.analysis_truncated = False
-    if "analysis_max_chars" not in st.session_state:
-        st.session_state.analysis_max_chars = 0
-    if "analysis_done" not in st.session_state:
-        st.session_state.analysis_done = False
+    if "framework_states" not in st.session_state:
+        st.session_state.framework_states = {}
+    if "selected_framework_key" not in st.session_state:
+        st.session_state.selected_framework_key = list(FRAMEWORKS.keys())[0]
 
-    # =====================================
-    # 側邊欄：語言切換（有分析時鎖定語言）+ 登入狀態
-    # =====================================
+    # sidebar
     with st.sidebar:
+        any_analysis = any(
+            state.get("analysis_output")
+            for state in st.session_state.framework_states.values()
+        )
         current_lang = st.session_state.lang
-        analysis_active = bool(st.session_state.last_analysis_output)
 
-        if analysis_active:
+        if any_analysis:
             if current_lang == "zh":
                 st.markdown("### 語言")
                 st.caption("目前語言：繁體中文（本次分析期間無法切換語言）")
             else:
                 st.markdown("### Language")
                 st.caption(
-                    "Current language: English (language is locked while this analysis is active)."
+                    "Current language: English (language is locked while analysis data exists)."
                 )
             lang = current_lang
         else:
@@ -546,7 +424,7 @@ def main():
                 new_lang = st.radio(
                     "Select language",
                     ["zh", "en"],
-                    index=1 if current_lang == "en" else 0,
+                    index=1,
                     format_func=lambda x: "Chinese" if x == "zh" else "English",
                 )
             else:
@@ -554,7 +432,7 @@ def main():
                 new_lang = st.radio(
                     "請選擇介面語言",
                     ["zh", "en"],
-                    index=0 if current_lang == "zh" else 1,
+                    index=0,
                     format_func=lambda x: "繁體中文" if x == "zh" else "English",
                 )
             st.session_state.lang = new_lang
@@ -572,16 +450,13 @@ def main():
                     st.session_state.user_role = None
                     st.session_state.is_authenticated = False
                     st.session_state.last_doc_text = ""
-                    st.session_state.last_framework_key = None
-                    st.session_state.last_analysis_output = ""
-                    st.session_state.followup_history = []
-                    st.session_state.analysis_done = False
+                    st.session_state.framework_states = {}
                     if STATE_FILE.exists():
                         try:
                             STATE_FILE.unlink()
                         except Exception:
                             pass
-                    st.experimental_rerun()
+                    st.rerun()
             else:
                 st.subheader("Account")
                 st.write(f"User: {st.session_state.user_email}")
@@ -591,326 +466,440 @@ def main():
                     st.session_state.user_role = None
                     st.session_state.is_authenticated = False
                     st.session_state.last_doc_text = ""
-                    st.session_state.last_framework_key = None
-                    st.session_state.last_analysis_output = ""
-                    st.session_state.followup_history = []
-                    st.session_state.analysis_done = False
+                    st.session_state.framework_states = {}
                     if STATE_FILE.exists():
                         try:
                             STATE_FILE.unlink()
                         except Exception:
                             pass
-                    st.experimental_rerun()
+                    st.rerun()
         else:
             if lang == "zh":
                 st.subheader("尚未登入")
-                st.caption("請在主畫面輸入帳號密碼登入")
+                st.caption("請在主畫面輸入帳號密碼登入或申請 guest 試用帳號")
             else:
                 st.subheader("Not logged in")
-                st.caption("Please log in on the main page.")
+                st.caption("Please log in on the main page or sign up for a guest account.")
 
-    # =====================================
-    # 主畫面：登入 + 分析介面
-    # =====================================
-    col_main = st.container()
-
-    with col_main:
-        # ======= 尚未登入：顯示登入（按一次就好） =======
-        if not st.session_state.is_authenticated:
-            if lang == "zh":
-                st.title("Error-Free® 多框架 AI 文件分析")
-                st.subheader("請先登入")
-            else:
-                st.title("Error-Free® Multi-framework AI Document Analyzer")
-                st.subheader("Please log in first")
-
-            email = st.text_input("Email")
-            if lang == "zh":
-                password = st.text_input("密碼", type="password")
-                login_btn = st.button("登入")
-            else:
-                password = st.text_input("Password", type="password")
-                login_btn = st.button("Login")
-
-            if login_btn:
-                account = ACCOUNTS.get(email)
-                if account and account["password"] == password:
-                    st.session_state.user_email = email
-                    st.session_state.user_role = account["role"]
-                    st.session_state.is_authenticated = True
-                    st.session_state.login_success = True
-                    st.session_state.usage_date = datetime.date.today().isoformat()
-                    st.session_state.usage_count = 0
-                    st.session_state.last_doc_text = ""
-                    st.session_state.last_framework_key = None
-                    st.session_state.last_analysis_output = ""
-                    st.session_state.followup_history = []
-                    st.session_state.analysis_done = False
-                    save_state_to_disk()
-                    st.experimental_rerun()
-                else:
-                    if lang == "zh":
-                        st.error("帳號或密碼錯誤，請再試一次。")
-                    else:
-                        st.error("Invalid email or password. Please try again.")
-
-            return
-
-        # ======= 已登入：顯示主功能畫面 =======
+    # login / signup page
+    if not st.session_state.is_authenticated:
         if lang == "zh":
             st.title("Error-Free® 多框架 AI 文件分析")
-            if st.session_state.login_success:
-                st.success("Login successful！已成功登入。")
-                st.session_state.login_success = False
-                save_state_to_disk()
+            st.subheader("請先登入或申請 guest 試用帳號")
         else:
             st.title("Error-Free® Multi-framework AI Document Analyzer")
-            if st.session_state.login_success:
-                st.success("Login successful!")
-                st.session_state.login_success = False
+            st.subheader("Please log in or sign up as guest")
+
+        # ---- Login 區塊 ----
+        if lang == "zh":
+            st.markdown("### 登入 Login")
+        else:
+            st.markdown("### Login")
+
+        email = st.text_input("Email")
+        if lang == "zh":
+            password = st.text_input("密碼 Password", type="password")
+            login_btn = st.button("登入 Login")
+        else:
+            password = st.text_input("Password", type="password")
+            login_btn = st.button("Login")
+
+        if login_btn:
+            # 先從固定帳號找，再從 guest 檔案找
+            account = ACCOUNTS.get(email)
+            guest_accounts = load_guest_accounts()
+            if account is None:
+                account = guest_accounts.get(email)
+
+            if account and account.get("password") == password:
+                role = account.get("role", "free")
+                st.session_state.user_email = email
+                st.session_state.user_role = role
+                st.session_state.is_authenticated = True
+                st.session_state.login_success = True
+                st.session_state.usage_date = datetime.date.today().isoformat()
+                st.session_state.usage_count = 0
                 save_state_to_disk()
-
-        # 顯示當日使用次數＆模型資訊
-        role = st.session_state.user_role or "free"
-        model_name, daily_limit = get_model_and_limit(role)
-
-        today = datetime.date.today().isoformat()
-        if st.session_state.usage_date != today:
-            st.session_state.usage_date = today
-            st.session_state.usage_count = 0
-            save_state_to_disk()
-
-        if lang == "zh":
-            with st.expander("目前使用方案與模型", expanded=True):
-                st.write(f"角色：{role}")
-                st.write(f"使用模型：{model_name}")
-                if daily_limit is None:
-                    st.write("每日使用次數：無上限")
-                else:
-                    st.write(
-                        f"每日使用次數上限：{daily_limit}，今日已使用：{st.session_state.usage_count}"
-                    )
-        else:
-            with st.expander("Plan & model info", expanded=True):
-                st.write(f"Role: {role}")
-                st.write(f"Model: {model_name}")
-                if daily_limit is None:
-                    st.write("Daily limit: unlimited")
-                else:
-                    st.write(
-                        f"Daily limit: {daily_limit}, used today: {st.session_state.usage_count}"
-                    )
-
-        st.markdown("---")
-
-        # ======= 文件上傳 & 框架選擇 =======
-        if lang == "zh":
-            st.subheader("步驟一：上傳文件或貼上文字")
-            uploaded_file = st.file_uploader(
-                "請上傳 PDF / DOCX / TXT 檔案（擇一），或在下方文字框貼上內容",
-                type=["pdf", "docx", "txt"],
-            )
-            manual_text = st.text_area(
-                "或直接在此貼上要分析的文字內容（如果同時上傳檔案與貼文字，系統以上傳檔案為主）",
-                height=180,
-            )
-            st.subheader("步驟二：選擇分析框架")
-        else:
-            st.subheader("Step 1: Upload a document or paste text")
-            uploaded_file = st.file_uploader(
-                "Upload a PDF / DOCX / TXT file, or paste your content below",
-                type=["pdf", "docx", "txt"],
-            )
-            manual_text = st.text_area(
-                "Or paste the text to analyze (if both file and text are provided, the file will take precedence).",
-                height=180,
-            )
-            st.subheader("Step 2: Choose an analysis framework")
-
-        framework_keys = list(FRAMEWORKS.keys())
-        if lang == "zh":
-            framework_labels = [FRAMEWORKS[k]["name_zh"] for k in framework_keys]
-            framework_label_to_key = dict(zip(framework_labels, framework_keys))
-            selected_label = st.selectbox("請選擇框架", framework_labels)
-            selected_framework_key = framework_label_to_key[selected_label]
-        else:
-            framework_labels = [FRAMEWORKS[k]["name_en"] for k in framework_keys]
-            framework_label_to_key = dict(zip(framework_labels, framework_keys))
-            selected_label = st.selectbox("Select framework", framework_labels)
-            selected_framework_key = framework_label_to_key[selected_label]
-
-        st.markdown("---")
-
-        # ======= Run Analysis（只允許跑一次） =======
-        can_run_analysis = not st.session_state.analysis_done
-
-        if can_run_analysis:
-            if lang == "zh":
-                run_button = st.button("開始分析（Run Analysis）")
+                st.rerun()
             else:
-                run_button = st.button("Run Analysis")
-        else:
-            run_button = False
-            if lang == "zh":
-                st.info("已對本份文件完成一次分析。如要重新分析，請上傳新文件並按下 Reset。")
-            else:
-                st.info(
-                    "Analysis for this document has already been run once. To analyze a new document, upload a new file and click Reset."
-                )
-
-        if lang == "zh":
-            reset_clicked = st.button("Reset / 重新開始（新文件）")
-        else:
-            reset_clicked = st.button("Reset / Start with new document")
-
-        if reset_clicked:
-            st.session_state.last_doc_text = ""
-            st.session_state.last_framework_key = None
-            st.session_state.last_analysis_output = ""
-            st.session_state.followup_history = []
-            st.session_state.analysis_done = False
-            save_state_to_disk()
-            st.experimental_rerun()
-
-        # 執行分析
-        if run_button and can_run_analysis:
-            # 按下瞬間就鎖死，再按也不會重跑
-            st.session_state.analysis_done = True
-            save_state_to_disk()
-
-            if daily_limit is not None and st.session_state.usage_count >= daily_limit:
                 if lang == "zh":
-                    st.error("已達今日使用次數上限。請明天再試，或聯絡管理者提升方案。")
+                    st.error("帳號或密碼錯誤，請再試一次。")
                 else:
-                    st.error(
-                        "You have reached your daily usage limit. Please try again tomorrow or contact the admin."
-                    )
-            else:
-                if uploaded_file is not None:
-                    doc_text = read_file_to_text(uploaded_file)
-                else:
-                    doc_text = manual_text.strip()
+                    st.error("Invalid email or password. Please try again.")
 
-                if not doc_text:
-                    if lang == "zh":
-                        st.error("請至少上傳一份文件或貼上一些文字內容。")
-                    else:
-                        st.error("Please upload a document or paste some text to analyze.")
-                    st.session_state.analysis_done = False
-                    save_state_to_disk()
+        st.markdown("---")
+
+        # ---- Guest 註冊區塊 ----
+        if lang == "zh":
+            st.markdown("### 申請 guest 試用帳號")
+            st.caption(
+                "適用於學生 / 客戶試用。功能與正式版相同，但使用較低階、免費的模型，"
+                "每日使用次數有限。請輸入 Email 取得一組 guest 密碼。"
+            )
+            guest_email_label = "Guest Email（請填寫你的 Email）"
+            signup_btn_label = "取得 guest 密碼"
+        else:
+            st.markdown("### Sign up for guest account")
+            st.caption(
+                "For students / trial users. All features are available, "
+                "but it uses a lower-tier free model with a daily usage limit. "
+                "Enter your email to generate a guest password."
+            )
+            guest_email_label = "Guest email"
+            signup_btn_label = "Generate guest password"
+
+        guest_email = st.text_input(guest_email_label, key="guest_email_input")
+
+        if st.button(signup_btn_label):
+            if not guest_email:
+                if lang == "zh":
+                    st.error("請先輸入 Email。")
                 else:
-                    with st.spinner("Running analysis..."):
-                        analysis_text = run_llm_analysis(
-                            framework_key=selected_framework_key,
-                            language=lang,
-                            document_text=doc_text,
-                            model_name=model_name,
+                    st.error("Please enter an email.")
+            else:
+                guest_accounts = load_guest_accounts()
+                if guest_email in ACCOUNTS or guest_email in guest_accounts:
+                    if lang == "zh":
+                        st.error("此 Email 已經有帳號，請直接使用登入功能。")
+                    else:
+                        st.error("This email already has an account. Please log in instead.")
+                else:
+                    # 產生 8 碼數字密碼
+                    password = "".join(secrets.choice("0123456789") for _ in range(8))
+                    guest_accounts[guest_email] = {
+                        "password": password,
+                        "role": "free",  # 使用低階免費模型
+                    }
+                    save_guest_accounts(guest_accounts)
+                    if lang == "zh":
+                        st.success(
+                            f"已為你建立 guest 帳號。\n\n"
+                            f"登入 Email：{guest_email}\n"
+                            f"登入密碼：{password}\n\n"
+                            "請務必先把密碼抄下來，之後用上面的 Email / 密碼登入系統。"
+                        )
+                    else:
+                        st.success(
+                            f"Guest account created.\n\n"
+                            f"Login email: {guest_email}\n"
+                            f"Password: {password}\n\n"
+                            "Please copy this password now and use it to log in."
                         )
 
-                    st.session_state.last_doc_text = doc_text
-                    st.session_state.last_framework_key = selected_framework_key
-                    st.session_state.last_analysis_output = analysis_text
-                    st.session_state.followup_history = []
-                    st.session_state.usage_count += 1
-                    save_state_to_disk()
+        return  # 未登入時這一頁就結束
 
-                    if lang == "zh":
-                        st.success("分析完成！下方顯示第一次框架分析結果。")
-                    else:
-                        st.success("Analysis completed! See the initial result below.")
+    # ===== 以下是登入後主畫面 =====
+    lang = st.session_state.lang
 
-        # ======= 顯示第一次分析結果 =======
-        if st.session_state.last_analysis_output:
-            if lang == "zh":
-                st.subheader("第一次框架分析結果")
+    if lang == "zh":
+        st.title("Error-Free® 多框架 AI 文件分析")
+        if st.session_state.login_success:
+            st.success("Login successful！已成功登入。")
+            st.session_state.login_success = False
+            save_state_to_disk()
+    else:
+        st.title("Error-Free® Multi-framework AI Document Analyzer")
+        if st.session_state.login_success:
+            st.success("Login successful!")
+            st.session_state.login_success = False
+            save_state_to_disk()
+
+    role = st.session_state.user_role or "free"
+    model_name, daily_limit = get_model_and_limit(role)
+    today = datetime.date.today().isoformat()
+    if st.session_state.usage_date != today:
+        st.session_state.usage_date = today
+        st.session_state.usage_count = 0
+        save_state_to_disk()
+
+    if lang == "zh":
+        with st.expander("目前使用方案與模型", expanded=True):
+            st.write(f"角色：{role}")
+            st.write(f"使用模型：{model_name}")
+            if daily_limit is None:
+                st.write("每日使用次數：無上限")
             else:
-                st.subheader("Initial framework analysis result")
-
-            st.markdown(st.session_state.last_analysis_output)
-
-        # ======= Q&A 歷史 + 下載區塊（與聊天輸入框並存） =======
-        if st.session_state.analysis_done and st.session_state.last_analysis_output:
-            st.markdown("---")
-            if lang == "zh":
-                st.subheader("後續追問 / Q&A（像 ChatGPT 一樣可以一直問）")
-                st.caption("你可以就這份分析結果不斷追問，直到你準備好產出完整報告。")
+                st.write(
+                    f"每日使用次數上限：{daily_limit}，今日已使用：{st.session_state.usage_count}"
+                )
+    else:
+        with st.expander("Plan & model info", expanded=True):
+            st.write(f"Role: {role}")
+            st.write(f"Model: {model_name}")
+            if daily_limit is None:
+                st.write("Daily limit: unlimited")
             else:
-                st.subheader("Follow-up Q&A (ChatGPT-style)")
-                st.caption(
-                    "You can keep asking follow-up questions about this analysis until you're ready to download the full report."
+                st.write(
+                    f"Daily limit: {daily_limit}, used today: {st.session_state.usage_count}"
                 )
 
-            # Q&A 歷史
-            if st.session_state.followup_history:
+    st.markdown("---")
+
+    # Step 1: upload
+    if lang == "zh":
+        st.subheader("步驟一：上傳文件")
+        uploaded_file = st.file_uploader(
+            "請上傳 PDF / DOCX / TXT 檔案", type=["pdf", "docx", "txt"]
+        )
+    else:
+        st.subheader("Step 1: Upload a document")
+        uploaded_file = st.file_uploader(
+            "Upload a PDF / DOCX / TXT file", type=["pdf", "docx", "txt"]
+        )
+
+    if uploaded_file is not None:
+        doc_text = read_file_to_text(uploaded_file)
+        if doc_text:
+            st.session_state.last_doc_text = doc_text
+            save_state_to_disk()
+
+    # Step 2: framework selection
+    if lang == "zh":
+        st.subheader("步驟二：選擇分析框架（可來回切換）")
+    else:
+        st.subheader("Step 2: Choose an analysis framework (you can switch freely)")
+
+    framework_keys = list(FRAMEWORKS.keys())
+    if lang == "zh":
+        framework_labels = [FRAMEWORKS[k]["name_zh"] for k in framework_keys]
+    else:
+        framework_labels = [FRAMEWORKS[k]["name_en"] for k in framework_keys]
+
+    key_to_label = dict(zip(framework_keys, framework_labels))
+    label_to_key = dict(zip(framework_labels, framework_keys))
+
+    current_selected_label = key_to_label.get(
+        st.session_state.selected_framework_key, framework_labels[0]
+    )
+    selected_label = st.selectbox(
+        "Framework" if lang == "en" else "請選擇框架",
+        framework_labels,
+        index=framework_labels.index(current_selected_label),
+    )
+    selected_framework_key = label_to_key[selected_label]
+    st.session_state.selected_framework_key = selected_framework_key
+
+    framework_states: Dict[str, Dict] = st.session_state.framework_states
+    if selected_framework_key not in framework_states:
+        framework_states[selected_framework_key] = {
+            "analysis_done": False,
+            "analysis_output": "",
+            "followup_history": [],
+        }
+    current_state = framework_states[selected_framework_key]
+
+    st.markdown("---")
+
+    # Run analysis
+    can_run_analysis = not current_state["analysis_done"]
+
+    if can_run_analysis:
+        run_label = "開始分析（Run Analysis）" if lang == "zh" else "Run Analysis"
+        run_button = st.button(run_label)
+    else:
+        run_button = False
+        if lang == "zh":
+            st.info(
+                "本框架已完成一次分析。可切換至其他框架分析，或按 Reset 重新上傳新文件。"
+            )
+        else:
+            st.info(
+                "Analysis for this framework has already been run once. "
+                "You can switch to another framework, or click Reset for a new document."
+            )
+
+    reset_label = "Reset / 重新開始（新文件）" if lang == "zh" else "Reset / New document"
+    if st.button(reset_label):
+        st.session_state.last_doc_text = ""
+        st.session_state.framework_states = {}
+        save_state_to_disk()
+        st.rerun()
+
+    if run_button and can_run_analysis:
+        if not st.session_state.last_doc_text:
+            if lang == "zh":
+                st.error("請先上傳一份要分析的文件。")
+            else:
+                st.error("Please upload a document to analyze.")
+        else:
+            if daily_limit is not None and st.session_state.usage_count >= daily_limit:
                 if lang == "zh":
-                    st.markdown("#### 先前對話")
+                    st.error("已達今日使用次數上限。")
                 else:
-                    st.markdown("#### Previous Q&A")
-                for idx, (q, a) in enumerate(st.session_state.followup_history, start=1):
-                    st.markdown(f"**Q{idx}:** {q}")
-                    st.markdown(f"**A{idx}:** {a}")
-                    st.markdown("---")
-
-            # 下載完整報告（Text / Word / PDF）
-            st.markdown("---")
-            if lang == "zh":
-                st.subheader("下載完整報告（包含第一次分析＋所有追問 Q&A）")
+                    st.error("You have reached your daily usage limit.")
             else:
-                st.subheader("Download full report (initial analysis + all follow-up Q&A)")
-
-            report_text = build_full_report(lang)
-            if report_text:
-                now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-                txt_name = f"errorfree_report_{now_str}.txt"
-                docx_name = f"errorfree_report_{now_str}.docx"
-                pdf_name = f"errorfree_report_{now_str}.pdf"
-
-                col1, col2, col3 = st.columns(3)
-
-                with col1:
-                    st.download_button(
-                        label="Download TXT",
-                        data=report_text,
-                        file_name=txt_name,
-                        mime="text/plain",
-                    )
-                with col2:
-                    word_bytes = build_word_bytes(report_text)
-                    st.download_button(
-                        label="Download Word",
-                        data=word_bytes,
-                        file_name=docx_name,
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    )
-                with col3:
-                    pdf_bytes = build_pdf_bytes(report_text)
-                    st.download_button(
-                        label="Download PDF",
-                        data=pdf_bytes,
-                        file_name=pdf_name,
-                        mime="application/pdf",
-                    )
-
-            # ======= 底部固定聊天輸入框（st.chat_input） =======
-            if lang == "zh":
-                prompt = st.chat_input("請在此輸入你的追問（按 Enter 送出）")
-            else:
-                prompt = st.chat_input("Enter your follow-up question (Press Enter to send)")
-
-            if prompt:
-                with st.spinner("Thinking..."):
-                    answer = run_followup_qa(
-                        framework_key=st.session_state.last_framework_key,
+                with st.spinner("Running analysis..."):
+                    analysis_text = run_llm_analysis(
+                        framework_key=selected_framework_key,
                         language=lang,
                         document_text=st.session_state.last_doc_text,
-                        analysis_output=st.session_state.last_analysis_output,
-                        user_question=prompt.strip(),
                         model_name=model_name,
                     )
-                st.session_state.followup_history.append((prompt.strip(), answer))
+                current_state["analysis_done"] = True
+                current_state["analysis_output"] = analysis_text
+                current_state["followup_history"] = []
+                st.session_state.usage_count += 1
                 save_state_to_disk()
-                st.experimental_rerun()  # 重新 render，讓新 Q&A 出現在歷史區塊中
+                if lang == "zh":
+                    st.success("分析完成！請往下捲動查看各模組的分析結果與問答。")
+                else:
+                    st.success(
+                        "Analysis completed! Scroll down to see each framework's results and Q&A."
+                    )
+
+    # ===== 顯示所有已分析過的模組 =====
+    any_has_analysis = False
+    for fw_key in FRAMEWORKS.keys():
+        state = framework_states.get(
+            fw_key,
+            {"analysis_done": False, "analysis_output": "", "followup_history": []},
+        )
+        if not state.get("analysis_output"):
+            continue
+
+        any_has_analysis = True
+        fw = FRAMEWORKS[fw_key]
+
+        st.markdown("---")
+        # 模組抬頭
+        if lang == "zh":
+            title_text = f"{fw['name_zh']}：分析結果與問答"
+        else:
+            title_text = f"{fw['name_en']}: Analysis & Q&A"
+
+        if fw_key == selected_framework_key:
+            st.subheader("⭐ " + title_text)
+            if lang == "zh":
+                st.caption("（目前選取的模組，底部追問會針對這個模組。）")
+            else:
+                st.caption(
+                    "(Currently selected framework; follow-up chat at bottom is for this framework.)"
+                )
+        else:
+            st.subheader(title_text)
+
+        # 分析結果
+        if lang == "zh":
+            st.markdown("#### 分析結果")
+        else:
+            st.markdown("#### Analysis result")
+        st.markdown(state["analysis_output"])
+
+        # Q&A 歷史
+        if lang == "zh":
+            st.markdown("#### 後續提問歷史（Q&A）")
+        else:
+            st.markdown("#### Follow-up Q&A history")
+
+        if state["followup_history"]:
+            for idx, (q, a) in enumerate(state["followup_history"], start=1):
+                st.markdown(f"**Q{idx}:** {q}")
+                st.markdown(f"**A{idx}:** {a}")
+                st.markdown("---")
+        else:
+            if lang == "zh":
+                st.info("這個模組目前尚未有追問。")
+            else:
+                st.info("No follow-up questions yet for this framework.")
+
+        # Download block（每個模組各自一份）
+        if lang == "zh":
+            st.markdown("##### Download full report（完整報告下載）")
+            st.caption("此報告只包含：此模組的分析結果，以及此模組的所有 Q&A（不含原始文件）。")
+        else:
+            st.markdown("##### Download full report")
+            st.caption(
+                "Report includes only this framework's analysis and all Q&A (no original document text)."
+            )
+
+        report_text = build_full_report(lang, fw_key, state)
+        now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        txt_bytes = report_text.encode("utf-8")
+        docx_bytes = build_docx_bytes(report_text)
+        pdf_bytes = build_pdf_bytes(report_text)
+
+        if lang == "zh":
+            fmt = st.selectbox(
+                "選擇下載格式",
+                ["TXT", "Word (DOCX)", "PDF"],
+                key=f"download_format_{fw_key}",
+            )
+            download_label = "Download"
+        else:
+            fmt = st.selectbox(
+                "Select format",
+                ["TXT", "Word (DOCX)", "PDF"],
+                key=f"download_format_{fw_key}",
+            )
+            download_label = "Download"
+
+        if fmt == "TXT":
+            data = txt_bytes
+            mime = "text/plain"
+            ext = "txt"
+        elif fmt == "Word (DOCX)":
+            data = docx_bytes
+            mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            ext = "docx"
+        else:
+            data = pdf_bytes
+            mime = "application/pdf"
+            ext = "pdf"
+
+        st.download_button(
+            label=download_label,
+            data=data,
+            file_name=f"errorfree_report_{fw_key}_{now_str}.{ext}",
+            mime=mime,
+            key=f"download_button_{fw_key}",
+        )
+
+    # ===== 底部：Follow-up chat（只針對目前選取的模組）=====
+    if any_has_analysis and framework_states[selected_framework_key].get(
+        "analysis_output"
+    ):
+        # 附檔上傳（只對本次追問有效）
+        if lang == "zh":
+            extra_label = "若要針對此模組追問，您可以在這裡上傳相關文件（選擇性，僅本次問題使用）："
+        else:
+            extra_label = "Attach a related document for this framework (optional, only for this question):"
+
+        extra_file = st.file_uploader(
+            extra_label,
+            type=["pdf", "docx", "txt"],
+            key=f"followup_extra_{selected_framework_key}",
+        )
+
+        extra_text = ""
+        if extra_file is not None:
+            extra_text = read_file_to_text(extra_file)
+
+        if lang == "zh":
+            fw_name = FRAMEWORKS[selected_framework_key]["name_zh"]
+            prompt = f"請輸入你針對「{fw_name}」的追問（按 Enter 送出）"
+        else:
+            fw_name = FRAMEWORKS[selected_framework_key]["name_en"]
+            prompt = f"Enter your follow-up question for [{fw_name}]"
+
+        followup_q = st.chat_input(prompt)
+
+        if followup_q:
+            state = framework_states[selected_framework_key]
+            with st.spinner("Thinking..."):
+                answer = run_followup_qa(
+                    framework_key=selected_framework_key,
+                    language=lang,
+                    document_text=st.session_state.last_doc_text,
+                    analysis_output=state["analysis_output"],
+                    user_question=followup_q.strip(),
+                    model_name=model_name,
+                    extra_text=extra_text,
+                )
+            state["followup_history"].append((followup_q.strip(), answer))
+            save_state_to_disk()
+            st.rerun()
+
+    save_state_to_disk()
 
 
 if __name__ == "__main__":
