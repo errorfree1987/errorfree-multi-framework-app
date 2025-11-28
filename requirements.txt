@@ -3,3 +3,4 @@ pdfplumber
 python-docx
 reportlab
 openai
+python-pptx
