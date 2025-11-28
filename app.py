@@ -459,4 +459,284 @@ def main():
                 st.session_state.is_authenticated = True
                 st.session_state.login_success = True
                 st.session_state.usage_date = datetime.date.today().isoformat()
-                st.session_stat_
+                st.session_state.usage_count = 0
+                save_state_to_disk()
+                st.rerun()
+            else:
+                if lang == "zh":
+                    st.error("帳號或密碼錯誤，請再試一次。")
+                else:
+                    st.error("Invalid email or password. Please try again.")
+        return
+
+    # logged-in main UI
+    if lang == "zh":
+        st.title("Error-Free® 多框架 AI 文件分析")
+        if st.session_state.login_success:
+            st.success("Login successful！已成功登入。")
+            st.session_state.login_success = False
+            save_state_to_disk()
+    else:
+        st.title("Error-Free® Multi-framework AI Document Analyzer")
+        if st.session_state.login_success:
+            st.success("Login successful!")
+            st.session_state.login_success = False
+            save_state_to_disk()
+
+    role = st.session_state.user_role or "free"
+    model_name, daily_limit = get_model_and_limit(role)
+    today = datetime.date.today().isoformat()
+    if st.session_state.usage_date != today:
+        st.session_state.usage_date = today
+        st.session_state.usage_count = 0
+        save_state_to_disk()
+
+    if lang == "zh":
+        with st.expander("目前使用方案與模型", expanded=True):
+            st.write(f"角色：{role}")
+            st.write(f"使用模型：{model_name}")
+            if daily_limit is None:
+                st.write("每日使用次數：無上限")
+            else:
+                st.write(
+                    f"每日使用次數上限：{daily_limit}，今日已使用：{st.session_state.usage_count}"
+                )
+    else:
+        with st.expander("Plan & model info", expanded=True):
+            st.write(f"Role: {role}")
+            st.write(f"Model: {model_name}")
+            if daily_limit is None:
+                st.write("Daily limit: unlimited")
+            else:
+                st.write(
+                    f"Daily limit: {daily_limit}, used today: {st.session_state.usage_count}"
+                )
+
+    st.markdown("---")
+
+    # Step 1: upload
+    if lang == "zh":
+        st.subheader("步驟一：上傳文件")
+        uploaded_file = st.file_uploader(
+            "請上傳 PDF / DOCX / TXT 檔案", type=["pdf", "docx", "txt"]
+        )
+    else:
+        st.subheader("Step 1: Upload a document")
+        uploaded_file = st.file_uploader(
+            "Upload a PDF / DOCX / TXT file", type=["pdf", "docx", "txt"]
+        )
+
+    if uploaded_file is not None:
+        doc_text = read_file_to_text(uploaded_file)
+        if doc_text:
+            st.session_state.last_doc_text = doc_text
+            save_state_to_disk()
+
+    # Step 2: framework selection
+    if lang == "zh":
+        st.subheader("步驟二：選擇分析框架（可來回切換）")
+    else:
+        st.subheader("Step 2: Choose an analysis framework (you can switch freely)")
+
+    framework_keys = list(FRAMEWORKS.keys())
+    if lang == "zh":
+        framework_labels = [FRAMEWORKS[k]["name_zh"] for k in framework_keys]
+    else:
+        framework_labels = [FRAMEWORKS[k]["name_en"] for k in framework_keys]
+
+    key_to_label = dict(zip(framework_keys, framework_labels))
+    label_to_key = dict(zip(framework_labels, framework_keys))
+
+    current_selected_label = key_to_label.get(
+        st.session_state.selected_framework_key, framework_labels[0]
+    )
+    selected_label = st.selectbox(
+        "Framework" if lang == "en" else "請選擇框架",
+        framework_labels,
+        index=framework_labels.index(current_selected_label),
+    )
+    selected_framework_key = label_to_key[selected_label]
+    st.session_state.selected_framework_key = selected_framework_key
+
+    framework_states: Dict[str, Dict] = st.session_state.framework_states
+    if selected_framework_key not in framework_states:
+        framework_states[selected_framework_key] = {
+            "analysis_done": False,
+            "analysis_output": "",
+            "followup_history": [],
+        }
+    current_state = framework_states[selected_framework_key]
+
+    st.markdown("---")
+
+    # Run analysis
+    can_run_analysis = not current_state["analysis_done"]
+
+    if can_run_analysis:
+        run_label = "開始分析（Run Analysis）" if lang == "zh" else "Run Analysis"
+        run_button = st.button(run_label)
+    else:
+        run_button = False
+        if lang == "zh":
+            st.info(
+                "本框架已完成一次分析。可切換至其他框架分析，或按 Reset 重新上傳新文件。"
+            )
+        else:
+            st.info(
+                "Analysis for this framework has already been run once. "
+                "You can switch to another framework, or click Reset for a new document."
+            )
+
+    reset_label = "Reset / 重新開始（新文件）" if lang == "zh" else "Reset / New document"
+    if st.button(reset_label):
+        st.session_state.last_doc_text = ""
+        st.session_state.framework_states = {}
+        save_state_to_disk()
+        st.rerun()
+
+    if run_button and can_run_analysis:
+        if not st.session_state.last_doc_text:
+            if lang == "zh":
+                st.error("請先上傳一份要分析的文件。")
+            else:
+                st.error("Please upload a document to analyze.")
+        else:
+            if daily_limit is not None and st.session_state.usage_count >= daily_limit:
+                if lang == "zh":
+                    st.error("已達今日使用次數上限。")
+                else:
+                    st.error("You have reached your daily usage limit.")
+            else:
+                with st.spinner("Running analysis..."):
+                    analysis_text = run_llm_analysis(
+                        framework_key=selected_framework_key,
+                        language=lang,
+                        document_text=st.session_state.last_doc_text,
+                        model_name=model_name,
+                    )
+                current_state["analysis_done"] = True
+                current_state["analysis_output"] = analysis_text
+                current_state["followup_history"] = []
+                st.session_state.usage_count += 1
+                save_state_to_disk()
+                if lang == "zh":
+                    st.success("分析完成！下方顯示此框架的分析結果。")
+                else:
+                    st.success(
+                        "Analysis completed! See the result for this framework below."
+                    )
+
+    # Show analysis + Q&A + download + follow-up input (always together)
+    if current_state["analysis_output"]:
+        # Initial analysis
+        if lang == "zh":
+            st.subheader("第一次框架分析結果")
+        else:
+            st.subheader("Initial framework analysis result")
+        st.markdown(current_state["analysis_output"])
+
+        # Q&A history
+        st.markdown("---")
+        if lang == "zh":
+            st.subheader("後續提問歷史（Q&A）")
+            st.caption("以下為此框架的所有追問與回覆。切換框架會看到對應的 Q&A。")
+        else:
+            st.subheader("Follow-up Q&A history")
+            st.caption(
+                "All follow-up questions and answers for this framework. "
+                "Switching frameworks will show their own Q&A."
+            )
+
+        if current_state["followup_history"]:
+            for idx, (q, a) in enumerate(current_state["followup_history"], start=1):
+                st.markdown(f"**Q{idx}:** {q}")
+                st.markdown(f"**A{idx}:** {a}")
+                st.markdown("---")
+        else:
+            if lang == "zh":
+                st.info("目前尚未有任何追問。")
+            else:
+                st.info("No follow-up questions yet.")
+
+        # Download block
+        st.markdown("---")
+        if lang == "zh":
+            st.subheader("Download full report（完整報告下載）")
+            st.caption("此報告包含：原始文件、此框架的分析結果、以及此框架的所有 Q&A。")
+        else:
+            st.subheader("Download full report")
+            st.caption(
+                "Report includes original document, this framework's analysis, and all Q&A for this framework."
+            )
+
+        report_text = build_full_report(lang, selected_framework_key, current_state)
+        now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        txt_bytes = report_text.encode("utf-8")
+        docx_bytes = build_docx_bytes(report_text)
+        pdf_bytes = build_pdf_bytes(report_text)
+
+        if lang == "zh":
+            fmt = st.selectbox(
+                "選擇下載格式",
+                ["TXT", "Word (DOCX)", "PDF"],
+                key=f"download_format_{selected_framework_key}",
+            )
+            download_label = "Download"
+        else:
+            fmt = st.selectbox(
+                "Select format",
+                ["TXT", "Word (DOCX)", "PDF"],
+                key=f"download_format_{selected_framework_key}",
+            )
+            download_label = "Download"
+
+        if fmt == "TXT":
+            data = txt_bytes
+            mime = "text/plain"
+            ext = "txt"
+        elif fmt == "Word (DOCX)":
+            data = docx_bytes
+            mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            ext = "docx"
+        else:
+            data = pdf_bytes
+            mime = "application/pdf"
+            ext = "pdf"
+
+        st.download_button(
+            label=download_label,
+            data=data,
+            file_name=f"errorfree_report_{selected_framework_key}_{now_str}.{ext}",
+            mime=mime,
+        )
+
+        # Follow-up input (st.chat_input 固定在頁面底端)
+        if lang == "zh":
+            followup_prompt = "請輸入你對此框架的追問（按 Enter 送出）"
+        else:
+            followup_prompt = "Enter your follow-up question for this framework"
+
+        followup_q = st.chat_input(followup_prompt)
+
+        if followup_q:
+            with st.spinner("Thinking..."):
+                answer = run_followup_qa(
+                    framework_key=selected_framework_key,
+                    language=lang,
+                    document_text=st.session_state.last_doc_text,
+                    analysis_output=current_state["analysis_output"],
+                    user_question=followup_q.strip(),
+                    model_name=model_name,
+                )
+            current_state["followup_history"].append((followup_q.strip(), answer))
+            save_state_to_disk()
+            st.markdown("---")
+            idx = len(current_state["followup_history"])
+            st.markdown(f"**Q{idx}:** {followup_q.strip()}")
+            st.markdown(f"**A{idx}:** {answer}")
+
+    save_state_to_disk()
+
+
+if __name__ == "__main__":
+    main()
