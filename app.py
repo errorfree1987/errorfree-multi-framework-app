@@ -2,6 +2,7 @@ import os, json, datetime, secrets
 from pathlib import Path
 from typing import Dict, List
 from io import BytesIO
+import base64
 
 import streamlit as st
 import pdfplumber
@@ -9,6 +10,46 @@ from docx import Document
 from openai import OpenAI
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+
+
+PDF_FONT_NAME = "Helvetica"
+PDF_FONT_REGISTERED = False
+PDF_TTF_PATH = os.getenv("PDF_TTF_PATH")  # Optional: path to a Unicode TTF font for PDF export
+
+
+def ensure_pdf_font():
+    """Register a Unicode-capable font for PDF export to avoid black boxes / garbled text.
+
+    Priority:
+    1) Try built-in CID font STSong-Light (suitable for CJK).
+    2) If environment variable PDF_TTF_PATH is provided and valid, register that TTF.
+    3) Fallback to Helvetica (may not cover all CJK characters).
+    """
+    global PDF_FONT_NAME, PDF_FONT_REGISTERED
+    if PDF_FONT_REGISTERED:
+        return
+
+    try:
+        # 1) Try CID font for better CJK support
+        try:
+            pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+            PDF_FONT_NAME = "STSong-Light"
+        except Exception:
+            # 2) Try external TTF if provided
+            if PDF_TTF_PATH and Path(PDF_TTF_PATH).exists():
+                pdfmetrics.registerFont(TTFont("ErrorFreeUnicode", PDF_TTF_PATH))
+                PDF_FONT_NAME = "ErrorFreeUnicode"
+            else:
+                # 3) Fallback basic Latin font
+                PDF_FONT_NAME = "Helvetica"
+    except Exception:
+        PDF_FONT_NAME = "Helvetica"
+    finally:
+        PDF_FONT_REGISTERED = True
+
 
 # =========================
 # Company multi-tenant support
@@ -209,6 +250,63 @@ def restore_state_from_disk():
 # =========================
 
 
+def ocr_image_to_text(file_bytes: bytes, filename: str) -> str:
+    """Use OpenAI vision model to perform OCR on an image and return plain text."""
+    if client is None:
+        return "[Error] OPENAI_API_KEY 尚未設定，無法進行圖片 OCR。"
+
+    # Determine image format from filename
+    fname = filename.lower()
+    if fname.endswith(".png"):
+        img_format = "png"
+    else:
+        # default to jpeg for jpg / jpeg / others
+        img_format = "jpeg"
+
+    # Select model based on current user role
+    role = st.session_state.get("user_role", "free")
+    model_name = resolve_model_for_user(role)
+
+    b64_data = base64.b64encode(file_bytes).decode("utf-8")
+
+    lang = st.session_state.get("lang", "zh")
+    if lang == "zh":
+        prompt = (
+            "請將這張圖片中的所有可見文字完整轉成純文字，"
+            "保持原本的段落與換行。不要加上任何說明或總結，只輸出文字內容。"
+        )
+    else:
+        prompt = (
+            "Transcribe all visible text in this image into plain text. "
+            "Preserve paragraphs and line breaks. Do not add any commentary or summary."
+        )
+
+    try:
+        response = client.responses.create(
+            model=model_name,
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": prompt},
+                        {
+                            "type": "input_image",
+                            "image": {
+                                "data": b64_data,
+                                "format": img_format,
+                            },
+                        },
+                    ],
+                }
+            ],
+            max_output_tokens=2000,
+        )
+        text = response.output_text or ""
+        return text.strip()
+    except Exception as e:
+        return f"[圖片 OCR 時發生錯誤: {e}]"
+
+
 def read_file_to_text(uploaded_file) -> str:
     if uploaded_file is None:
         return ""
@@ -227,11 +325,11 @@ def read_file_to_text(uploaded_file) -> str:
         elif name.endswith(".txt"):
             return uploaded_file.read().decode("utf-8", errors="ignore")
         elif name.endswith((".jpg", ".jpeg", ".png")):
-            # 目前僅標記有附加圖片，無法直接讀取圖片文字
-            return (
-                f"[附加圖片檔案：{uploaded_file.name}，目前系統無法自動擷取圖片內文字，"
-                "請盡量提供文字版本的文件。]"
-            )
+            # 使用 OpenAI 進行圖片 OCR，將辨識結果當作文件內容
+            file_bytes = uploaded_file.read()
+            if not file_bytes:
+                return "[讀取圖片檔案時發生錯誤：空檔案]"
+            return ocr_image_to_text(file_bytes, uploaded_file.name)
         else:
             return ""
     except Exception as e:
@@ -444,26 +542,86 @@ def build_docx_bytes(text: str) -> bytes:
 
 
 def build_pdf_bytes(text: str) -> bytes:
+    """Build a PDF using a Unicode-capable font and basic word-wrapping
+    to reduce black squares / garbled characters and layout issues."""
     buf = BytesIO()
+    ensure_pdf_font()
     c = canvas.Canvas(buf, pagesize=letter)
     width, height = letter
-    y = height - 40
 
-    for line in text.split("\n"):
-        safe_line = line.replace("\t", "    ")
-        c.drawString(40, y, safe_line[:1000])
-        y -= 14
-        if y < 40:
-            c.showPage()
-            y = height - 40
+    margin_x = 40
+    margin_y = 40
+    line_height = 14
+    max_width = width - 2 * margin_x
+
+    # Set font; if anything fails, fallback silently to Helvetica
+    try:
+        c.setFont(PDF_FONT_NAME, 11)
+    except Exception:
+        c.setFont("Helvetica", 11)
+
+    y = height - margin_y
+
+    for raw_line in text.split("\n"):
+        safe_line = raw_line.replace("\t", "    ")
+        if not safe_line:
+            y -= line_height
+            if y < margin_y:
+                c.showPage()
+                try:
+                    c.setFont(PDF_FONT_NAME, 11)
+                except Exception:
+                    c.setFont("Helvetica", 11)
+                y = height - margin_y
+            continue
+
+        line = safe_line
+        while line:
+            try:
+                if pdfmetrics.stringWidth(line, PDF_FONT_NAME, 11) <= max_width:
+                    segment = line
+                    line = ""
+                else:
+                    # Find a cut position that fits within the line width
+                    cut = len(line)
+                    while (
+                        cut > 0
+                        and pdfmetrics.stringWidth(line[:cut], PDF_FONT_NAME, 11)
+                        > max_width
+                    ):
+                        cut -= 1
+                    # Prefer breaking at a space for nicer wrapping
+                    space_pos = line.rfind(" ", 0, cut)
+                    if space_pos > 0:
+                        cut = space_pos
+                    segment = line[:cut].rstrip()
+                    line = line[cut:].lstrip()
+            except Exception:
+                # If measurement fails, fall back to a hard cut
+                segment = line[:120]
+                line = line[120:]
+
+            c.drawString(margin_x, y, segment)
+            y -= line_height
+            if y < margin_y:
+                c.showPage()
+                try:
+                    c.setFont(PDF_FONT_NAME, 11)
+                except Exception:
+                    c.setFont("Helvetica", 11)
+                y = height - margin_y
+
     c.save()
     buf.seek(0)
     return buf.getvalue()
 
 
 def build_pptx_bytes(text: str) -> bytes:
-    """Very simple PPTX: one slide with bullet points from the report text.
-    If python-pptx is not installed, fall back to a DOCX file content in PPTX container.
+    """Build a multi-slide PowerPoint with more structured layout.
+
+    - Creates a title slide from the first line of the report (or a default title).
+    - Splits the remaining content into sections based on headings / separators.
+    - Each section becomes one or more slides with bullet points.
     """
     try:
         from pptx import Presentation
@@ -473,27 +631,97 @@ def build_pptx_bytes(text: str) -> bytes:
         return build_docx_bytes("PowerPoint export requires python-pptx.\n\n" + text)
 
     prs = Presentation()
-    layout = prs.slide_layouts[1]  # title + content
-    slide = prs.slides.add_slide(layout)
-    slide.shapes.title.text = "Error-Free Analysis Report"
 
-    body = slide.placeholders[1].text_frame
-    body.clear()
-    first = True
-    for line in text.split("\n"):
-        line = line.strip()
-        if not line:
+    lines = [l.rstrip() for l in text.split("\n")]
+
+    # Title slide
+    title_text = lines[0].strip() if lines and lines[0].strip() else "Error-Free Analysis Report"
+    title_layout = prs.slide_layouts[0]  # title slide
+    title_slide = prs.slides.add_slide(title_layout)
+    title_slide.shapes.title.text = title_text
+
+    if len(lines) > 1 and len(title_slide.placeholders) > 1:
+        subtitle = title_slide.placeholders[1]
+        try:
+            subtitle.text = "Error-Free® AI 分析報告"
+        except Exception:
+            subtitle.text = "Error-Free AI Analysis Report"
+
+    # Parse sections from the remaining lines
+    sections = []
+    current_title = None
+    current_bullets = []
+
+    def flush_section():
+        nonlocal current_title, current_bullets
+        if current_bullets:
+            sections.append(
+                (current_title if current_title else "Report Details", current_bullets)
+            )
+            current_title = None
+            current_bullets = []
+
+    zh_headers = ("一、", "二、", "三、", "四、", "五、", "六、", "七、", "八、", "九、", "十、")
+    en_headers = ("1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9.", "10.")
+
+    for line in lines[1:]:
+        stripped = line.strip()
+        if not stripped:
             continue
-        if first:
-            body.text = line
-            p = body.paragraphs[0]
-            p.font.size = Pt(18)
-            first = False
+
+        # Skip separator lines (====, ----, etc.)
+        if set(stripped) <= set("=－-—_"):
+            continue
+
+        is_section = False
+        if stripped.startswith(zh_headers) or stripped.startswith(en_headers):
+            is_section = True
+        if ("分析結果" in stripped) or ("Analysis" in stripped and "Q&A" not in stripped):
+            is_section = True
+        if ("後續問答" in stripped) or ("Follow-up" in stripped):
+            is_section = True
+
+        if is_section:
+            flush_section()
+            current_title = stripped
         else:
-            p = body.add_paragraph()
-            p.text = line
-            p.level = 0
-            p.font.size = Pt(14)
+            current_bullets.append(stripped)
+
+    flush_section()
+
+    # If no clear sections were found, treat everything as a single section
+    if not sections and lines[1:]:
+        sections.append(
+            ("Report Details", [l.strip() for l in lines[1:] if l.strip()])
+        )
+
+    content_layout = prs.slide_layouts[1]  # title + content
+    max_bullets_per_slide = 10
+
+    for sec_title, bullets in sections:
+        if not bullets:
+            continue
+
+        for i in range(0, len(bullets), max_bullets_per_slide):
+            chunk = bullets[i: i + max_bullets_per_slide]
+            slide = prs.slides.add_slide(content_layout)
+            slide.shapes.title.text = sec_title if i == 0 else f"{sec_title} (cont.)"
+
+            body = slide.placeholders[1].text_frame
+            body.clear()
+
+            for j, bullet in enumerate(chunk):
+                if j == 0:
+                    p = body.paragraphs[0]
+                    p.text = bullet
+                else:
+                    p = body.add_paragraph()
+                    p.text = bullet
+                p.level = 0
+                try:
+                    p.font.size = Pt(18 if j == 0 else 16)
+                except Exception:
+                    pass
 
     buf = BytesIO()
     prs.save(buf)
