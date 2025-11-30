@@ -592,12 +592,8 @@ def build_whole_report(lang: str, framework_states: Dict[str, Dict]) -> str:
                 lines.append("2. Follow-up Q&A")
 
             for i, (q, a) in enumerate(followups, start=1):
-                if lang == "zh":
-                    lines.append(f"[Q{i}] {q}")
-                    lines.append(f"[A{i}] {a}")
-                else:
-                    lines.append(f"[Q{i}] {q}")
-                    lines.append(f"[A{i}] {a}")
+                lines.append(f"[Q{i}] {q}")
+                lines.append(f"[A{i}] {a}")
                 lines.append("")
 
         lines.append("")
@@ -722,7 +718,6 @@ def build_pptx_bytes(text: str) -> bytes:
     prs.save(buf)
     buf.seek(0)
     return buf.getvalue()
-
 
 
 # =========================
@@ -1104,28 +1099,7 @@ def main():
             if lang == "zh"
             else "Error-Free® Multi-framework Document Analyzer"
         )
-       # ======================
-# Patch 1A: Login page 頁首深化
-# ======================
-if lang == "zh":
-    st.markdown(
-        "<div style='color:#444; font-size:22px; font-weight:600; margin-top:-10px;'>零錯誤多維文件風險評估系統</div>",
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        "<div style='color:#777; font-size:15px; margin-bottom:8px;'>邱博士零錯誤團隊自 1987 年起領先研發並持續深化至今。</div>",
-        unsafe_allow_html=True,
-    )
-else:
-    st.markdown(
-        "<div style='color:#444; font-size:22px; font-weight:600; margin-top:-10px;'>Error-Free® Multi-Framework Document Analyzer</div>",
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        "<div style='color:#777; font-size:15px; margin-bottom:8px;'>Pioneered and refined by Dr. Chiu’s Error-Free® team since 1987.</div>",
-        unsafe_allow_html=True,
-    )
-
+        st.title(title)
         st.markdown("---")
 
         # 登入說明
@@ -1232,7 +1206,7 @@ else:
                         }
                         save_guest_accounts(guests)
 
-                        entry = companies.get(ca_company_code, {})
+                        entry = companies[ca_company_code]
                         admins = entry.get("admins", [])
                         if ca_new_email not in admins:
                             admins.append(ca_new_email)
@@ -1348,7 +1322,7 @@ else:
                         }
                         save_guest_accounts(guests)
 
-                        entry = companies.get(guest_company_code, {})
+                        entry = companies[guest_company_code]
                         users = entry.get("users", [])
                         if new_guest_email not in users:
                             users.append(new_guest_email)
@@ -1637,9 +1611,6 @@ else:
             if not state or not state.get("followup_history"):
                 continue
             has_any_followups = True
-            fw = FRAMEWORKS[fw_key]
-            fw_name = fw["name_zh"] if lang == "zh" else fw["name_en"]
-            st.markdown(f"**⭐ {fw_name}**")
             for i, (q, a) in enumerate(state["followup_history"], start=1):
                 st.markdown(f"**Q{i}:** {q}")
                 st.markdown(f"**A{i}:** {a}")
@@ -1649,7 +1620,7 @@ else:
 
         # 5-2) Download whole report (all frameworks)
         st.subheader(
-            "Download whole report" if lang != "zh" else "下載全部報告（All frameworks）"
+            "下載全部報告（All frameworks）" if lang == "zh" else "Download whole report"
         )
         st.caption(
             "一次匯出目前所有框架的分析與 Q&A，不含原始文件。"
@@ -1661,9 +1632,9 @@ else:
         now_str_all = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
         with st.expander(
-            "Download whole report"
-            if lang != "zh"
-            else "Download whole report（全部框架）"
+            "Download whole report（全部框架）"
+            if lang == "zh"
+            else "Download whole report"
         ):
             fmt_all = st.radio(
                 "選擇格式" if lang == "zh" else "Select format",
@@ -1710,7 +1681,7 @@ else:
                     # Record as a special "whole_report" framework in usage stats
                     record_usage(user_email, "whole_report", "download")
 
-        # 5-3) Global follow-up area (current selected framework)
+        # 5-3) Global follow-up area（針對目前選中的框架）
         st.markdown("---")
         st.subheader("後續提問" if lang == "zh" else "Follow-up questions")
 
@@ -1722,24 +1693,31 @@ else:
                 else "Follow-up limit reached (3 times)."
             )
         else:
-            extra_file = st.file_uploader(
-                "上傳附加文件（可選）"
-                if lang == "zh"
-                else "Upload supplementary file (optional)",
-                type=["pdf", "docx", "txt", "jpg", "jpeg", "png"],
-                key=f"extra_{selected_key}",
-            )
-            extra_text = read_file_to_text(extra_file) if extra_file else ""
+            col_text, col_file = st.columns([3, 1])
 
-            # Larger text area for follow-up questions
             followup_key = f"followup_input_{selected_key}"
-            prompt = st.text_area(
-                f"針對 {FRAMEWORKS[selected_key]['name_zh']} 的追問"
-                if lang == "zh"
-                else f"Ask a follow-up about {FRAMEWORKS[selected_key]['name_en']}",
-                key=followup_key,
-                height=150,
-            )
+            with col_text:
+                prompt_label = (
+                    f"針對 {FRAMEWORKS[selected_key]['name_zh']} 的追問"
+                    if lang == "zh"
+                    else "Ask Error-Free® Multi-Framework Analyzer a follow-up?"
+                )
+                prompt = st.text_area(
+                    prompt_label,
+                    key=followup_key,
+                    height=150,
+                )
+
+            with col_file:
+                extra_file = st.file_uploader(
+                    "📎 上傳圖片/文件（選填）"
+                    if lang == "zh"
+                    else "📎 Attach image/document (optional)",
+                    type=["pdf", "docx", "txt", "jpg", "jpeg", "png"],
+                    key=f"extra_{selected_key}",
+                )
+
+            extra_text = read_file_to_text(extra_file) if extra_file else ""
 
             if st.button(
                 "送出追問" if lang == "zh" else "Send follow-up",
@@ -1759,8 +1737,6 @@ else:
                     curr_state["followup_history"].append(
                         (prompt, clean_report_text(answer))
                     )
-                    # Clear the input box for next question
-                    st.session_state[followup_key] = ""
                     save_state_to_disk()
                     record_usage(user_email, selected_key, "followup")
                     st.rerun()
