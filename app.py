@@ -1104,7 +1104,28 @@ def main():
             if lang == "zh"
             else "Error-Free® Multi-framework Document Analyzer"
         )
-        st.title(title)
+       # ======================
+# Patch 1A: Login page 頁首深化
+# ======================
+if lang == "zh":
+    st.markdown(
+        "<div style='color:#444; font-size:22px; font-weight:600; margin-top:-10px;'>零錯誤多維文件風險評估系統</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<div style='color:#777; font-size:15px; margin-bottom:8px;'>邱博士零錯誤團隊自 1987 年起領先研發並持續深化至今。</div>",
+        unsafe_allow_html=True,
+    )
+else:
+    st.markdown(
+        "<div style='color:#444; font-size:22px; font-weight:600; margin-top:-10px;'>Error-Free® Multi-Framework Document Analyzer</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<div style='color:#777; font-size:15px; margin-bottom:8px;'>Pioneered and refined by Dr. Chiu’s Error-Free® team since 1987.</div>",
+        unsafe_allow_html=True,
+    )
+
         st.markdown("---")
 
         # 登入說明
