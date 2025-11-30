@@ -1611,9 +1611,6 @@ def main():
             if not state or not state.get("followup_history"):
                 continue
             has_any_followups = True
-            fw = FRAMEWORKS[fw_key]
-            fw_name = fw["name_zh"] if lang == "zh" else fw["name_en"]
-            st.markdown(f"**⭐ {fw_name}**")
             for i, (q, a) in enumerate(state["followup_history"], start=1):
                 st.markdown(f"**Q{i}:** {q}")
                 st.markdown(f"**A{i}:** {a}")
@@ -1696,23 +1693,31 @@ def main():
                 else "Follow-up limit reached (3 times)."
             )
         else:
-            extra_file = st.file_uploader(
-                "上傳附加文件（可選）"
-                if lang == "zh"
-                else "Upload supplementary file (optional)",
-                type=["pdf", "docx", "txt", "jpg", "jpeg", "png"],
-                key=f"extra_{selected_key}",
-            )
-            extra_text = read_file_to_text(extra_file) if extra_file else ""
+            col_text, col_file = st.columns([3, 1])
 
             followup_key = f"followup_input_{selected_key}"
-            prompt = st.text_area(
-                f"針對 {FRAMEWORKS[selected_key]['name_zh']} 的追問"
-                if lang == "zh"
-                else f"Ask a follow-up about {FRAMEWORKS[selected_key]['name_en']}",
-                key=followup_key,
-                height=150,
-            )
+            with col_text:
+                prompt_label = (
+                    f"針對 {FRAMEWORKS[selected_key]['name_zh']} 的追問"
+                    if lang == "zh"
+                    else "Ask Error-Free® Multi-Framework Analyzer a follow-up?"
+                )
+                prompt = st.text_area(
+                    prompt_label,
+                    key=followup_key,
+                    height=150,
+                )
+
+            with col_file:
+                extra_file = st.file_uploader(
+                    "📎 上傳圖片/文件（選填）"
+                    if lang == "zh"
+                    else "📎 Attach image/document (optional)",
+                    type=["pdf", "docx", "txt", "jpg", "jpeg", "png"],
+                    key=f"extra_{selected_key}",
+                )
+
+            extra_text = read_file_to_text(extra_file) if extra_file else ""
 
             if st.button(
                 "送出追問" if lang == "zh" else "Send follow-up",
