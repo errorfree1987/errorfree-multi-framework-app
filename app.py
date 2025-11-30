@@ -531,6 +531,85 @@ def build_full_report(lang: str, framework_key: str, state: Dict) -> str:
     return clean_report_text("\n".join(header))
 
 
+def build_whole_report(lang: str, framework_states: Dict[str, Dict]) -> str:
+    """Build a combined report for all frameworks (analysis + Q&A).
+
+    The order of sections follows FRAMEWORKS definition, and only frameworks
+    with completed analysis are included.
+    """
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    email = st.session_state.get("user_email", "unknown")
+
+    lines: List[str] = []
+    if lang == "zh":
+        lines.extend(
+            [
+                "Error-Free® 多框架 AI 文件分析總報告（全部框架）",
+                f"產生時間：{now}",
+                f"使用者帳號：{email}",
+                "",
+                "==============================",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "Error-Free® Multi-framework AI Consolidated Report (All frameworks)",
+                f"Generated: {now}",
+                f"User: {email}",
+                "",
+                "==============================",
+            ]
+        )
+
+    for fw_key in FRAMEWORKS.keys():
+        state = framework_states.get(fw_key)
+        if not state or not state.get("analysis_output"):
+            continue
+
+        fw = FRAMEWORKS.get(fw_key, {})
+        name_zh = fw.get("name_zh", fw_key)
+        name_en = fw.get("name_en", fw_key)
+
+        if lang == "zh":
+            lines.append(f"◎ 框架：{name_zh}")
+            lines.append("------------------------------")
+            lines.append("一、分析結果")
+        else:
+            lines.append(f"◎ Framework: {name_en}")
+            lines.append("------------------------------")
+            lines.append("1. Analysis")
+
+        lines.append(state.get("analysis_output", ""))
+
+        followups = state.get("followup_history", [])
+        if followups:
+            if lang == "zh":
+                lines.append("")
+                lines.append("二、後續問答（Q&A）")
+            else:
+                lines.append("")
+                lines.append("2. Follow-up Q&A")
+
+            for i, (q, a) in enumerate(followups, start=1):
+                if lang == "zh":
+                    lines.append(f"[Q{i}] {q}")
+                    lines.append(f"[A{i}] {a}")
+                else:
+                    lines.append(f"[Q{i}] {q}")
+                    lines.append(f"[A{i}] {a}")
+                lines.append("")
+
+        lines.append("")
+        lines.append("================================")
+        lines.append("")
+
+    if not lines:
+        return ""
+
+    return clean_report_text("\n".join(lines))
+
+
 def build_docx_bytes(text: str) -> bytes:
     doc = Document()
     for line in text.split("\n"):
@@ -617,116 +696,33 @@ def build_pdf_bytes(text: str) -> bytes:
 
 
 def build_pptx_bytes(text: str) -> bytes:
-    """Build a multi-slide PowerPoint with more structured layout.
+    """Build a minimal PowerPoint file that intentionally shows a 404 message.
 
-    - Creates a title slide from the first line of the report (or a default title).
-    - Splits the remaining content into sections based on headings / separators.
-    - Each section becomes one or more slides with bullet points.
+    Per UI requirement, when users download a PPTX, the slide should display
+    "404: Not Found" instead of a full slide deck.
     """
     try:
         from pptx import Presentation
-        from pptx.util import Pt
     except Exception:
         # Fallback: still return a valid binary file, even if not a real PPTX.
-        return build_docx_bytes("PowerPoint export requires python-pptx.\n\n" + text)
+        return build_docx_bytes("404: Not Found")
 
     prs = Presentation()
-
-    lines = [l.rstrip() for l in text.split("\n")]
-
-    # Title slide
-    title_text = lines[0].strip() if lines and lines[0].strip() else "Error-Free Analysis Report"
-    title_layout = prs.slide_layouts[0]  # title slide
-    title_slide = prs.slides.add_slide(title_layout)
-    title_slide.shapes.title.text = title_text
-
-    if len(lines) > 1 and len(title_slide.placeholders) > 1:
-        subtitle = title_slide.placeholders[1]
+    title_layout = prs.slide_layouts[0]
+    slide = prs.slides.add_slide(title_layout)
+    if slide.shapes.title is not None:
+        slide.shapes.title.text = "404: Not Found"
+    if len(slide.placeholders) > 1:
         try:
-            subtitle.text = "Error-Free® AI 分析報告"
+            slide.placeholders[1].text = "PPTX export is not available in this version."
         except Exception:
-            subtitle.text = "Error-Free AI Analysis Report"
-
-    # Parse sections from the remaining lines
-    sections = []
-    current_title = None
-    current_bullets = []
-
-    def flush_section():
-        nonlocal current_title, current_bullets
-        if current_bullets:
-            sections.append(
-                (current_title if current_title else "Report Details", current_bullets)
-            )
-            current_title = None
-            current_bullets = []
-
-    zh_headers = ("一、", "二、", "三、", "四、", "五、", "六、", "七、", "八、", "九、", "十、")
-    en_headers = ("1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9.", "10.")
-
-    for line in lines[1:]:
-        stripped = line.strip()
-        if not stripped:
-            continue
-
-        # Skip separator lines (====, ----, etc.)
-        if set(stripped) <= set("=－-—_"):
-            continue
-
-        is_section = False
-        if stripped.startswith(zh_headers) or stripped.startswith(en_headers):
-            is_section = True
-        if ("分析結果" in stripped) or ("Analysis" in stripped and "Q&A" not in stripped):
-            is_section = True
-        if ("後續問答" in stripped) or ("Follow-up" in stripped):
-            is_section = True
-
-        if is_section:
-            flush_section()
-            current_title = stripped
-        else:
-            current_bullets.append(stripped)
-
-    flush_section()
-
-    # If no clear sections were found, treat everything as a single section
-    if not sections and lines[1:]:
-        sections.append(
-            ("Report Details", [l.strip() for l in lines[1:] if l.strip()])
-        )
-
-    content_layout = prs.slide_layouts[1]  # title + content
-    max_bullets_per_slide = 10
-
-    for sec_title, bullets in sections:
-        if not bullets:
-            continue
-
-        for i in range(0, len(bullets), max_bullets_per_slide):
-            chunk = bullets[i: i + max_bullets_per_slide]
-            slide = prs.slides.add_slide(content_layout)
-            slide.shapes.title.text = sec_title if i == 0 else f"{sec_title} (cont.)"
-
-            body = slide.placeholders[1].text_frame
-            body.clear()
-
-            for j, bullet in enumerate(chunk):
-                if j == 0:
-                    p = body.paragraphs[0]
-                    p.text = bullet
-                else:
-                    p = body.add_paragraph()
-                    p.text = bullet
-                p.level = 0
-                try:
-                    p.font.size = Pt(18 if j == 0 else 16)
-                except Exception:
-                    pass
+            pass
 
     buf = BytesIO()
     prs.save(buf)
     buf.seek(0)
     return buf.getvalue()
+
 
 
 # =========================
@@ -1531,27 +1527,15 @@ def main():
         st.markdown("---")
         fw = FRAMEWORKS[fw_key]
         fw_name = fw["name_zh"] if lang == "zh" else fw["name_en"]
-        st.subheader(
-            ("⭐ " if fw_key == selected_key else "") + fw_name + "：分析與問答"
-            if lang == "zh"
-            else ("⭐ " if fw_key == selected_key else "") + fw_name + ": Analysis & Q&A"
-        )
+        if lang == "zh":
+            title_text = f"⭐ {fw_name}：分析結果 + Download"
+        else:
+            title_text = f"⭐ {fw_name}: Analysis result + Download"
+        st.subheader(title_text)
 
         # 分析結果
         st.markdown("#### 分析結果" if lang == "zh" else "#### Analysis result")
         st.markdown(state["analysis_output"])
-
-        # Q&A 歷史
-        st.markdown(
-            "#### 後續提問（Q&A）" if lang == "zh" else "#### Follow-up Q&A history"
-        )
-        if state["followup_history"]:
-            for i, (q, a) in enumerate(state["followup_history"], start=1):
-                st.markdown(f"**Q{i}:** {q}")
-                st.markdown(f"**A{i}:** {a}")
-                st.markdown("---")
-        else:
-            st.info("尚無追問" if lang == "zh" else "No follow-up questions yet.")
 
         # Download 區塊
         st.markdown("##### 下載報告" if lang == "zh" else "##### Download report")
@@ -1618,8 +1602,94 @@ def main():
                         save_state_to_disk()
                         record_usage(user_email, fw_key, "download")
 
-    # Step 5: global follow-up area（針對目前選中的框架）
+    # Step 5: Follow-up Q&A history, whole report download, and global follow-up area
     if any_analysis:
+        # 5-1) Follow-up Q&A history (all frameworks)
+        st.markdown("---")
+        st.subheader(
+            "後續提問紀錄（Q&A history）" if lang == "zh" else "Follow-up Q&A history"
+        )
+
+        has_any_followups = False
+        for fw_key in FRAMEWORKS.keys():
+            state = framework_states.get(fw_key)
+            if not state or not state.get("followup_history"):
+                continue
+            has_any_followups = True
+            fw = FRAMEWORKS[fw_key]
+            fw_name = fw["name_zh"] if lang == "zh" else fw["name_en"]
+            st.markdown(f"**⭐ {fw_name}**")
+            for i, (q, a) in enumerate(state["followup_history"], start=1):
+                st.markdown(f"**Q{i}:** {q}")
+                st.markdown(f"**A{i}:** {a}")
+                st.markdown("---")
+        if not has_any_followups:
+            st.info("尚無追問" if lang == "zh" else "No follow-up questions yet.")
+
+        # 5-2) Download whole report (all frameworks)
+        st.subheader(
+            "Download whole report" if lang != "zh" else "下載全部報告（All frameworks）"
+        )
+        st.caption(
+            "一次匯出目前所有框架的分析與 Q&A，不含原始文件。"
+            if lang == "zh"
+            else "Export a single report that includes analysis + Q&A from all frameworks (no original document)."
+        )
+
+        whole_report = build_whole_report(lang, framework_states)
+        now_str_all = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        with st.expander(
+            "Download whole report"
+            if lang != "zh"
+            else "Download whole report（全部框架）"
+        ):
+            fmt_all = st.radio(
+                "選擇格式" if lang == "zh" else "Select format",
+                ["Word (DOCX)", "PDF", "PowerPoint (PPTX)"],
+                key="fmt_all",
+            )
+
+            data_all: bytes
+            mime_all: str
+            ext_all: str
+
+            if fmt_all.startswith("Word"):
+                data_all = build_docx_bytes(whole_report)
+                mime_all = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                ext_all = "docx"
+            elif fmt_all.startswith("PDF"):
+                data_all = build_pdf_bytes(whole_report)
+                mime_all = "application/pdf"
+                ext_all = "pdf"
+            else:
+                try:
+                    data_all = build_pptx_bytes(whole_report)
+                    mime_all = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                    ext_all = "pptx"
+                except Exception as e:
+                    st.error(
+                        f"PPTX 匯出失敗：{e}"
+                        if lang == "zh"
+                        else f"PPTX export failed: {e}"
+                    )
+                    data_all = b""
+                    mime_all = "application/octet-stream"
+                    ext_all = "pptx"
+
+            if data_all:
+                clicked_all = st.download_button(
+                    "開始下載" if lang == "zh" else "Download",
+                    data=data_all,
+                    file_name=f"errorfree_all_frameworks_{now_str_all}.{ext_all}",
+                    mime=mime_all,
+                    key=f"dl_all_{ext_all}",
+                )
+                if clicked_all:
+                    # Record as a special "whole_report" framework in usage stats
+                    record_usage(user_email, "whole_report", "download")
+
+        # 5-3) Global follow-up area (current selected framework)
         st.markdown("---")
         st.subheader("後續提問" if lang == "zh" else "Follow-up questions")
 
@@ -1640,28 +1710,39 @@ def main():
             )
             extra_text = read_file_to_text(extra_file) if extra_file else ""
 
-            prompt = st.chat_input(
+            # Larger text area for follow-up questions
+            followup_key = f"followup_input_{selected_key}"
+            prompt = st.text_area(
                 f"針對 {FRAMEWORKS[selected_key]['name_zh']} 的追問"
                 if lang == "zh"
-                else f"Ask a follow-up about {FRAMEWORKS[selected_key]['name_en']}"
+                else f"Ask a follow-up about {FRAMEWORKS[selected_key]['name_en']}",
+                key=followup_key,
+                height=150,
             )
-            if prompt:
-                with st.spinner("思考中..." if lang == "zh" else "Thinking..."):
-                    answer = run_followup_qa(
-                        selected_key,
-                        lang,
-                        st.session_state.last_doc_text or "",
-                        curr_state["analysis_output"],
-                        prompt,
-                        model_name,
-                        extra_text,
+
+            if st.button(
+                "送出追問" if lang == "zh" else "Send follow-up",
+                key=f"followup_btn_{selected_key}",
+            ):
+                if prompt and prompt.strip():
+                    with st.spinner("思考中..." if lang == "zh" else "Thinking..."):
+                        answer = run_followup_qa(
+                            selected_key,
+                            lang,
+                            st.session_state.last_doc_text or "",
+                            curr_state["analysis_output"],
+                            prompt,
+                            model_name,
+                            extra_text,
+                        )
+                    curr_state["followup_history"].append(
+                        (prompt, clean_report_text(answer))
                     )
-                curr_state["followup_history"].append(
-                    (prompt, clean_report_text(answer))
-                )
-                save_state_to_disk()
-                record_usage(user_email, selected_key, "followup")
-                st.rerun()
+                    # Clear the input box for next question
+                    st.session_state[followup_key] = ""
+                    save_state_to_disk()
+                    record_usage(user_email, selected_key, "followup")
+                    st.rerun()
 
     save_state_to_disk()
 
