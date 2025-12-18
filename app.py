@@ -483,7 +483,8 @@ def build_full_report(lang: str, framework_key: str, state: Dict) -> str:
 
     if lang == "zh":
         header = [
-            "Error-Free® 多框架 AI 文件分析報告（分析 + Q&A）",
+            f"{BRAND_TITLE_ZH} 報告（分析 + Q&A）",
+            f"{BRAND_SUBTITLE_ZH}",
             f"產生時間：{now}",
             f"使用者帳號：{email}",
             f"使用框架：{name_zh}",
@@ -506,7 +507,8 @@ def build_full_report(lang: str, framework_key: str, state: Dict) -> str:
                 header.append("")
     else:
         header = [
-            "Error-Free® Multi-framework AI Report (Analysis + Q&A)",
+            f"{BRAND_TITLE_EN} Report (Analysis + Q&A)",
+            f"{BRAND_SUBTITLE_EN}",
             f"Generated: {now}",
             f"User: {email}",
             f"Framework: {name_en}",
@@ -544,7 +546,8 @@ def build_whole_report(lang: str, framework_states: Dict[str, Dict]) -> str:
     if lang == "zh":
         lines.extend(
             [
-                "Error-Free® 多框架 AI 文件分析總報告（全部框架）",
+                f"{BRAND_TITLE_ZH} 總報告（全部框架）",
+                f"{BRAND_SUBTITLE_ZH}",
                 f"產生時間：{now}",
                 f"使用者帳號：{email}",
                 "",
@@ -554,7 +557,8 @@ def build_whole_report(lang: str, framework_states: Dict[str, Dict]) -> str:
     else:
         lines.extend(
             [
-                "Error-Free® Multi-framework AI Consolidated Report (All frameworks)",
+                f"{BRAND_TITLE_EN} Consolidated Report (All frameworks)",
+                f"{BRAND_SUBTITLE_EN}",
                 f"Generated: {now}",
                 f"User: {email}",
                 "",
@@ -1017,6 +1021,19 @@ def admin_router() -> bool:
 # Main app
 # =========================
 
+# =========================
+# Branding (Title / Subtitle / Logo)
+# =========================
+
+BRAND_TITLE_EN = "Error-Free® Multi-Framework Document Analyzer"
+BRAND_SUBTITLE_EN = "Pioneered and refined by Dr. Chiu’s Error-Free® team since 1987."
+
+BRAND_TITLE_ZH = "零錯誤多維文件風險評估系統"
+BRAND_SUBTITLE_ZH = "邱博士零錯誤團隊自 1987 年起領先研發並持續深化至今。"
+
+# Put your logo file in repo, e.g. assets/errorfree_logo.png
+LOGO_PATH = "assets/errorfree_logo.png"
+
 
 def language_selector():
     """Top-level language toggle: English (on top) / 中文 (below)."""
@@ -1028,7 +1045,7 @@ def language_selector():
 
 def main():
     st.set_page_config(
-        page_title="Error-Free® Multi-framework Analyzer", layout="wide"
+        page_title=BRAND_TITLE_EN, layout="wide"
     )
     restore_state_from_disk()
 
@@ -1094,12 +1111,14 @@ def main():
     if not st.session_state.is_authenticated:
         lang = st.session_state.lang
 
-        title = (
-            "Error-Free® 多框架文件分析"
-            if lang == "zh"
-            else "Error-Free® Multi-framework Document Analyzer"
-        )
+        if Path(LOGO_PATH).exists():
+            st.image(LOGO_PATH, width=260)
+
+        title = BRAND_TITLE_ZH if lang == "zh" else BRAND_TITLE_EN
+        subtitle = BRAND_SUBTITLE_ZH if lang == "zh" else BRAND_SUBTITLE_EN
+
         st.title(title)
+        st.caption(subtitle)
         st.markdown("---")
 
         # 登入說明
@@ -1376,11 +1395,12 @@ def main():
         return
 
     lang = st.session_state.lang
-    st.title(
-        "Error-Free® 多框架 AI 文件分析"
-        if lang == "zh"
-        else "Error-Free® Multi-framework Analyzer"
-    )
+
+    if Path(LOGO_PATH).exists():
+        st.image(LOGO_PATH, width=260)
+
+    st.title(BRAND_TITLE_ZH if lang == "zh" else BRAND_TITLE_EN)
+    st.caption(BRAND_SUBTITLE_ZH if lang == "zh" else BRAND_SUBTITLE_EN)
     st.markdown("---")
 
     user_email = st.session_state.user_email
