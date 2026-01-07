@@ -226,6 +226,8 @@ def save_state_to_disk():
         "current_doc_id": st.session_state.get("current_doc_id"),
         "company_code": st.session_state.get("company_code"),
         "show_admin": st.session_state.get("show_admin", False),
+        # Note: do NOT persist reference_files (UploadedFile objects are not JSON-serializable)
+        "doc_type": st.session_state.get("doc_type"),
     }
     try:
         STATE_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
@@ -1063,6 +1065,9 @@ def main():
         ("current_doc_id", None),
         ("company_code", None),
         ("show_admin", False),
+        # New fields for Step 2/3 (Engine-friendly)
+        ("doc_type", None),
+        ("reference_files", []),
     ]
     for k, v in defaults:
         if k not in st.session_state:
@@ -1408,8 +1413,8 @@ def main():
     is_guest = user_role == "free"
     model_name = resolve_model_for_user(user_role)
 
-    # Step 1: upload
-    st.subheader("步驟一：上傳文件" if lang == "zh" else "Step 1: Upload Document")
+    # Step 1: Upload Review Document (renamed from Upload Document)
+    st.subheader("步驟一：上傳審查文件" if lang == "zh" else "Step 1: Upload Review Document")
     uploaded = st.file_uploader(
         "請上傳 PDF / DOCX / TXT / 圖片"
         if lang == "zh"
@@ -1444,8 +1449,51 @@ def main():
                 st.session_state.last_doc_text = doc_text
                 save_state_to_disk()
 
-    # Step 2: select framework
-    st.subheader("步驟二：選擇分析框架" if lang == "zh" else "Step 2: Select Framework")
+    # Step 2: Document type selection (new)
+    st.subheader("步驟二：選擇文件類型" if lang == "zh" else "Step 2: Document type selection")
+    doc_types = [
+        "Conceptual Design",
+        "Preliminary Design",
+        "Final Design",
+        "Equivalency Engineering Evaluation",
+        "Root Cause Analysis",
+        "Safety Analysis",
+        "Specifications and Requirements",
+        "Calculations and Analysis",
+    ]
+    current_doc_type = st.session_state.get("doc_type") or doc_types[0]
+    doc_type_selected = st.selectbox(
+        "文件類型" if lang == "zh" else "Document type",
+        doc_types,
+        index=doc_types.index(current_doc_type) if current_doc_type in doc_types else 0,
+    )
+    st.session_state.doc_type = doc_type_selected
+
+    # Step 3: Upload reference documents (new)
+    st.subheader("步驟三：上傳參考文件（選填）" if lang == "zh" else "Step 3: Upload Reference Documents (optional)")
+    st.caption(
+        "例如：法規文件、分析方法、驗證方法等參考文件。"
+        if lang == "zh"
+        else "e.g., regulations, analysis methods, verification/validation references."
+    )
+    reference_files = st.file_uploader(
+        "上傳參考文件（可多選）" if lang == "zh" else "Upload reference documents (multiple files allowed)",
+        type=["pdf", "docx", "txt", "jpg", "jpeg", "png"],
+        accept_multiple_files=True,
+    )
+    # Save to session_state (do not persist to disk; UploadedFile is not JSON-serializable)
+    st.session_state.reference_files = reference_files or []
+
+    if st.session_state.reference_files:
+        if lang == "zh":
+            st.write("已上傳參考文件：")
+        else:
+            st.write("Reference documents uploaded:")
+        for f in st.session_state.reference_files:
+            st.write(f"- {f.name}")
+
+    # Step 4: Select Framework (moved from original Step 2)
+    st.subheader("步驟四：選擇分析框架" if lang == "zh" else "Step 4: Select Framework")
     if not FRAMEWORKS:
         st.error(
             "尚未在 frameworks.json 中定義任何框架。"
@@ -1486,8 +1534,8 @@ def main():
 
     st.markdown("---")
 
-    # Step 3: run analysis
-    st.subheader("步驟三：執行分析" if lang == "zh" else "Step 3: Run Analysis")
+    # Step 5: Run Analysis (moved from original Step 3)
+    st.subheader("步驟五：執行分析" if lang == "zh" else "Step 5: Run Analysis")
     can_run = not current_state["analysis_done"]
 
     if can_run:
@@ -1508,6 +1556,8 @@ def main():
             st.session_state.framework_states = {}
             st.session_state.last_doc_text = ""
             st.session_state.current_doc_id = None
+            st.session_state.doc_type = None
+            st.session_state.reference_files = []
             save_state_to_disk()
             st.rerun()
 
