@@ -254,7 +254,6 @@ def restore_state_from_disk():
 # File reading
 # =========================
 
-
 def ocr_image_to_text(file_bytes: bytes, filename: str) -> str:
     """Use OpenAI vision model to perform OCR on an image and return plain text."""
     if client is None:
@@ -364,7 +363,6 @@ def resolve_model_for_user(role: str) -> str:
 # Language helpers (簡體 / 繁體)
 # =========================
 
-
 def zh(tw: str, cn: str = None) -> str:
     """Return zh text by variant when lang == 'zh'. Default variant is 'tw'."""
     if st.session_state.get("lang") != "zh":
@@ -377,7 +375,6 @@ def zh(tw: str, cn: str = None) -> str:
 # =========================
 # LLM logic
 # =========================
-
 
 def build_analysis_input(
     language: str,
@@ -393,6 +390,9 @@ def build_analysis_input(
     - Step 3: Reference docs (uploaded so far)
     - Step 4: Framework selection
     And ensure analysis record shows reference docs list.
+
+    NOTE (Fix #2): 本函式維持原結構，但 Step 5 已改為「主文件先分析」，
+    因此此函式用於「主文件分析階段」時，不再塞入參考文件全文（只保留上傳紀錄）。
     """
     fw = FRAMEWORKS.get(framework_key, {})
     fw_name = fw.get("name_zh", framework_key) if language == "zh" else fw.get("name_en", framework_key)
@@ -418,14 +418,8 @@ def build_analysis_input(
             document_text or "",
         ]
 
-        if reference_history:
-            lines.append("")
-            lines.append("【Step 3：參考文件內容】")
-            for i, r in enumerate(reference_history, start=1):
-                fname = r.get("name", f"ref_{i}")
-                lines.append("")
-                lines.append(f"--- 參考文件 {i}: {fname} ---")
-                lines.append(r.get("text", "") or "")
+        # Fix #2: 不再在主文件第一階段塞入參考文件全文，避免 context overflow
+        # （參考文件會在「相關性抽取」階段另行對照處理）
     else:
         lines = [
             "[Analysis Settings]",
@@ -447,20 +441,13 @@ def build_analysis_input(
             document_text or "",
         ]
 
-        if reference_history:
-            lines.append("")
-            lines.append("[Step 3: Reference Documents]")
-            for i, r in enumerate(reference_history, start=1):
-                fname = r.get("name", f"ref_{i}")
-                lines.append("")
-                lines.append(f"--- Reference {i}: {fname} ---")
-                lines.append(r.get("text", "") or "")
+        # Fix #2: Do not include full reference texts in phase-1 to avoid context overflow
 
     return "\n".join(lines)
 
 
 def run_llm_analysis(
-    framework_key: str, language: str, document_text: str, model_name: str
+    framework_key: str, language: str, document_text: str, model_name: str, max_output_tokens: int = 2500
 ) -> str:
     if framework_key not in FRAMEWORKS:
         return f"[Error] Framework '{framework_key}' not found in frameworks.json."
@@ -484,7 +471,7 @@ def run_llm_analysis(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            max_output_tokens=2500,
+            max_output_tokens=max_output_tokens,
         )
         return response.output_text
     except Exception as e:
@@ -554,9 +541,242 @@ def run_followup_qa(
 
 
 # =========================
-# Report formatting
+# Fix #2 helpers: relevance extraction & staged synthesis
 # =========================
 
+def _chunk_text(text: str, chunk_size: int = 12000, overlap: int = 600) -> List[str]:
+    if not text:
+        return []
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    n = len(text)
+    chunks = []
+    start = 0
+    while start < n:
+        end = min(n, start + chunk_size)
+        chunks.append(text[start:end])
+        if end >= n:
+            break
+        start = max(0, end - overlap)
+    return chunks
+
+
+def _extract_relevant_from_reference(
+    language: str,
+    model_name: str,
+    main_analysis_text: str,
+    ref_name: str,
+    ref_text: str,
+    max_selected_chars: int = 40000,
+) -> str:
+    """
+    根據「主文件分析結果」抽取參考文件中可能相關的段落。
+    目的：把參考文件從「全文」縮到「相關性材料」，避免 context overflow。
+    注意：這一步不是用框架做局部分析，而是做「相關段落抽取」。
+    """
+    if client is None:
+        return ""
+
+    # 只用主分析的「前段」作為相關性錨點，避免過長
+    anchor = (main_analysis_text or "")[:9000]
+
+    chunks = _chunk_text(ref_text or "", chunk_size=12000, overlap=600)
+    if not chunks:
+        return ""
+
+    selected_parts: List[str] = []
+    selected_len = 0
+
+    if language == "zh":
+        system_prompt = (
+            "你是文件對照助理。你的任務是：根據「主文件的分析結果摘要」，"
+            "從參考文件中找出可能相關的段落（原文摘錄），用來後續做框架對照分析。"
+            "你不需要做完整分析，只需要挑出相關段落並說明關聯點。"
+        )
+    else:
+        system_prompt = (
+            "You are a cross-document alignment assistant. Based on the main-document analysis summary, "
+            "extract only the relevant excerpts from the reference document for downstream framework analysis. "
+            "Do NOT perform full analysis; only select relevant excerpts and explain why."
+        )
+
+    for idx, ch in enumerate(chunks, start=1):
+        if selected_len >= max_selected_chars:
+            break
+
+        if language == "zh":
+            user_prompt = f"""【主文件分析結果摘要（節錄）】
+{anchor}
+
+【參考文件檔名】
+{ref_name}
+
+【參考文件片段 #{idx}】
+{ch}
+
+請判斷此片段是否與主文件分析結果中的「缺漏、矛盾、不清楚、需澄清、需補件」有關。
+- 若無關，請只輸出：NOT_RELEVANT
+- 若有關，請輸出：
+  1) RELEVANT
+  2) 原文摘錄（請保留原句、可多段）
+  3) 關聯說明（1~3 句）
+"""
+        else:
+            user_prompt = f"""[Main analysis summary excerpt]
+{anchor}
+
+[Reference file]
+{ref_name}
+
+[Reference chunk #{idx}]
+{ch}
+
+Determine whether this chunk is relevant to any omissions/contradictions/ambiguities/clarifications/fixes in the main analysis.
+- If not relevant, output only: NOT_RELEVANT
+- If relevant, output:
+  1) RELEVANT
+  2) Verbatim excerpt(s)
+  3) Short relevance rationale (1-3 sentences)
+"""
+
+        try:
+            resp = client.responses.create(
+                model=model_name,
+                input=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_output_tokens=800,
+            )
+            out = (resp.output_text or "").strip()
+        except Exception:
+            continue
+
+        if out.startswith("NOT_RELEVANT"):
+            continue
+
+        # 收錄
+        block = f"---\n[Reference: {ref_name} | Chunk {idx}]\n{out}\n"
+        if selected_len + len(block) > max_selected_chars:
+            # 截到剩餘空間（僅此處為容量保護，不改你的分析邏輯）
+            remain = max_selected_chars - selected_len
+            if remain > 200:
+                selected_parts.append(block[:remain])
+                selected_len += len(block[:remain])
+            break
+
+        selected_parts.append(block)
+        selected_len += len(block)
+
+    return "\n".join(selected_parts).strip()
+
+
+def _build_relevance_analysis_input(
+    language: str,
+    document_type: str,
+    framework_key: str,
+    main_doc_name: str,
+    main_analysis_text: str,
+    ref_relevance_pack: str,
+) -> str:
+    fw = FRAMEWORKS.get(framework_key, {})
+    fw_name = fw.get("name_zh", framework_key) if language == "zh" else fw.get("name_en", framework_key)
+
+    if language == "zh":
+        return "\n".join([
+            "【分析任務：參考文件相關性對照（框架分析）】",
+            f"- 文件類型（Document Type）：{document_type or '（未選擇）'}",
+            f"- 分析框架（Framework）：{fw_name}",
+            f"- 主文件：{main_doc_name}",
+            "",
+            "【主文件分析結果（先前已完成）】",
+            main_analysis_text or "",
+            "",
+            "【參考文件：與主文件分析結果相關的摘錄（已抽取）】",
+            ref_relevance_pack or "（無相關摘錄）",
+            "",
+            "請用同一套零錯誤框架，針對「主文件分析結果」與「參考摘錄」進行對照分析：",
+            "1) 哪些主文件結論被參考摘錄支持/佐證？",
+            "2) 哪些地方出現矛盾或不一致？",
+            "3) 參考摘錄揭露了主文件哪些缺漏（omission）或應補充之處？",
+            "4) 形成可執行的修正/補件建議與澄清問題清單。",
+        ])
+    else:
+        return "\n".join([
+            "[Task: Reference relevance alignment (framework analysis)]",
+            f"- Document Type: {document_type or '(not selected)'}",
+            f"- Framework: {fw_name}",
+            f"- Main document: {main_doc_name}",
+            "",
+            "[Main analysis (previously completed)]",
+            main_analysis_text or "",
+            "",
+            "[Reference excerpts relevant to main analysis (extracted)]",
+            ref_relevance_pack or "(no relevant excerpts)",
+            "",
+            "Using the same framework, compare main analysis vs reference excerpts:",
+            "1) Which main conclusions are supported?",
+            "2) What contradictions/inconsistencies exist?",
+            "3) What omissions are revealed by the reference excerpts?",
+            "4) Provide actionable fixes/addenda and clarification questions.",
+        ])
+
+
+def _build_final_synthesis_input(
+    language: str,
+    document_type: str,
+    framework_key: str,
+    main_doc_name: str,
+    main_analysis_text: str,
+    relevance_analysis_text: str,
+) -> str:
+    fw = FRAMEWORKS.get(framework_key, {})
+    fw_name = fw.get("name_zh", framework_key) if language == "zh" else fw.get("name_en", framework_key)
+
+    if language == "zh":
+        return "\n".join([
+            "【最終成品：整合輸出（主文件分析 + 參考文件相關性分析）】",
+            f"- 文件類型（Document Type）：{document_type or '（未選擇）'}",
+            f"- 分析框架（Framework）：{fw_name}",
+            f"- 主文件：{main_doc_name}",
+            "",
+            "【主文件分析（第一階段）】",
+            main_analysis_text or "",
+            "",
+            "【參考文件相關性框架分析（第二/三階段）】",
+            relevance_analysis_text or "",
+            "",
+            "請把上述兩部分「整合成一份最終正式報告」，避免重複、保留全局大方向，並輸出：",
+            "1) 核心結論（Executive Summary）",
+            "2) 重大缺漏（Omission）清單（逐條）",
+            "3) 重大矛盾/不一致清單（逐條，指出主文件 vs 參考依據）",
+            "4) 需澄清問題清單（可直接給客戶/團隊提問）",
+            "5) 建議修正/補件清單（可驗收、可落地）",
+        ])
+    else:
+        return "\n".join([
+            "[Final deliverable: integrated report (main analysis + reference relevance analysis)]",
+            f"- Document Type: {document_type or '(not selected)'}",
+            f"- Framework: {fw_name}",
+            f"- Main document: {main_doc_name}",
+            "",
+            "[Phase 1: Main analysis]",
+            main_analysis_text or "",
+            "",
+            "[Phase 2/3: Reference relevance framework analysis]",
+            relevance_analysis_text or "",
+            "",
+            "Integrate into one final formal report with minimal redundancy and global coherence:",
+            "1) Executive summary",
+            "2) Major omissions (bullets)",
+            "3) Major contradictions/inconsistencies (bullets; main vs reference evidence)",
+            "4) Clarification questions",
+            "5) Actionable fixes/addenda",
+        ])
+
+
+# =========================
+# Report formatting
+# =========================
 
 def clean_report_text(text: str) -> str:
     replacements = {
@@ -826,7 +1046,6 @@ def build_pptx_bytes(text: str) -> bytes:
 # =========================
 # Dashboards
 # =========================
-
 
 def company_admin_dashboard():
     """Dashboard for company_admin role, scoped to a single company_code."""
@@ -1150,6 +1369,31 @@ def language_selector():
     else:
         st.session_state.lang = "zh"
         st.session_state.zh_variant = "cn" if choice == "中文简体" else "tw"
+
+
+# =========================
+# Fix #1: Step 2 display labels
+# (保持內部值仍是英文 DOC_TYPES，避免影響既有邏輯/報告)
+# =========================
+DOC_TYPE_LABELS = {
+    "Conceptual Design": {"tw": "概念設計", "cn": "概念设计"},
+    "Preliminary Design": {"tw": "初步設計", "cn": "初步设计"},
+    "Final Design": {"tw": "最終設計", "cn": "最终设计"},
+    "Equivalency Engineering Evaluation": {"tw": "等效工程評估", "cn": "等效工程评估"},
+    "Root Cause Analysis": {"tw": "根本原因分析", "cn": "根本原因分析"},
+    "Safety Analysis": {"tw": "安全分析", "cn": "安全分析"},
+    "Specifications and Requirements": {"tw": "規格與需求", "cn": "规格与需求"},
+    "Calculations and Analysis": {"tw": "計算與分析", "cn": "计算与分析"},
+}
+
+
+def _doc_type_format_func(opt: str) -> str:
+    lang = st.session_state.get("lang", "zh")
+    if lang != "zh":
+        return opt
+    variant = st.session_state.get("zh_variant", "tw")
+    m = DOC_TYPE_LABELS.get(opt, {})
+    return m.get(variant, opt)
 
 
 def main():
@@ -1504,551 +1748,4 @@ def main():
                 else:
                     st.error(
                         zh("帳號或密碼錯誤", "账号或密码错误")
-                        if lang == "zh"
-                        else "Invalid guest credentials"
-                    )
-
-        return  # login page end
-
-    # ======= Main app (logged in) =======
-    if admin_router():
-        return
-
-    lang = st.session_state.lang
-
-    if Path(LOGO_PATH).exists():
-        st.image(LOGO_PATH, width=260)
-
-    st.title(BRAND_TITLE_ZH if lang == "zh" else BRAND_TITLE_EN)
-    st.write(BRAND_TAGLINE_ZH if lang == "zh" else BRAND_TAGLINE_EN)
-    st.caption(BRAND_SUBTITLE_ZH if lang == "zh" else BRAND_SUBTITLE_EN)
-    st.markdown("---")
-
-    user_email = st.session_state.user_email
-    user_role = st.session_state.user_role
-    is_guest = user_role == "free"
-    model_name = resolve_model_for_user(user_role)
-
-    # Step 1: upload review doc (single file only)
-    st.subheader(zh("步驟一：上傳審閱文件", "步骤一：上传审阅文件") if lang == "zh" else "Step 1: Upload Review Document")
-    st.caption(
-        zh("提醒：一次只能上載 1 份文件進行完整內容分析。", "提醒：一次只能上传 1 份文件进行完整内容分析。")
-        if lang == "zh"
-        else "Note: Only 1 document can be uploaded for a complete content analysis."
-    )
-
-    doc_locked = bool(st.session_state.get("last_doc_text"))
-
-    if not doc_locked:
-        uploaded = st.file_uploader(
-            zh("請上傳 PDF / DOCX / TXT / 圖片", "请上传 PDF / DOCX / TXT / 图片") if lang == "zh" else "Upload PDF / DOCX / TXT / Image",
-            type=["pdf", "docx", "txt", "jpg", "jpeg", "png"],
-            key="review_doc_uploader",
-        )
-
-        if uploaded is not None:
-            doc_text = read_file_to_text(uploaded)
-            if doc_text:
-                if is_guest:
-                    docs = doc_tracking.get(user_email, [])
-                    if len(docs) >= 3 and st.session_state.current_doc_id not in docs:
-                        st.error(
-                            zh("試用帳號最多上傳 3 份文件", "试用账号最多上传 3 份文件")
-                            if lang == "zh"
-                            else "Trial accounts may upload up to 3 documents only"
-                        )
-                    else:
-                        if st.session_state.current_doc_id not in docs:
-                            new_id = f"doc_{datetime.datetime.now().timestamp()}"
-                            docs.append(new_id)
-                            doc_tracking[user_email] = docs
-                            st.session_state.current_doc_id = new_id
-                            save_doc_tracking(doc_tracking)
-                        st.session_state.last_doc_text = doc_text
-                        st.session_state.last_doc_name = uploaded.name
-                        save_state_to_disk()
-                else:
-                    st.session_state.current_doc_id = f"doc_{datetime.datetime.now().timestamp()}"
-                    st.session_state.last_doc_text = doc_text
-                    st.session_state.last_doc_name = uploaded.name
-                    save_state_to_disk()
-    else:
-        shown_name = st.session_state.get("last_doc_name") or zh("（已上傳）", "（已上传）")
-        st.info(
-            (zh(f"已上傳審閱文件：{shown_name}。如需更換文件，請使用 Reset document。", f"已上传审阅文件：{shown_name}。如需更换文件，请使用 Reset document。") if lang == "zh"
-             else f"Review document uploaded: {shown_name}. To change it, please use Reset document.")
-        )
-
-    # Step 2: Document Type Selection (single select)
-    st.subheader(zh("步驟二：文件類型選擇（單選）", "步骤二：文件类型选择（单选）") if lang == "zh" else "Step 2: Document Type Selection")
-    st.caption(zh("單選", "单选") if lang == "zh" else "Single selection")
-
-    DOC_TYPES = [
-        "Conceptual Design",
-        "Preliminary Design",
-        "Final Design",
-        "Equivalency Engineering Evaluation",
-        "Root Cause Analysis",
-        "Safety Analysis",
-        "Specifications and Requirements",
-        "Calculations and Analysis",
-    ]
-
-    # Keep existing state logic: default to first option if not set
-    if st.session_state.get("document_type") not in DOC_TYPES:
-        st.session_state.document_type = DOC_TYPES[0]
-
-    st.session_state.document_type = st.selectbox(
-        zh("選擇文件類型", "选择文件类型") if lang == "zh" else "Select document type",
-        DOC_TYPES,
-        index=DOC_TYPES.index(st.session_state.document_type),
-        key="document_type_select",
-    )
-    save_state_to_disk()
-
-    # Step 3: Reference docs (optional, one file per analysis cycle)
-    st.subheader(
-        zh("步驟三：上傳參考文件（選填）", "步骤三：上传参考文件（选填）")
-        if lang == "zh"
-        else "Step 3: Upload Reference Documents (optional)"
-    )
-
-    st.caption(
-        zh(
-            "一次只能上傳 1 份參考文件。第一次分析可上傳 1 份；分析完成後，可再上傳第 2 份（依此類推），避免分析時間過長或輸出錯亂。",
-            "一次只能上传 1 份参考文件。第一次分析可上传 1 份；分析完成后，可再上传第 2 份（依此类推），避免分析时间过长或输出错乱。",
-        )
-        if lang == "zh"
-        else "You can upload only 1 reference document at a time. Upload 1 for the first analysis; after analysis completes, you may upload the 2nd (and so on) to avoid long runtimes or confused outputs."
-    )
-
-    if "reference_history" not in st.session_state:
-        st.session_state.reference_history = []
-    if "ref_pending" not in st.session_state:
-        st.session_state.ref_pending = False
-
-    # Show uploaded reference log
-    if st.session_state.reference_history:
-        st.markdown("**" + (zh("已上傳參考文件紀錄：", "已上传参考文件记录：") if lang == "zh" else "Reference documents uploaded:") + "**")
-        for i, r in enumerate(st.session_state.reference_history, start=1):
-            fname = r.get("name", f"ref_{i}")
-            ext = r.get("ext", "").upper()
-            st.markdown(f"- {i}. {fname}" + (f" ({ext})" if ext else ""))
-
-    ref_disabled = bool(st.session_state.ref_pending)
-
-    ref_uploader_key = f"ref_uploader_{len(st.session_state.reference_history)}"
-    reference_file = st.file_uploader(
-        zh("上傳參考文件（PDF / DOCX / TXT / 圖片）", "上传参考文件（PDF / DOCX / TXT / 图片）")
-        if lang == "zh"
-        else "Upload reference document (PDF / DOCX / TXT / Image)",
-        type=["pdf", "docx", "txt", "jpg", "jpeg", "png"],
-        key=ref_uploader_key,
-        disabled=ref_disabled,
-    )
-
-    if ref_disabled:
-        st.info(
-            zh(
-                "已上傳 1 份參考文件，請先完成一次分析後再上傳下一份。",
-                "已上传 1 份参考文件，请先完成一次分析后再上传下一份。",
-            )
-            if lang == "zh"
-            else "A reference document has been uploaded. Please run analysis once before uploading the next reference."
-        )
-
-    if reference_file is not None and not ref_disabled:
-        ref_text = read_file_to_text(reference_file)
-        if ref_text:
-            name = reference_file.name
-            ext = Path(name).suffix.lstrip(".")
-            st.session_state.reference_history.append(
-                {
-                    "name": name,
-                    "ext": ext,
-                    "text": ref_text,
-                    "uploaded_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                }
-            )
-            st.session_state.ref_pending = True
-            save_state_to_disk()
-            st.rerun()
-
-    # Step 4: select framework (single select note)
-    st.subheader(zh("步驟四：選擇分析框架（僅單選）", "步骤四：选择分析框架（仅单选）") if lang == "zh" else "Step 4: Select Framework")
-    st.caption(
-        zh(
-            "僅單選。如需分析下一個 Framework，建議先 Reset document（一次分析一個 Framework），避免分析時間過長或輸出錯亂。",
-            "仅单选。如需分析下一个 Framework，建议先 Reset document（一次分析一个 Framework），避免分析时间过长或输出错乱。",
-        )
-        if lang == "zh"
-        else "Single selection only. To analyze the next framework, it is recommended to Reset document (one framework per run) to avoid long runtimes or confused outputs."
-    )
-
-    if not FRAMEWORKS:
-        st.error(
-            zh("尚未在 frameworks.json 中定義任何框架。", "尚未在 frameworks.json 中定义任何框架。")
-            if lang == "zh"
-            else "No frameworks defined in frameworks.json."
-        )
-        return
-
-    fw_keys = list(FRAMEWORKS.keys())
-    fw_labels = [
-        FRAMEWORKS[k]["name_zh"] if lang == "zh" else FRAMEWORKS[k]["name_en"]
-        for k in fw_keys
-    ]
-    key_to_label = dict(zip(fw_keys, fw_labels))
-    label_to_key = dict(zip(fw_labels, fw_keys))
-
-    current_fw_key = st.session_state.selected_framework_key or fw_keys[0]
-    current_label = key_to_label.get(current_fw_key, fw_labels[0])
-
-    selected_label = st.selectbox(
-        zh("選擇框架", "选择框架") if lang == "zh" else "Select framework",
-        fw_labels,
-        index=fw_labels.index(current_label) if current_label in fw_labels else 0,
-        key="framework_selectbox",
-    )
-    selected_key = label_to_key[selected_label]
-    st.session_state.selected_framework_key = selected_key
-
-    framework_states = st.session_state.framework_states
-    if selected_key not in framework_states:
-        framework_states[selected_key] = {
-            "analysis_done": False,
-            "analysis_output": "",
-            "followup_history": [],
-            "download_used": False,
-        }
-    save_state_to_disk()
-    current_state = framework_states[selected_key]
-
-    st.markdown("---")
-
-    # Step 5: run analysis (must combine Step 1/2/3/4)
-    st.subheader(zh("步驟五：執行分析", "步骤五：执行分析") if lang == "zh" else "Step 5: Run Analysis")
-    st.caption(
-        zh(
-            "分析結果會綜合：Step 1 審查文件、Step 2 文件類型、Step 3 參考文件（如有）、Step 4 框架選擇後產出。",
-            "分析结果会综合：Step 1 审查文件、Step 2 文件类型、Step 3 参考文件（如有）、Step 4 框架选择后产出。",
-        )
-        if lang == "zh"
-        else "The analysis output will be generated by combining: Step 1 review document, Step 2 document type, Step 3 reference docs (if any), and Step 4 framework selection."
-    )
-
-    can_run = not current_state["analysis_done"]
-
-    if can_run:
-        run_btn = st.button(zh("開始分析", "开始分析") if lang == "zh" else "Run analysis", key="run_analysis_btn")
-    else:
-        run_btn = False
-        st.info(
-            zh("此框架已完成一次分析", "此框架已完成一次分析")
-            if lang == "zh"
-            else "Analysis already completed for this framework."
-        )
-
-    # 只有非 Guest 才能 Reset
-    if not is_guest:
-        if st.button(zh("重置（新文件）", "重置（新文件）") if lang == "zh" else "Reset document"):
-            st.session_state.framework_states = {}
-            st.session_state.last_doc_text = ""
-            st.session_state.last_doc_name = ""
-            st.session_state.document_type = None
-            st.session_state.reference_history = []
-            st.session_state.ref_pending = False
-            st.session_state.current_doc_id = None
-            save_state_to_disk()
-            st.rerun()
-
-    if run_btn and can_run:
-        if not st.session_state.last_doc_text:
-            st.error(zh("請先上傳審閱文件（Step 1）", "请先上传审阅文件（Step 1）") if lang == "zh" else "Please upload a review document first (Step 1).")
-        elif not st.session_state.get("document_type"):
-            st.error(zh("請先選擇文件類型（Step 2）", "请先选择文件类型（Step 2）") if lang == "zh" else "Please select a document type first (Step 2).")
-        else:
-            # Compose combined input (Step 1 + Step 2 + Step 3 + Step 4)
-            combined_input = build_analysis_input(
-                lang,
-                st.session_state.last_doc_text,
-                st.session_state.document_type,
-                selected_key,
-                st.session_state.reference_history,
-            )
-            with st.spinner(zh("分析中...", "分析中...") if lang == "zh" else "Running analysis..."):
-                analysis_text = run_llm_analysis(
-                    selected_key,
-                    lang,
-                    combined_input,
-                    model_name,
-                )
-
-            current_state["analysis_done"] = True
-
-            # Prefix to guarantee record shows doc type + reference upload log
-            if lang == "zh":
-                prefix_lines = [
-                    "### 分析紀錄（必讀）",
-                    f"- 文件類型（Document Type）：{st.session_state.document_type}",
-                    f"- 框架（Framework）：{FRAMEWORKS.get(selected_key, {}).get('name_zh', selected_key)}",
-                ]
-                if st.session_state.reference_history:
-                    prefix_lines.append("- 參考文件（Reference Documents）上傳紀錄：")
-                    for i, r in enumerate(st.session_state.reference_history, start=1):
-                        fname = r.get("name", f"ref_{i}")
-                        ext = r.get("ext", "").upper()
-                        prefix_lines.append(f"  {i}. {fname}" + (f" ({ext})" if ext else ""))
-                else:
-                    prefix_lines.append("- 參考文件（Reference Documents）：（未上傳）")
-                prefix = "\n".join(prefix_lines) + "\n\n"
-            else:
-                prefix_lines = [
-                    "### Analysis Record",
-                    f"- Document Type: {st.session_state.document_type}",
-                    f"- Framework: {FRAMEWORKS.get(selected_key, {}).get('name_en', selected_key)}",
-                ]
-                if st.session_state.reference_history:
-                    prefix_lines.append("- Reference documents upload log:")
-                    for i, r in enumerate(st.session_state.reference_history, start=1):
-                        fname = r.get("name", f"ref_{i}")
-                        ext = r.get("ext", "").upper()
-                        prefix_lines.append(f"  {i}. {fname}" + (f" ({ext})" if ext else ""))
-                else:
-                    prefix_lines.append("- Reference documents: (none)")
-                prefix = "\n".join(prefix_lines) + "\n\n"
-
-            current_state["analysis_output"] = clean_report_text(prefix + (analysis_text or ""))
-            current_state["followup_history"] = []
-            save_state_to_disk()
-            record_usage(user_email, selected_key, "analysis")
-
-            # After analysis completes, allow uploading next reference doc
-            st.session_state.ref_pending = False
-            save_state_to_disk()
-
-            st.success(zh("分析完成！", "分析完成！") if lang == "zh" else "Analysis completed!")
-
-    # Show all framework results (unchanged)
-    any_analysis = False
-    for fw_key in FRAMEWORKS.keys():
-        state = framework_states.get(fw_key)
-        if not state or not state.get("analysis_output"):
-            continue
-
-        any_analysis = True
-        st.markdown("---")
-        fw = FRAMEWORKS[fw_key]
-        fw_name = fw["name_zh"] if lang == "zh" else fw["name_en"]
-        if lang == "zh":
-            title_text = f"⭐ {fw_name}：分析結果 + Download"
-        else:
-            title_text = f"⭐ {fw_name}: Analysis result + Download"
-        st.subheader(title_text)
-
-        # 分析結果
-        st.markdown("#### " + (zh("分析結果", "分析结果") if lang == "zh" else "Analysis result"))
-        st.markdown(state["analysis_output"])
-
-        # Download 區塊
-        st.markdown("##### " + (zh("下載報告", "下载报告") if lang == "zh" else "Download report"))
-        st.caption(
-            zh("報告只包含分析與 Q&A，不含原始文件。", "报告只包含分析与 Q&A，不含原始文件。")
-            if lang == "zh"
-            else "Report includes analysis + Q&A only (no original document)."
-        )
-
-        if is_guest and state.get("download_used"):
-            st.error(
-                zh("已達下載次數上限（1 次）", "已达下载次数上限（1 次）")
-                if lang == "zh"
-                else "Download limit reached (1 time)."
-            )
-        else:
-            report = build_full_report(lang, fw_key, state)
-            now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-            with st.expander("Download"):
-                fmt = st.radio(
-                    zh("選擇格式", "选择格式") if lang == "zh" else "Select format",
-                    ["Word (DOCX)", "PDF", "PowerPoint (PPTX)"],
-                    key=f"fmt_{fw_key}",
-                )
-
-                data: bytes
-                mime: str
-                ext: str
-
-                if fmt.startswith("Word"):
-                    data = build_docx_bytes(report)
-                    mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    ext = "docx"
-                elif fmt.startswith("PDF"):
-                    data = build_pdf_bytes(report)
-                    mime = "application/pdf"
-                    ext = "pdf"
-                else:
-                    try:
-                        data = build_pptx_bytes(report)
-                        mime = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                        ext = "pptx"
-                    except Exception as e:
-                        st.error(
-                            (zh(f"PPTX 匯出失敗：{e}", f"PPTX 导出失败：{e}") if lang == "zh" else f"PPTX export failed: {e}")
-                        )
-                        data = b""
-                        mime = "application/octet-stream"
-                        ext = "pptx"
-
-                if data:
-                    clicked = st.download_button(
-                        zh("開始下載", "开始下载") if lang == "zh" else "Download",
-                        data=data,
-                        file_name=f"errorfree_{fw_key}_{now_str}.{ext}",
-                        mime=mime,
-                        key=f"dl_{fw_key}_{ext}",
-                    )
-                    if clicked:
-                        state["download_used"] = True
-                        save_state_to_disk()
-                        record_usage(user_email, fw_key, "download")
-
-    # Follow-up/Q&A area (unchanged)
-    if any_analysis:
-        # 5-1) Follow-up Q&A history (all frameworks)
-        st.markdown("---")
-        st.subheader(zh("後續提問紀錄（Q&A history）", "后续提问记录（Q&A history）") if lang == "zh" else "Follow-up Q&A history")
-
-        has_any_followups = False
-        for fw_key in FRAMEWORKS.keys():
-            state = framework_states.get(fw_key)
-            if not state or not state.get("followup_history"):
-                continue
-            has_any_followups = True
-            for i, (q, a) in enumerate(state["followup_history"], start=1):
-                st.markdown(f"**Q{i}:** {q}")
-                st.markdown(f"**A{i}:** {a}")
-                st.markdown("---")
-        if not has_any_followups:
-            st.info(zh("尚無追問", "尚无追问") if lang == "zh" else "No follow-up questions yet.")
-
-        # 5-2) Download whole report (all frameworks)
-        st.subheader(zh("下載全部報告（All frameworks）", "下载全部报告（All frameworks）") if lang == "zh" else "Download whole report")
-        st.caption(
-            zh("一次匯出目前所有框架的分析與 Q&A，不含原始文件。", "一次导出目前所有框架的分析与 Q&A，不含原始文件。")
-            if lang == "zh"
-            else "Export a single report that includes analysis + Q&A from all frameworks (no original document)."
-        )
-
-        whole_report = build_whole_report(lang, framework_states)
-        now_str_all = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-        with st.expander(zh("Download whole report（全部框架）", "Download whole report（全部框架）") if lang == "zh" else "Download whole report"):
-            fmt_all = st.radio(
-                zh("選擇格式", "选择格式") if lang == "zh" else "Select format",
-                ["Word (DOCX)", "PDF", "PowerPoint (PPTX)"],
-                key="fmt_all",
-            )
-
-            data_all: bytes
-            mime_all: str
-            ext_all: str
-
-            if fmt_all.startswith("Word"):
-                data_all = build_docx_bytes(whole_report)
-                mime_all = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                ext_all = "docx"
-            elif fmt_all.startswith("PDF"):
-                data_all = build_pdf_bytes(whole_report)
-                mime_all = "application/pdf"
-                ext_all = "pdf"
-            else:
-                try:
-                    data_all = build_pptx_bytes(whole_report)
-                    mime_all = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                    ext_all = "pptx"
-                except Exception as e:
-                    st.error(
-                        (zh(f"PPTX 匯出失敗：{e}", f"PPTX 导出失败：{e}") if lang == "zh" else f"PPTX export failed: {e}")
-                    )
-                    data_all = b""
-                    mime_all = "application/octet-stream"
-                    ext_all = "pptx"
-
-            if data_all:
-                clicked_all = st.download_button(
-                    zh("開始下載", "开始下载") if lang == "zh" else "Download",
-                    data=data_all,
-                    file_name=f"errorfree_all_frameworks_{now_str_all}.{ext_all}",
-                    mime=mime_all,
-                    key=f"dl_all_{ext_all}",
-                )
-                if clicked_all:
-                    # Record as a special "whole_report" framework in usage stats
-                    record_usage(user_email, "whole_report", "download")
-
-        # 5-3) Global follow-up area（針對目前選中的框架）
-        st.markdown("---")
-        st.subheader(zh("後續提問", "后续提问") if lang == "zh" else "Follow-up questions")
-
-        curr_state = framework_states[selected_key]
-        if is_guest and len(curr_state["followup_history"]) >= 3:
-            st.error(
-                zh("已達追問上限（3 次）", "已达追问上限（3 次）")
-                if lang == "zh"
-                else "Follow-up limit reached (3 times)."
-            )
-        else:
-            col_text, col_file = st.columns([3, 1])
-
-            followup_key = f"followup_input_{selected_key}"
-            with col_text:
-                prompt_label = (
-                    f"{zh('針對', '针对')} {FRAMEWORKS[selected_key]['name_zh']} {zh('的追問', '的追问')}"
-                    if lang == "zh"
-                    else "Ask Error-Free® Intelligence Engine a follow-up?"
-                )
-                prompt = st.text_area(
-                    prompt_label,
-                    key=followup_key,
-                    height=150,
-                )
-
-            with col_file:
-                extra_file = st.file_uploader(
-                    zh("📎 上傳圖片/文件（選填）", "📎 上传图片/文件（选填）")
-                    if lang == "zh"
-                    else "📎 Attach image/document (optional)",
-                    type=["pdf", "docx", "txt", "jpg", "jpeg", "png"],
-                    key=f"extra_{selected_key}",
-                )
-
-            extra_text = read_file_to_text(extra_file) if extra_file else ""
-
-            if st.button(
-                zh("送出追問", "送出追问") if lang == "zh" else "Send follow-up",
-                key=f"followup_btn_{selected_key}",
-            ):
-                if prompt and prompt.strip():
-                    with st.spinner(zh("思考中...", "思考中...") if lang == "zh" else "Thinking..."):
-                        answer = run_followup_qa(
-                            selected_key,
-                            lang,
-                            st.session_state.last_doc_text or "",
-                            curr_state["analysis_output"],
-                            prompt,
-                            model_name,
-                            extra_text,
-                        )
-                    curr_state["followup_history"].append(
-                        (prompt, clean_report_text(answer))
-                    )
-                    save_state_to_disk()
-                    record_usage(user_email, selected_key, "followup")
-                    st.rerun()
-
-    save_state_to_disk()
-
-
-if __name__ == "__main__":
-    main()
+                        if lang ==
