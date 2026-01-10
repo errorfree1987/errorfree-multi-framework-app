@@ -2,6 +2,7 @@
 """
 Error-Free® Intelligence Engine - Streamlit App
 Updated per: 更正2.docx + Step 6 Quote Reference Relevance Analysis.docx
+Hotfix: PDF parsing fallback when PyMuPDF (fitz) is not installed
 """
 
 import os
@@ -24,7 +25,6 @@ import streamlit as st
 
 # Doc parsing
 import docx
-import fitz  # PyMuPDF
 from PIL import Image
 
 # Report exports
@@ -157,11 +157,48 @@ def hash_text(s: str) -> str:
 
 
 def read_pdf_to_text(file_bytes: bytes) -> str:
+    """
+    PDF text extraction with safe fallbacks.
+
+    Primary: PyMuPDF (fitz)  -> fastest & good quality
+    Fallback: pypdf / PyPDF2 -> widely available
+    If none available, return "" (keeps original app behavior of "unreadable" => empty)
+    """
+    # 1) Try PyMuPDF (fitz) if installed
     try:
+        import fitz  # type: ignore
         doc = fitz.open(stream=file_bytes, filetype="pdf")
         texts = []
         for page in doc:
             texts.append(page.get_text("text"))
+        return "\n".join(texts).strip()
+    except Exception:
+        pass
+
+    # 2) Try pypdf (preferred modern fork)
+    try:
+        from pypdf import PdfReader  # type: ignore
+        reader = PdfReader(io.BytesIO(file_bytes))
+        texts = []
+        for page in reader.pages:
+            try:
+                texts.append(page.extract_text() or "")
+            except Exception:
+                texts.append("")
+        return "\n".join(texts).strip()
+    except Exception:
+        pass
+
+    # 3) Try PyPDF2 (older, but common)
+    try:
+        from PyPDF2 import PdfReader  # type: ignore
+        reader = PdfReader(io.BytesIO(file_bytes))
+        texts = []
+        for page in reader.pages:
+            try:
+                texts.append(page.extract_text() or "")
+            except Exception:
+                texts.append("")
         return "\n".join(texts).strip()
     except Exception:
         return ""
@@ -189,7 +226,6 @@ def read_txt_to_text(file_bytes: bytes) -> str:
 
 def read_image_to_text(file_bytes: bytes) -> str:
     # NOTE: No OCR in this app (by design). Keep original behavior: return placeholder.
-    # If the app previously supported OCR, it would be implemented here.
     return ""
 
 
@@ -756,7 +792,7 @@ def main():
     if (not st.session_state.get("doc_cycle_locked", False)) and (st.session_state.get("document_type") == "Specifications and Requirements"):
         st.warning(
             (zh("提醒：一旦在步驟五開始分析後，將無法再更換文件類型。若需更換，請到步驟七使用 Reset Whole Document 重新開始新一輪審查。",
-                "提醒：一旦在步骤五开始分析后，将无法再更换文件类型。若需更换，请到步骤七使用 Reset Whole Document 重新开始新一轮审查。")
+                "提醒：一旦在步骤五开始分析后，将无法再更换文件类型。若需更换，请到步骤七使用 Reset Whole Document 重新开始新一轮審查。")
              if lang == "zh"
              else "Note: After you run Step 5, you cannot change the document type. To change it, use Step 7 → Reset Whole Document to start a new review cycle.")
         )
@@ -872,7 +908,7 @@ def main():
     st.caption(
         zh(
             "僅單選。如需展開新一輪審查，請到步驟七使用 Reset Whole Document。",
-            "仅单选。如需展开新一轮审查，请到步骤七使用 Reset Whole Document。",
+            "仅单选。如需展开新一轮审查，请到步驟七使用 Reset Whole Document。",
         )
         if lang == "zh"
         else "Single selection only. To start a new review cycle, use Step 7 → Reset Whole Document."
@@ -914,7 +950,7 @@ def main():
     if (not st.session_state.get("doc_cycle_locked", False)) and (("Omission" in (selected_label or "")) or ("遺漏" in (selected_label or ""))):
         st.warning(
             (zh("提醒：一旦在步驟五開始分析後，將無法再更換框架。若需更換，請到步驟七使用 Reset Whole Document 重新開始新一輪審查。",
-                "提醒：一旦在步骤五开始分析后，将无法再更换框架。若需更换，请到步骤七使用 Reset Whole Document 重新开始新一轮审查。")
+                "提醒：一旦在步骤五开始分析后，将无法再更换框架。若需更换，请到步驟七使用 Reset Whole Document 重新开始新一轮审查。")
              if lang == "zh"
              else "Note: After you run Step 5, you cannot change the framework. To change it, use Step 7 → Reset Whole Document to start a new review cycle.")
         )
@@ -945,7 +981,7 @@ def main():
     st.caption(
         zh(
             "此步驟只分析主要文件，不處理參考文件，先快速產生第一份分析結果。完成後將鎖定文件類型與框架選擇（除非步驟七 Reset Whole Document）。",
-            "此步骤只分析主要文件，不处理参考文件，先快速产生第一份分析结果。完成后将锁定文件类型与框架选择（除非步骤七 Reset Whole Document）。",
+            "此步骤只分析主要文件，不处理参考文件，先快速产生第一份分析结果。完成后将锁定文件类型与框架选择（除非步驟七 Reset Whole Document）。",
         )
         if lang == "zh"
         else "This step analyzes ONLY the main document (no references) to produce a fast first result. After completion, document type and framework are locked (unless Step 7 → Reset Whole Document)."
