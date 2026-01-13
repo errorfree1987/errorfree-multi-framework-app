@@ -1000,6 +1000,76 @@ def language_selector():
 
 
 # =========================
+# UI helper (NEW, minimal)
+# =========================
+
+def inject_ui_css():
+    """Make Results section more prominent + normalize Step heading sizes (UI-only)."""
+    st.markdown(
+        """
+<style>
+/* Strong "RESULTS" banner */
+.ef-results-banner {
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(49, 51, 63, 0.20);
+  background: rgba(49, 51, 63, 0.04);
+  margin: 12px 0 14px 0;
+}
+.ef-results-banner .title {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+.ef-results-banner .subtitle {
+  font-size: 14px;
+  opacity: 0.80;
+}
+
+/* Normalize our Step headers (we render as markdown h3 inside a wrapper) */
+.ef-step-title {
+  font-size: 18px;
+  font-weight: 800;
+  margin: 4px 0 6px 0;
+}
+
+/* Make expander header look cleaner */
+div[data-testid="stExpander"] details summary p {
+  font-weight: 700;
+}
+</style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_step_block(title: str, body_markdown: str, expanded: bool = False):
+    """Render a Step section with consistent title and collapsible body."""
+    st.markdown(f'<div class="ef-step-title">{title}</div>', unsafe_allow_html=True)
+    if body_markdown and body_markdown.strip():
+        with st.expander("Show / Hide" if st.session_state.get("lang", "zh") == "en" else zh("展開 / 收起", "展开 / 收起"), expanded=expanded):
+            st.markdown(body_markdown)
+    else:
+        st.info("No content yet." if st.session_state.get("lang", "zh") == "en" else zh("尚無內容。", "尚无内容。"))
+
+
+def render_followup_history_chat(followup_history: List, lang: str):
+    """ChatGPT-like history display (Q then A)."""
+    if not followup_history:
+        st.caption("No follow-up history yet." if lang == "en" else zh("目前尚無追問紀錄。", "目前尚无追问记录。"))
+        return
+
+    # Wrap in expander to keep page clean
+    with st.expander("Follow-up history (Chat view)" if lang == "en" else zh("追問歷史（對話排列）", "追问历史（对话排列）"), expanded=False):
+        for i, (q, a) in enumerate(followup_history, start=1):
+            with st.chat_message("user"):
+                st.markdown(q)
+            with st.chat_message("assistant"):
+                st.markdown(a)
+
+
+# =========================
 # Main app
 # =========================
 
@@ -1024,6 +1094,9 @@ def _reset_whole_document():
 def main():
     st.set_page_config(page_title=BRAND_TITLE_EN, layout="wide")
     restore_state_from_disk()
+
+    # Inject CSS once (UI only)
+    inject_ui_css()
 
     defaults = [
         ("user_email", None),
@@ -1494,7 +1567,8 @@ def main():
 
     col_qr1, col_qr2 = st.columns([1, 3])
     with col_qr1:
-        if st.button("Reset Quote Reference" if lang == "en" else "Reset 次要參考文件", key="reset_quote_ref_btn"):
+        # (5) label changed exactly
+        if st.button("Reset quote reference", key="reset_quote_ref_btn"):
             st.session_state.quote_current = None
             st.session_state.quote_step6_done_current = False
             save_state_to_disk()
@@ -1796,35 +1870,77 @@ def main():
         st.success("Step 7 completed. Final deliverable generated." if lang == "en" else zh("步驟七完成！已產出最終成品。", "步骤七完成！已产出最终成品。"))
         st.rerun()
 
-    # Results area (avoid duplicates per PDF issue)
+    # =========================
+    # RESULTS area (clean + collapsible)
+    # =========================
     st.markdown("---")
-    st.subheader("Results (ordered by steps)" if lang == "en" else zh("分析結果（依步驟排列）", "分析结果（依步骤排列）"))
+    st.markdown(
+        f"""
+<div class="ef-results-banner">
+  <div class="title">{'RESULTS' if lang == 'en' else zh('結果總覽', '结果总览')}</div>
+  <div class="subtitle">{'All outputs are grouped below by steps.' if lang == 'en' else zh('所有輸出依步驟整理在此區，點選可展開 / 收起。', '所有输出依步骤整理在此区，点选可展开 / 收起。')}</div>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
 
+    # Step 5
     if current_state.get("step5_done"):
-        st.markdown("### Step 5: Main analysis result" if lang == "en" else "### " + zh("步驟五：主文件分析結果", "步骤五：主文件分析结果"))
-        st.markdown(current_state.get("step5_output", ""))
+        render_step_block(
+            "Step 5 — Main analysis result" if lang == "en" else "Step 5 — 主文件分析結果",
+            current_state.get("step5_output", ""),
+            expanded=False,
+        )
 
+    # Step 6-A
     if st.session_state.get("upstream_reference"):
-        st.markdown("### Step 6-A: Upstream relevance" if lang == "en" else "### 步驟六-A：上游相關性")
         if st.session_state.get("upstream_step6_done"):
-            st.markdown(st.session_state.get("upstream_step6_output", ""))
+            render_step_block(
+                "Step 6-A — Upstream relevance" if lang == "en" else "Step 6-A — 上游相關性",
+                st.session_state.get("upstream_step6_output", ""),
+                expanded=False,
+            )
         else:
-            st.info("Upstream relevance not run yet." if lang == "en" else zh("尚未執行上游相關性分析。", "尚未执行上游相关性分析。"))
+            render_step_block(
+                "Step 6-A — Upstream relevance" if lang == "en" else "Step 6-A — 上游相關性",
+                "",
+                expanded=False,
+            )
 
+    # Step 6-B history
     if st.session_state.get("quote_history"):
-        st.markdown("### Step 6-B: Quote relevance (history)" if lang == "en" else "### 步驟六-B：引用一致性（歷史紀錄）")
-        for i, h in enumerate(st.session_state.quote_history, start=1):
-            st.markdown(f"**{i}. {h.get('name','(unknown)')}** — {h.get('analyzed_at','')}")
-            st.markdown(h.get("output", ""))
-            st.markdown("---")
+        # Keep history collapsed by default
+        st.markdown(f'<div class="ef-step-title">{"Step 6-B — Quote relevance (history)" if lang == "en" else "Step 6-B — 引用一致性（歷史）"}</div>', unsafe_allow_html=True)
+        with st.expander("Show / Hide" if lang == "en" else zh("展開 / 收起", "展开 / 收起"), expanded=False):
+            for i, h in enumerate(st.session_state.quote_history, start=1):
+                st.markdown(f"**{i}. {h.get('name','(unknown)')}** — {h.get('analyzed_at','')}")
+                st.markdown(h.get("output", ""))
+                st.markdown("---")
 
-    st.markdown("### Step 7: Final deliverable" if lang == "en" else "### " + zh("步驟七：最終正式報告", "步骤七：最终正式报告"))
+    # Step 7
     if current_state.get("step7_done"):
-        st.markdown(current_state.get("step7_output", ""))
+        render_step_block(
+            "Step 7 — Final deliverable" if lang == "en" else "Step 7 — 最終正式報告",
+            current_state.get("step7_output", ""),
+            expanded=False,
+        )
     else:
-        st.info("Step 7 has not been run yet." if lang == "en" else zh("尚未執行步驟七。", "尚未执行步骤七。"))
+        render_step_block(
+            "Step 7 — Final deliverable" if lang == "en" else "Step 7 — 最終正式報告",
+            "",
+            expanded=False,
+        )
 
-    # Download / Q&A area (NO repeated long content)
+    # (1) Follow-up history should appear after results
+    st.markdown("---")
+    st.subheader("Follow-up (Q&A)" if lang == "en" else zh("後續提問（Q&A）", "后续提问（Q&A）"))
+
+    # Chat-like history
+    render_followup_history_chat(current_state.get("followup_history", []), lang)
+
+    # =========================
+    # Download (3) choose include follow-ups
+    # =========================
     st.markdown("---")
     st.subheader("Download report" if lang == "en" else zh("下載報告", "下载报告"))
 
@@ -1834,7 +1950,12 @@ def main():
         else:
             now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             with st.expander("Download"):
-                include_qa = st.checkbox("Include follow-up Q&A history" if lang == "en" else zh("是否包含對話（追問）歷史紀錄", "是否包含对话（追问）历史记录"), value=True, key=f"include_qa_{selected_key}")
+                # (3) explicit selection: include follow-up replies or not
+                include_qa = st.checkbox(
+                    "Include follow-up Q&A replies (optional)" if lang == "en" else zh("是否包含追問回覆紀錄（選填）", "是否包含追问回复记录（选填）"),
+                    value=True,
+                    key=f"include_qa_{selected_key}",
+                )
                 fmt = st.radio(
                     "Select format" if lang == "en" else zh("選擇格式", "选择格式"),
                     ["Word (DOCX)", "PDF", "PowerPoint (PPTX)"],
@@ -1870,9 +1991,11 @@ def main():
     else:
         st.info("Complete Step 7 to enable downloads." if lang == "en" else zh("請先完成步驟七，產出最終正式報告後才能下載。", "请先完成步骤七，产出最终正式报告后才能下载。"))
 
-    # Follow-up/Q&A
+    # =========================
+    # Follow-up input (1)(2): clean + clear input after send
+    # =========================
     st.markdown("---")
-    st.subheader("Follow-up questions" if lang == "en" else zh("後續提問", "后续提问"))
+    st.subheader("Ask a follow-up question" if lang == "en" else zh("提出追問", "提出追问"))
 
     if not current_state.get("analysis_output"):
         st.info("Please complete Step 7 before asking follow-up questions." if lang == "en" else zh("請先完成步驟七，產出最終成品後再進行追問。", "请先完成步骤七，产出最终成品后再进行追问。"))
@@ -1880,12 +2003,17 @@ def main():
         if is_guest and len(current_state.get("followup_history", [])) >= 3:
             st.error("Follow-up limit reached (3 times)." if lang == "en" else zh("已達追問上限（3 次）", "已达追问上限（3 次）"))
         else:
-            col_text, col_file = st.columns([3, 1])
             followup_key = f"followup_input_{selected_key}"
+            col_text, col_file = st.columns([3, 1])
 
             with col_text:
-                prompt_label = "Ask a follow-up question" if lang == "en" else (f"{zh('針對', '针对')} {FRAMEWORKS[selected_key]['name_zh']} {zh('的追問', '的追问')}")
-                prompt = st.text_area(prompt_label, key=followup_key, height=150)
+                # Keep the label simple, like ChatGPT
+                prompt = st.text_area(
+                    "Ask a follow-up question" if lang == "en" else zh("請輸入你的追問", "请输入你的追问"),
+                    key=followup_key,
+                    height=140,
+                    placeholder="Type your question here..." if lang == "en" else zh("在此輸入問題…", "在此输入问题…"),
+                )
 
             with col_file:
                 extra_file = st.file_uploader(
@@ -1908,9 +2036,13 @@ def main():
                             extra_text,
                         )
                     current_state["followup_history"].append((prompt, clean_report_text(answer)))
+                    # clear input to avoid "cannot produce question" / sticky state
+                    st.session_state[followup_key] = ""
                     save_state_to_disk()
                     record_usage(user_email, selected_key, "followup")
                     st.rerun()
+                else:
+                    st.warning("Please enter a question first." if lang == "en" else zh("請先輸入追問內容。", "请先输入追问内容。"))
 
     # Reset Whole Document (更正2)
     st.markdown("---")
