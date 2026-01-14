@@ -210,6 +210,9 @@ def save_state_to_disk():
         "upstream_step6_done": st.session_state.get("upstream_step6_done", False),
         "upstream_step6_output": st.session_state.get("upstream_step6_output", ""),
         "quote_step6_done_current": st.session_state.get("quote_step6_done_current", False),
+
+        # Follow-up clear flag (fix StreamlitAPIException)
+        "_pending_clear_followup_key": st.session_state.get("_pending_clear_followup_key"),
     }
     try:
         STATE_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
@@ -1060,7 +1063,6 @@ def render_followup_history_chat(followup_history: List, lang: str):
         st.caption("No follow-up history yet." if lang == "en" else zh("目前尚無追問紀錄。", "目前尚无追问记录。"))
         return
 
-    # Wrap in expander to keep page clean
     with st.expander("Follow-up history (Chat view)" if lang == "en" else zh("追問歷史（對話排列）", "追问历史（对话排列）"), expanded=False):
         for i, (q, a) in enumerate(followup_history, start=1):
             with st.chat_message("user"):
@@ -1088,6 +1090,9 @@ def _reset_whole_document():
     st.session_state.upstream_step6_output = ""
     st.session_state.quote_step6_done_current = False
 
+    # Follow-up clear flag (fix)
+    st.session_state._pending_clear_followup_key = None
+
     save_state_to_disk()
 
 
@@ -1095,7 +1100,6 @@ def main():
     st.set_page_config(page_title=BRAND_TITLE_EN, layout="wide")
     restore_state_from_disk()
 
-    # Inject CSS once (UI only)
     inject_ui_css()
 
     defaults = [
@@ -1122,6 +1126,9 @@ def main():
         ("upstream_step6_done", False),
         ("upstream_step6_output", ""),
         ("quote_step6_done_current", False),
+
+        # Follow-up clear flag (fix StreamlitAPIException)
+        ("_pending_clear_followup_key", None),
     ]
     for k, v in defaults:
         if k not in st.session_state:
@@ -1567,7 +1574,6 @@ def main():
 
     col_qr1, col_qr2 = st.columns([1, 3])
     with col_qr1:
-        # (5) label changed exactly
         if st.button("Reset quote reference", key="reset_quote_ref_btn"):
             st.session_state.quote_current = None
             st.session_state.quote_step6_done_current = False
@@ -1599,7 +1605,6 @@ def main():
     selected_key = label_to_key[selected_label]
     st.session_state.selected_framework_key = selected_key
 
-    # if user changed framework before step5, ensure state exists
     if selected_key != current_fw_key:
         if selected_key not in framework_states:
             framework_states[selected_key] = {
@@ -1667,7 +1672,6 @@ def main():
     upstream_done = bool(st.session_state.get("upstream_step6_done", False))
     quote_done_current = bool(st.session_state.get("quote_step6_done_current", False))
 
-    # Avoid long waits: if upstream exists, require upstream relevance to be done before quote relevance
     quote_gate = (not upstream_exists) or upstream_done
 
     col_s6a, col_s6b = st.columns(2)
@@ -1712,7 +1716,6 @@ def main():
             quote_text = st.session_state.quote_current.get("text", "") if st.session_state.quote_current else ""
             out = run_quote_relevance(lang, st.session_state.last_doc_text or "", quote_text, model_name)
 
-        # Store history record (do not delete upstream)
         rec = {
             "name": st.session_state.quote_current.get("name", "(unknown)"),
             "ext": st.session_state.quote_current.get("ext", ""),
@@ -1812,7 +1815,6 @@ def main():
         current_state["step7_done"] = True
         current_state["step7_output"] = clean_report_text(final_output)
 
-        # Single final analysis_output for download + follow-ups (avoid duplication in UI)
         if lang == "zh":
             prefix_lines = [
                 "### 分析紀錄（必讀）",
@@ -1884,7 +1886,6 @@ def main():
         unsafe_allow_html=True,
     )
 
-    # Step 5
     if current_state.get("step5_done"):
         render_step_block(
             "Step 5 — Main analysis result" if lang == "en" else "Step 5 — 主文件分析結果",
@@ -1892,7 +1893,6 @@ def main():
             expanded=False,
         )
 
-    # Step 6-A
     if st.session_state.get("upstream_reference"):
         if st.session_state.get("upstream_step6_done"):
             render_step_block(
@@ -1907,9 +1907,7 @@ def main():
                 expanded=False,
             )
 
-    # Step 6-B history
     if st.session_state.get("quote_history"):
-        # Keep history collapsed by default
         st.markdown(f'<div class="ef-step-title">{"Step 6-B — Quote relevance (history)" if lang == "en" else "Step 6-B — 引用一致性（歷史）"}</div>', unsafe_allow_html=True)
         with st.expander("Show / Hide" if lang == "en" else zh("展開 / 收起", "展开 / 收起"), expanded=False):
             for i, h in enumerate(st.session_state.quote_history, start=1):
@@ -1917,7 +1915,6 @@ def main():
                 st.markdown(h.get("output", ""))
                 st.markdown("---")
 
-    # Step 7
     if current_state.get("step7_done"):
         render_step_block(
             "Step 7 — Final deliverable" if lang == "en" else "Step 7 — 最終正式報告",
@@ -1931,11 +1928,9 @@ def main():
             expanded=False,
         )
 
-    # (1) Follow-up history should appear after results
+    # Follow-up history after results
     st.markdown("---")
     st.subheader("Follow-up (Q&A)" if lang == "en" else zh("後續提問（Q&A）", "后续提问（Q&A）"))
-
-    # Chat-like history
     render_followup_history_chat(current_state.get("followup_history", []), lang)
 
     # =========================
@@ -1950,7 +1945,6 @@ def main():
         else:
             now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             with st.expander("Download"):
-                # (3) explicit selection: include follow-up replies or not
                 include_qa = st.checkbox(
                     "Include follow-up Q&A replies (optional)" if lang == "en" else zh("是否包含追問回覆紀錄（選填）", "是否包含追问回复记录（选填）"),
                     value=True,
@@ -1992,7 +1986,7 @@ def main():
         st.info("Complete Step 7 to enable downloads." if lang == "en" else zh("請先完成步驟七，產出最終正式報告後才能下載。", "请先完成步骤七，产出最终正式报告后才能下载。"))
 
     # =========================
-    # Follow-up input (1)(2): clean + clear input after send
+    # Follow-up input (FIXED: no StreamlitAPIException)
     # =========================
     st.markdown("---")
     st.subheader("Ask a follow-up question" if lang == "en" else zh("提出追問", "提出追问"))
@@ -2004,10 +1998,17 @@ def main():
             st.error("Follow-up limit reached (3 times)." if lang == "en" else zh("已達追問上限（3 次）", "已达追问上限（3 次）"))
         else:
             followup_key = f"followup_input_{selected_key}"
+
+            # ---- FIX: clear follow-up input on the next rerun (must be BEFORE the widget is instantiated) ----
+            _pending_clear = st.session_state.get("_pending_clear_followup_key")
+            if _pending_clear == followup_key:
+                st.session_state[followup_key] = ""
+                st.session_state["_pending_clear_followup_key"] = None
+            # ---- END FIX ----
+
             col_text, col_file = st.columns([3, 1])
 
             with col_text:
-                # Keep the label simple, like ChatGPT
                 prompt = st.text_area(
                     "Ask a follow-up question" if lang == "en" else zh("請輸入你的追問", "请输入你的追问"),
                     key=followup_key,
@@ -2036,8 +2037,10 @@ def main():
                             extra_text,
                         )
                     current_state["followup_history"].append((prompt, clean_report_text(answer)))
-                    # clear input to avoid "cannot produce question" / sticky state
-                    st.session_state[followup_key] = ""
+
+                    # FIX: DO NOT modify widget state after instantiation; clear on next rerun
+                    st.session_state["_pending_clear_followup_key"] = followup_key
+
                     save_state_to_disk()
                     record_usage(user_email, selected_key, "followup")
                     st.rerun()
