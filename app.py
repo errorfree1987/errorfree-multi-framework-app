@@ -1,6 +1,6 @@
 import os, json, datetime, secrets
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
 from io import BytesIO
 import base64
 
@@ -60,7 +60,9 @@ def load_companies() -> dict:
 
 def save_companies(data: dict):
     try:
-        COMPANY_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        COMPANY_FILE.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
     except Exception:
         pass
 
@@ -133,7 +135,9 @@ def load_doc_tracking() -> Dict[str, List[str]]:
 
 def save_doc_tracking(data: Dict[str, List[str]]):
     try:
-        DOC_TRACK_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        DOC_TRACK_FILE.write_text(
+            json.dumps(data, ensure_ascii=False), encoding="utf-8"
+        )
     except Exception:
         pass
 
@@ -149,7 +153,9 @@ def load_usage_stats() -> Dict[str, Dict]:
 
 def save_usage_stats(data: Dict[str, Dict]):
     try:
-        USAGE_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        USAGE_FILE.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
     except Exception:
         pass
 
@@ -197,22 +203,13 @@ def save_state_to_disk():
         "last_doc_text": st.session_state.get("last_doc_text", ""),
         "last_doc_name": st.session_state.get("last_doc_name", ""),
         "document_type": st.session_state.get("document_type"),
+        "reference_history": st.session_state.get("reference_history", []),
+        "ref_pending": st.session_state.get("ref_pending", False),
         "framework_states": st.session_state.get("framework_states", {}),
         "selected_framework_key": st.session_state.get("selected_framework_key"),
         "current_doc_id": st.session_state.get("current_doc_id"),
         "company_code": st.session_state.get("company_code"),
         "show_admin": st.session_state.get("show_admin", False),
-
-        # Step 3 split references (更正2)
-        "upstream_reference": st.session_state.get("upstream_reference"),
-        "quote_current": st.session_state.get("quote_current"),
-        "quote_history": st.session_state.get("quote_history", []),
-        "upstream_step6_done": st.session_state.get("upstream_step6_done", False),
-        "upstream_step6_output": st.session_state.get("upstream_step6_output", ""),
-        "quote_step6_done_current": st.session_state.get("quote_step6_done_current", False),
-
-        # Follow-up clear flag (fix StreamlitAPIException)
-        "_pending_clear_followup_key": st.session_state.get("_pending_clear_followup_key"),
     }
     try:
         STATE_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
@@ -241,7 +238,7 @@ client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 
 def resolve_model_for_user(role: str) -> str:
-    if role in ["admin", "pro", "company_admin"]:
+    if role in ["admin", "pro"]:
         return "gpt-5.1"
     if role == "free":
         return "gpt-4.1-mini"
@@ -249,7 +246,7 @@ def resolve_model_for_user(role: str) -> str:
 
 
 # =========================
-# Language helpers
+# Language helpers (簡體 / 繁體)
 # =========================
 
 def zh(tw: str, cn: str = None) -> str:
@@ -298,14 +295,17 @@ def ocr_image_to_text(file_bytes: bytes, filename: str) -> str:
                     "role": "user",
                     "content": [
                         {"type": "input_text", "text": prompt},
-                        {"type": "input_image", "image": {"data": b64_data, "format": img_format}},
+                        {
+                            "type": "input_image",
+                            "image": {"data": b64_data, "format": img_format},
+                        },
                     ],
                 }
             ],
             max_output_tokens=2000,
         )
-        text_out = response.output_text or ""
-        return text_out.strip()
+        text = response.output_text or ""
+        return text.strip()
     except Exception as e:
         return f"[圖片 OCR 時發生錯誤: {e}]"
 
@@ -410,35 +410,28 @@ def summarize_reference_text(language: str, ref_name: str, ref_text: str, model_
 
     if language == "zh":
         sys = "你是一個嚴謹的文件摘要助手。你的任務是忠實壓縮內容，不要發明不存在的資訊。"
-
         def one_chunk_prompt(i: int, total: int, c: str) -> str:
             return (
                 f"請將以下參考文件內容做摘要（第 {i}/{total} 段），保留：\n"
                 "1) 重要定義/範圍\n2) 關鍵要求/限制/數值\n3) 任何例外/前提\n4) 可能影響判斷的條款\n\n"
                 f"【參考文件】{ref_name}\n【內容】\n{c}"
             )
-
         reduce_sys = "你是一個嚴謹的摘要整合助手。請合併多段摘要，去重但不漏掉關鍵要求與限制。"
-
         def reduce_prompt(t: str) -> str:
             return (
                 "請把以下多段摘要整合為一份『參考文件總摘要』，結構化輸出：\n"
                 "A. 定義/範圍\nB. 主要要求/限制\nC. 例外/前提\nD. 可能影響判斷的條款\n\n"
                 f"【參考文件】{ref_name}\n【多段摘要】\n{t}"
             )
-
     else:
         sys = "You are a careful document summarization assistant. Summarize faithfully and do not hallucinate."
-
         def one_chunk_prompt(i: int, total: int, c: str) -> str:
             return (
                 f"Summarize the following reference document chunk ({i}/{total}). Preserve:\n"
                 "1) definitions/scope\n2) key requirements/constraints/values\n3) exceptions/prereqs\n4) clauses that affect decisions\n\n"
                 f"[Reference] {ref_name}\n[Content]\n{c}"
             )
-
         reduce_sys = "You consolidate summaries. Merge, dedupe, keep key constraints."
-
         def reduce_prompt(t: str) -> str:
             return (
                 "Consolidate chunk summaries into ONE reference master summary with sections:\n"
@@ -456,94 +449,139 @@ def summarize_reference_text(language: str, ref_name: str, ref_text: str, model_
         nxt = []
         batch_size = 8
         for i in range(0, len(current), batch_size):
-            joined = "\n\n---\n\n".join(current[i : i + batch_size])
+            joined = "\n\n---\n\n".join(current[i:i + batch_size])
             nxt.append(_openai_simple(reduce_sys, reduce_prompt(joined), model_name, max_output_tokens=1100))
         current = nxt
 
     return current[0].strip()
 
 
-def clean_report_text(text: str) -> str:
-    replacements = {"■": "-", "•": "-", "–": "-", "—": "-"}
-    for old, new in replacements.items():
-        text = text.replace(old, new)
-    return text
+def build_relevance_file(language: str, framework_key: str, document_type: str, main_analysis: str, ref_summaries: List[Dict]) -> str:
+    """Create a system-generated comparison file: main analysis vs reference summaries."""
+    fw = FRAMEWORKS.get(framework_key, {})
+    fw_name = fw.get("name_zh", framework_key) if language == "zh" else fw.get("name_en", framework_key)
 
-
-# =========================
-# Step 6: Relevance analysis (更正2)
-# =========================
-
-def run_upstream_relevance(language: str, main_doc: str, upstream_doc: str, model_name: str) -> str:
-    """Main reference relevance analysis: identify upstream document errors."""
     if language == "zh":
-        sys = "你是一位嚴謹的工程審閱顧問。你要檢查主文件與上游主要參考文件的一致性，不得杜撰。"
+        lines = [
+            "【相關性對照文件（由系統生成，用於後續相關性分析）】",
+            f"- 文件類型：{document_type or '（未選擇）'}",
+            f"- 分析框架：{fw_name}",
+            "",
+            "==============================",
+            "一、主文件分析結果（要點，用於對照）",
+            "==============================",
+            main_analysis or "",
+            "",
+            "==============================",
+            "二、參考文件摘要（用於對照）",
+            "==============================",
+        ]
+        for i, r in enumerate(ref_summaries, start=1):
+            lines.append(f"\n--- 參考文件 {i}: {r.get('name','(unknown)')} ---\n")
+            lines.append(r.get("summary", "") or "")
+        return "\n".join(lines)
+    else:
+        lines = [
+            "[Relevance Comparison File (system-generated)]",
+            f"- Document Type: {document_type or '(not selected)'}",
+            f"- Framework: {fw_name}",
+            "",
+            "==============================",
+            "1) Main analysis (for comparison)",
+            "==============================",
+            main_analysis or "",
+            "",
+            "==============================",
+            "2) Reference summaries (for comparison)",
+            "==============================",
+        ]
+        for i, r in enumerate(ref_summaries, start=1):
+            lines.append(f"\n--- Reference {i}: {r.get('name','(unknown)')} ---\n")
+            lines.append(r.get("summary", "") or "")
+        return "\n".join(lines)
+
+
+def derive_relevance_points(language: str, relevance_file_text: str, model_name: str) -> str:
+    """Extract compact relevance focus points (fast, token-efficient)."""
+    if language == "zh":
+        sys = "你是一個嚴謹的對照助手。請找出主文件分析結果與參考文件之間『真正需要對照』的點。不得杜撰。"
         user = (
-            "任務：做『Main Reference Relevance Analysis（上游相關性）』。\n"
-            "請只針對下列三類一致性做檢查並輸出：\n"
-            "1) 目的（Purpose）：主文件目的是否與主要參考文件一致或可推導；若不一致，說明差異。\n"
-            "2) 需求（Requirements）：主文件引用/採用的需求是否與主要參考文件一致；列出不一致或缺漏。\n"
-            "3) 結論（Conclusion）：主要參考文件的結論是否與主文件的目的/分析/結論衝突；列出衝突點。\n\n"
-            "輸出格式要求（Markdown）：\n"
-            "- 摘要（3~6點）\n"
-            "- 一致性檢查表（用表格呈現：檢查項 / 主文件要點 / 參考文件要點 / 是否一致 / 說明與建議修正）\n"
-            "- Upstream document errors 清單（逐條，含嚴重度建議）\n\n"
-            f"【主文件】\n{(main_doc or '')[:18000]}\n\n"
-            f"【主要參考文件（Upstream）】\n{(upstream_doc or '')[:18000]}"
+            "請從以下『相關性對照文件』中抽取：\n"
+            "1) 支持主文件結論的參考依據（逐條）\n"
+            "2) 與主文件結論衝突/不一致的參考依據（逐條）\n"
+            "3) 主文件可能遺漏、但參考文件提到的重要要求/限制（逐條）\n"
+            "4) 需要澄清的關鍵問題（逐條）\n\n"
+            "輸出請用 Markdown，並在每條後面標註對應的參考文件名稱。\n\n"
+            f"{relevance_file_text}"
         )
     else:
-        sys = "You are a rigorous engineering review consultant. Check consistency between the main document and the upstream main reference. Do not hallucinate."
+        sys = "You are a careful comparison assistant. Identify only what truly needs comparison. No hallucinations."
         user = (
-            "Task: Main Reference Relevance Analysis (upstream relevance).\n"
-            "Check ONLY these consistency aspects and report findings:\n"
-            "1) Purpose: main purpose consistent with or derivable from upstream purpose.\n"
-            "2) Requirements: requirements used/quoted in main consistent with upstream; list mismatches or omissions.\n"
-            "3) Conclusions: upstream conclusions must not conflict with the purpose/analysis/conclusions of main; list conflicts.\n\n"
-            "Output in Markdown:\n"
-            "- Executive summary (3-6 bullets)\n"
-            "- Consistency check table (Item / Main / Upstream / Consistent? / Notes & Fix)\n"
-            "- Upstream document errors list (with suggested severity)\n\n"
-            f"[Main document]\n{(main_doc or '')[:18000]}\n\n"
-            f"[Upstream main reference]\n{(upstream_doc or '')[:18000]}"
+            "From the following relevance comparison file, extract:\n"
+            "1) reference support for the main conclusions\n"
+            "2) contradictions/inconsistencies\n"
+            "3) important requirements present in references but missing in main\n"
+            "4) clarification questions\n\n"
+            "Output in Markdown. Each bullet must cite which reference name it came from.\n\n"
+            f"{relevance_file_text}"
         )
-    return _openai_simple(sys, user, model_name, max_output_tokens=1800)
+    return _openai_simple(sys, user, model_name, max_output_tokens=1600)
 
 
-def run_quote_relevance(language: str, main_doc: str, quote_ref_doc: str, model_name: str) -> str:
-    """Quote reference relevance analysis: identify reference inconsistency errors."""
+def build_final_integration_input(language: str, document_type: str, framework_key: str, main_analysis: str, relevance_points: str) -> str:
+    """Step 7 input: integrate Step 5 + Step 6, then produce final consolidated result under the SAME framework."""
+    fw = FRAMEWORKS.get(framework_key, {})
+    fw_name = fw.get("name_zh", framework_key) if language == "zh" else fw.get("name_en", framework_key)
+
     if language == "zh":
-        sys = "你是一位嚴謹的文件核對顧問。你要檢查主文件中的引用/引述是否與『引用來源（Quote Reference）』一致，不得杜撰。"
-        user = (
-            "任務：做『Quote Reference Relevance Analysis（引用一致性）』。\n"
-            "請依序完成：\n"
-            "A) 從主文件中找出明顯的『引用/引述/引用條款/引用數值』（可用關鍵字如：according to, as stated in, per, 引用, 依據, 參照, 條款, 規範 等）並列成清單。\n"
-            "B) 逐條核對：每一條引用內容是否能在 Quote Reference 文件中找到對應；若找不到或表述/數值/條件不同，視為『reference inconsistency error』。\n"
-            "C) 對每一條不一致，提供：差異點、可能原因、建議修正（主文件要改、或要補充引用、或要更換引用來源）。\n\n"
-            "輸出格式（Markdown）：\n"
-            "- 摘要\n"
-            "- 引用核對表（表格：主文件引用片段/主張 / Quote Reference 對應段落或關鍵句 / 一致性判定 / 差異與建議修正）\n"
-            "- Reference inconsistency errors（逐條）\n\n"
-            "注意：如果主文件本身沒有明確引用可辨識，請明確說明並改以『可能引用點』做保守核對，不要硬編。\n\n"
-            f"【主文件】\n{(main_doc or '')[:18000]}\n\n"
-            f"【Quote Reference 文件】\n{(quote_ref_doc or '')[:18000]}"
+        return "\n".join(
+            [
+                "【最終整合分析輸入（步驟七）】",
+                f"- 文件類型：{document_type or '（未選擇）'}",
+                f"- 分析框架：{fw_name}",
+                "",
+                "==============================",
+                "一、步驟五：主文件零錯誤框架分析結果",
+                "==============================",
+                main_analysis or "",
+                "",
+                "==============================",
+                "二、步驟六：參考文件相關性分析重點",
+                "==============================",
+                relevance_points or "",
+                "",
+                "【任務】",
+                "請你用同一個零錯誤框架，整合上述兩份內容，輸出『最終成品分析報告』。",
+                "要求：",
+                "1) 不要只是把兩份內容貼在一起；要做整合、去重、補強。",
+                "2) 必須明確指出：哪些結論被參考文件支持、哪些存在衝突、哪些是主文件遺漏但參考文件要求的項目。",
+                "3) 產出可執行的修正/補件/澄清問題清單。",
+            ]
         )
     else:
-        sys = "You are a meticulous cross-checking consultant. Verify that quotes/citations in the main document are consistent with the Quote Reference document. Do not hallucinate."
-        user = (
-            "Task: Quote Reference Relevance Analysis (reference inconsistency).\n"
-            "Steps:\n"
-            "A) Identify explicit quotes/citations/claimed requirements/values in the main document (look for 'according to', 'as stated in', 'per', 'reference', etc.). List them.\n"
-            "B) For each item, verify whether it exists in the Quote Reference document with matching meaning/values/conditions. If missing or different, mark as a 'reference inconsistency error'.\n"
-            "C) For each inconsistency, provide the delta, possible cause, and recommended fix (edit main, add citation detail, or change the reference).\n\n"
-            "Output in Markdown:\n"
-            "- Summary\n"
-            "- Quote check table (Main claim / Quote reference evidence / Consistent? / Delta & Fix)\n"
-            "- Reference inconsistency errors list\n\n"
-            "If the main document contains no identifiable quotes/citations, say so and perform a conservative 'possible quote points' check without inventing content.\n\n"
-            f"[Main document]\n{(main_doc or '')[:18000]}\n\n"
-            f"[Quote reference document]\n{(quote_ref_doc or '')[:18000]}"
+        return "\n".join(
+            [
+                "[Final Integration Input (Step 7)]",
+                f"- Document type: {document_type or '(not selected)'}",
+                f"- Framework: {fw_name}",
+                "",
+                "==============================",
+                "1) Step 5: Main document framework analysis",
+                "==============================",
+                main_analysis or "",
+                "",
+                "==============================",
+                "2) Step 6: Reference relevance key points",
+                "==============================",
+                relevance_points or "",
+                "",
+                "[Task]",
+                "Using the same framework, integrate the above into a FINAL consolidated report:",
+                "1) Integrate and dedupe; do not merely concatenate.",
+                "2) Clearly state what is supported by references, what conflicts, and what is missing in main but required by references.",
+                "3) Provide actionable fixes / addenda / clarification questions.",
+            ]
         )
-    return _openai_simple(sys, user, model_name, max_output_tokens=1800)
 
 
 # =========================
@@ -616,9 +654,16 @@ def run_followup_qa(
 # Report formatting / exports
 # =========================
 
-def build_full_report(lang: str, framework_key: str, state: Dict, include_followups: bool = True) -> str:
+def clean_report_text(text: str) -> str:
+    replacements = {"■": "-", "•": "-", "–": "-", "—": "-"}
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return text
+
+
+def build_full_report(lang: str, framework_key: str, state: Dict) -> str:
     analysis_output = state.get("analysis_output", "")
-    followups = state.get("followup_history", []) if include_followups else []
+    followups = state.get("followup_history", [])
     fw = FRAMEWORKS.get(framework_key, {})
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     email = st.session_state.get("user_email", "unknown")
@@ -628,7 +673,7 @@ def build_full_report(lang: str, framework_key: str, state: Dict, include_follow
 
     if lang == "zh":
         header = [
-            f"{BRAND_TITLE_ZH} 報告（分析" + (" + Q&A" if include_followups else "") + ")",
+            f"{BRAND_TITLE_ZH} 報告（分析 + Q&A）",
             f"{BRAND_SUBTITLE_ZH}",
             f"產生時間：{now}",
             f"使用者帳號：{email}",
@@ -639,7 +684,7 @@ def build_full_report(lang: str, framework_key: str, state: Dict, include_follow
             "==============================",
             analysis_output,
         ]
-        if include_followups and followups:
+        if followups:
             header += [
                 "",
                 "==============================",
@@ -652,7 +697,7 @@ def build_full_report(lang: str, framework_key: str, state: Dict, include_follow
                 header.append("")
     else:
         header = [
-            f"{BRAND_TITLE_EN} Report (Analysis" + (" + Q&A" if include_followups else "") + ")",
+            f"{BRAND_TITLE_EN} Report (Analysis + Q&A)",
             f"{BRAND_SUBTITLE_EN}",
             f"Generated: {now}",
             f"User: {email}",
@@ -663,7 +708,7 @@ def build_full_report(lang: str, framework_key: str, state: Dict, include_follow
             "==============================",
             analysis_output,
         ]
-        if include_followups and followups:
+        if followups:
             header += [
                 "",
                 "==============================",
@@ -674,7 +719,80 @@ def build_full_report(lang: str, framework_key: str, state: Dict, include_follow
                 header.append(f"[Q{i}] {q}")
                 header.append(f"[A{i}] {a}")
                 header.append("")
+
     return clean_report_text("\n".join(header))
+
+
+def build_whole_report(lang: str, framework_states: Dict[str, Dict]) -> str:
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    email = st.session_state.get("user_email", "unknown")
+
+    lines: List[str] = []
+    if lang == "zh":
+        lines.extend(
+            [
+                f"{BRAND_TITLE_ZH} 總報告（全部框架）",
+                f"{BRAND_SUBTITLE_ZH}",
+                f"產生時間：{now}",
+                f"使用者帳號：{email}",
+                "",
+                "==============================",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                f"{BRAND_TITLE_EN} Consolidated Report (All frameworks)",
+                f"{BRAND_SUBTITLE_EN}",
+                f"Generated: {now}",
+                f"User: {email}",
+                "",
+                "==============================",
+            ]
+        )
+
+    for fw_key in FRAMEWORKS.keys():
+        state = framework_states.get(fw_key)
+        if not state or not state.get("analysis_output"):
+            continue
+
+        fw = FRAMEWORKS.get(fw_key, {})
+        name_zh = fw.get("name_zh", fw_key)
+        name_en = fw.get("name_en", fw_key)
+
+        if lang == "zh":
+            lines.append(f"◎ 框架：{name_zh}")
+            lines.append("------------------------------")
+            lines.append("一、分析結果")
+        else:
+            lines.append(f"◎ Framework: {name_en}")
+            lines.append("------------------------------")
+            lines.append("1. Analysis")
+
+        lines.append(state.get("analysis_output", ""))
+
+        followups = state.get("followup_history", [])
+        if followups:
+            if lang == "zh":
+                lines.append("")
+                lines.append("二、後續問答（Q&A）")
+            else:
+                lines.append("")
+                lines.append("2. Follow-up Q&A")
+
+            for i, (q, a) in enumerate(followups, start=1):
+                lines.append(f"[Q{i}] {q}")
+                lines.append(f"[A{i}] {a}")
+                lines.append("")
+
+        lines.append("")
+        lines.append("================================")
+        lines.append("")
+
+    if not lines:
+        return ""
+
+    return clean_report_text("\n".join(lines))
 
 
 def build_docx_bytes(text: str) -> bytes:
@@ -726,7 +844,10 @@ def build_pdf_bytes(text: str) -> bytes:
                     line = ""
                 else:
                     cut = len(line)
-                    while cut > 0 and pdfmetrics.stringWidth(line[:cut], PDF_FONT_NAME, 11) > max_width:
+                    while (
+                        cut > 0
+                        and pdfmetrics.stringWidth(line[:cut], PDF_FONT_NAME, 11) > max_width
+                    ):
                         cut -= 1
                     space_pos = line.rfind(" ", 0, cut)
                     if space_pos > 0:
@@ -806,7 +927,7 @@ def company_admin_dashboard():
     st.subheader(zh("公司資訊", "公司信息") if lang == "zh" else "Company Info")
     st.write((zh("公司代碼：", "公司代码：") if lang == "zh" else "Company Code: ") + code)
     if lang == "zh":
-        st.write(zh("可查看內容：", "可查看内容：") + ("是" if content_access else "否"))
+        st.write(zh("可查看內容：", "可查看内容：") + (zh("是", "是") if content_access else zh("否", "否")))
     else:
         st.write("Can view content: " + ("Yes" if content_access else "No"))
 
@@ -834,14 +955,13 @@ def company_admin_dashboard():
                     fw_map = u_stats.get("frameworks", {})
                     for fw_key, fw_data in fw_map.items():
                         fw_name = FRAMEWORKS.get(fw_key, {}).get("name_zh", fw_key) if lang == "zh" else FRAMEWORKS.get(fw_key, {}).get("name_en", fw_key)
-                        if lang == "zh":
-                            st.markdown(
-                                f"- {fw_name}：分析 {fw_data.get('analysis_runs', 0)} 次，追問 {fw_data.get('followups', 0)} 次，下載 {fw_data.get('downloads', 0)} 次"
-                            )
-                        else:
-                            st.markdown(
-                                f"- {fw_name}: analysis {fw_data.get('analysis_runs', 0)} times, follow-ups {fw_data.get('followups', 0)} times, downloads {fw_data.get('downloads', 0)} times"
-                            )
+                        st.markdown(
+                            f"- {fw_name}：{zh('分析', '分析')} {fw_data.get('analysis_runs', 0)} {zh('次', '次')}，"
+                            f"{zh('追問', '追问')} {fw_data.get('followups', 0)} {zh('次', '次')}，"
+                            f"{zh('下載', '下载')} {fw_data.get('downloads', 0)} {zh('次', '次')}"
+                            if lang == "zh"
+                            else f"- {fw_name}: analysis {fw_data.get('analysis_runs', 0)} times, follow-ups {fw_data.get('followups', 0)} times, downloads {fw_data.get('downloads', 0)} times"
+                        )
                 else:
                     st.caption(zh("（僅顯示使用量總數，未啟用內容檢視權限）", "（仅显示使用量总数，未启用内容查看权限）") if lang == "zh" else "(Only aggregate usage visible; content access disabled.)")
 
@@ -919,7 +1039,7 @@ def admin_dashboard():
             st.write(f"{zh('總分析次數：', '总分析次数：')}{total_analysis}" if lang == "zh" else f"Total analysis runs: {total_analysis}")
             st.write(f"{zh('總追問次數：', '总追问次数：')}{total_followups}" if lang == "zh" else f"Total follow-ups: {total_followups}")
             st.write(f"{zh('總下載次數：', '总下载次数：')}{total_downloads}" if lang == "zh" else f"Total downloads: {total_downloads}")
-            st.write((zh("content_access：", "content_access：") if lang == "zh" else "content_access: ") + ("啟用" if content_access else "關閉") if lang == "zh" else "content_access: " + ("enabled" if content_access else "disabled"))
+            st.write((zh("content_access：", "content_access：") if lang == "zh" else "content_access: ") + (zh("啟用", "启用") if content_access else zh("關閉", "关闭")) if lang == "zh" else "content_access: " + ("enabled" if content_access else "disabled"))
             st.markdown("---")
 
     st.subheader(zh("🔐 公司內容檢視權限設定", "🔐 公司内容查看权限设置") if lang == "zh" else "🔐 Company content access settings")
@@ -953,7 +1073,7 @@ def admin_router() -> bool:
             company_admin_dashboard()
         else:
             admin_dashboard()
-        if st.button("Back to analysis" if st.session_state.get("lang", "zh") == "en" else zh("返回分析頁面", "返回分析页面")):
+        if st.button(zh("返回分析頁面", "返回分析页面") if st.session_state.get("lang", "zh") == "zh" else "Back to analysis"):
             st.session_state.show_admin = False
             save_state_to_disk()
             st.rerun()
@@ -977,18 +1097,15 @@ LOGO_PATH = "assets/errorfree_logo.png"
 
 
 def language_selector():
-    """更正2：英文模式不顯示中文選項文字（但仍可切換到中文）。"""
     current_lang = st.session_state.get("lang", "zh")
     current_variant = st.session_state.get("zh_variant", "tw")
 
     if current_lang == "en":
         index = 0
-        options = ("English", "Chinese (Simplified)", "Chinese (Traditional)")
     else:
-        index = 0 if current_lang == "en" else (1 if current_variant == "cn" else 2)
-        options = ("English", "中文简体", "中文繁體")
+        index = 1 if current_variant == "cn" else 2
 
-    choice = st.radio("Language" if current_lang == "en" else "Language / 語言", options, index=index)
+    choice = st.radio("Language / 語言", ("English", "中文简体", "中文繁體"), index=index)
 
     if choice == "English":
         st.session_state.lang = "en"
@@ -996,111 +1113,16 @@ def language_selector():
             st.session_state.zh_variant = "tw"
     else:
         st.session_state.lang = "zh"
-        if choice in ["Chinese (Simplified)", "中文简体"]:
-            st.session_state.zh_variant = "cn"
-        else:
-            st.session_state.zh_variant = "tw"
-
-
-# =========================
-# UI helper (NEW, minimal)
-# =========================
-
-def inject_ui_css():
-    """Make Results section more prominent + normalize Step heading sizes (UI-only)."""
-    st.markdown(
-        """
-<style>
-/* Strong "RESULTS" banner */
-.ef-results-banner {
-  padding: 14px 16px;
-  border-radius: 12px;
-  border: 1px solid rgba(49, 51, 63, 0.20);
-  background: rgba(49, 51, 63, 0.04);
-  margin: 12px 0 14px 0;
-}
-.ef-results-banner .title {
-  font-size: 22px;
-  font-weight: 800;
-  letter-spacing: 0.5px;
-  margin-bottom: 4px;
-}
-.ef-results-banner .subtitle {
-  font-size: 14px;
-  opacity: 0.80;
-}
-
-/* Normalize our Step headers (we render as markdown h3 inside a wrapper) */
-.ef-step-title {
-  font-size: 18px;
-  font-weight: 800;
-  margin: 4px 0 6px 0;
-}
-
-/* Make expander header look cleaner */
-div[data-testid="stExpander"] details summary p {
-  font-weight: 700;
-}
-</style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def render_step_block(title: str, body_markdown: str, expanded: bool = False):
-    """Render a Step section with consistent title and collapsible body."""
-    st.markdown(f'<div class="ef-step-title">{title}</div>', unsafe_allow_html=True)
-    if body_markdown and body_markdown.strip():
-        with st.expander("Show / Hide" if st.session_state.get("lang", "zh") == "en" else zh("展開 / 收起", "展开 / 收起"), expanded=expanded):
-            st.markdown(body_markdown)
-    else:
-        st.info("No content yet." if st.session_state.get("lang", "zh") == "en" else zh("尚無內容。", "尚无内容。"))
-
-
-def render_followup_history_chat(followup_history: List, lang: str):
-    """ChatGPT-like history display (Q then A)."""
-    if not followup_history:
-        st.caption("No follow-up history yet." if lang == "en" else zh("目前尚無追問紀錄。", "目前尚无追问记录。"))
-        return
-
-    with st.expander("Follow-up history (Chat view)" if lang == "en" else zh("追問歷史（對話排列）", "追问历史（对话排列）"), expanded=False):
-        for i, (q, a) in enumerate(followup_history, start=1):
-            with st.chat_message("user"):
-                st.markdown(q)
-            with st.chat_message("assistant"):
-                st.markdown(a)
+        st.session_state.zh_variant = "cn" if choice == "中文简体" else "tw"
 
 
 # =========================
 # Main app
 # =========================
 
-def _reset_whole_document():
-    st.session_state.framework_states = {}
-    st.session_state.last_doc_text = ""
-    st.session_state.last_doc_name = ""
-    st.session_state.document_type = None
-    st.session_state.current_doc_id = None
-
-    # Step 3 references (更正2)
-    st.session_state.upstream_reference = None
-    st.session_state.quote_current = None
-    st.session_state.quote_history = []
-    st.session_state.upstream_step6_done = False
-    st.session_state.upstream_step6_output = ""
-    st.session_state.quote_step6_done_current = False
-
-    # Follow-up clear flag (fix)
-    st.session_state._pending_clear_followup_key = None
-
-    save_state_to_disk()
-
-
 def main():
     st.set_page_config(page_title=BRAND_TITLE_EN, layout="wide")
     restore_state_from_disk()
-
-    inject_ui_css()
 
     defaults = [
         ("user_email", None),
@@ -1113,22 +1135,13 @@ def main():
         ("last_doc_text", ""),
         ("last_doc_name", ""),
         ("document_type", None),
+        ("reference_history", []),
+        ("ref_pending", False),
         ("framework_states", {}),
         ("selected_framework_key", None),
         ("current_doc_id", None),
         ("company_code", None),
         ("show_admin", False),
-
-        # Step 3 split references (更正2)
-        ("upstream_reference", None),         # dict or None
-        ("quote_current", None),              # dict or None (single upload slot)
-        ("quote_history", []),                # list of analyzed quote relevance records
-        ("upstream_step6_done", False),
-        ("upstream_step6_output", ""),
-        ("quote_step6_done_current", False),
-
-        # Follow-up clear flag (fix StreamlitAPIException)
-        ("_pending_clear_followup_key", None),
     ]
     for k, v in defaults:
         if k not in st.session_state:
@@ -1140,28 +1153,36 @@ def main():
     doc_tracking = load_doc_tracking()
 
     with st.sidebar:
+        lang = st.session_state.lang
+
         language_selector()
         lang = st.session_state.lang
 
         if st.session_state.is_authenticated and st.session_state.user_role in ["admin", "pro", "company_admin"]:
-            if st.button("Admin Dashboard"):
+            if st.button("管理後台 Admin Dashboard"):
                 st.session_state.show_admin = True
                 save_state_to_disk()
                 st.rerun()
 
         st.markdown("---")
         if st.session_state.is_authenticated:
-            st.subheader("Account" if lang == "en" else zh("帳號資訊", "账号信息"))
-            st.write(f"Email: {st.session_state.user_email}" if lang == "en" else f"Email：{st.session_state.user_email}")
-            if st.button("Logout" if lang == "en" else zh("登出", "退出登录")):
+            st.subheader(zh("帳號資訊", "账号信息") if lang == "zh" else "Account")
+            st.write(f"Email：{st.session_state.user_email}")
+            if st.button(zh("登出", "退出登录") if lang == "zh" else "Logout"):
                 st.session_state.user_email = None
                 st.session_state.user_role = None
                 st.session_state.is_authenticated = False
-                _reset_whole_document()
+                st.session_state.framework_states = {}
+                st.session_state.last_doc_text = ""
+                st.session_state.last_doc_name = ""
+                st.session_state.document_type = None
+                st.session_state.reference_history = []
+                st.session_state.ref_pending = False
+                st.session_state.current_doc_id = None
                 save_state_to_disk()
                 st.rerun()
         else:
-            st.subheader("Not Logged In" if lang == "en" else zh("尚未登入", "尚未登录"))
+            st.subheader(zh("尚未登入", "尚未登录") if lang == "zh" else "Not Logged In")
             if lang == "zh":
                 st.markdown(
                     "- " + zh("上方：內部員工 / 會員登入。", "上方：内部员工 / 会员登录。") + "\n"
@@ -1171,8 +1192,8 @@ def main():
             else:
                 st.markdown(
                     "- Top: internal Error-Free employees / members.\n"
-                    "- Middle: Company Admins for each client company.\n"
-                    "- Bottom: students / end-users using Guest trial accounts."
+                    "- Middle: **Company Admins** for each client company.\n"
+                    "- Bottom: students / end-users using **Guest trial accounts**."
                 )
 
     # ======= Login screen =======
@@ -1207,10 +1228,10 @@ def main():
 
         st.markdown("---")
 
-        st.markdown("### Internal Employee / Member Login" if lang == "en" else "### " + zh("內部員工 / 會員登入", "内部员工 / 会员登录"))
+        st.markdown(("### " + zh("內部員工 / 會員登入", "内部员工 / 会员登录")) if lang == "zh" else "### Internal Employee / Member Login")
         emp_email = st.text_input("Email", key="emp_email")
-        emp_pw = st.text_input("Password" if lang == "en" else zh("密碼", "密码"), type="password", key="emp_pw")
-        if st.button("Login" if lang == "en" else zh("登入", "登录"), key="emp_login_btn"):
+        emp_pw = st.text_input(zh("密碼", "密码") if lang == "zh" else "Password", type="password", key="emp_pw")
+        if st.button(zh("登入", "登录") if lang == "zh" else "Login", key="emp_login_btn"):
             account = ACCOUNTS.get(emp_email)
             if account and account["password"] == emp_pw:
                 st.session_state.user_email = emp_email
@@ -1219,29 +1240,29 @@ def main():
                 save_state_to_disk()
                 st.rerun()
             else:
-                st.error("Invalid email or password" if lang == "en" else zh("帳號或密碼錯誤", "账号或密码错误"))
+                st.error(zh("帳號或密碼錯誤", "账号或密码错误") if lang == "zh" else "Invalid email or password")
 
         st.markdown("---")
 
-        st.markdown("### Company Admin (Client-side)" if lang == "en" else "### " + zh("公司管理者（企業窗口）", "公司管理者（企业窗口）"))
+        st.markdown(("### " + zh("公司管理者（企業窗口）", "公司管理者（企业窗口）")) if lang == "zh" else "### Company Admin (Client-side)")
         col_ca_signup, col_ca_login = st.columns(2)
 
         with col_ca_signup:
-            st.markdown("**Company Admin Signup**" if lang == "en" else "**" + zh("公司管理者註冊", "公司管理者注册") + "**")
-            ca_new_email = st.text_input("Admin signup email" if lang == "en" else zh("管理者註冊 Email", "管理者注册 Email"), key="ca_new_email")
-            ca_new_pw = st.text_input("Set admin password" if lang == "en" else zh("設定管理者密碼", "设置管理者密码"), type="password", key="ca_new_pw")
-            ca_company_code = st.text_input("Company Code", key="ca_company_code")
+            st.markdown("**" + (zh("公司管理者註冊", "公司管理者注册") if lang == "zh" else "Company Admin Signup") + "**")
+            ca_new_email = st.text_input(zh("管理者註冊 Email", "管理者注册 Email") if lang == "zh" else "Admin signup email", key="ca_new_email")
+            ca_new_pw = st.text_input(zh("設定管理者密碼", "设置管理者密码") if lang == "zh" else "Set admin password", type="password", key="ca_new_pw")
+            ca_company_code = st.text_input("公司代碼 Company Code", key="ca_company_code")
 
-            if st.button("Create Company Admin Account" if lang == "en" else zh("建立管理者帳號", "建立管理者账号"), key="ca_signup_btn"):
+            if st.button(zh("建立管理者帳號", "建立管理者账号") if lang == "zh" else "Create Company Admin Account", key="ca_signup_btn"):
                 if not ca_new_email or not ca_new_pw or not ca_company_code:
-                    st.error("Please fill all admin signup fields" if lang == "en" else zh("請完整填寫管理者註冊資訊", "请完整填写管理者注册信息"))
+                    st.error(zh("請完整填寫管理者註冊資訊", "请完整填写管理者注册信息") if lang == "zh" else "Please fill all admin signup fields")
                 else:
                     companies = load_companies()
                     guests = load_guest_accounts()
                     if ca_company_code not in companies:
-                        st.error("Company code not found. Please ask the system admin to create it." if lang == "en" else zh("公司代碼不存在，請先向系統管理員建立公司", "公司代码不存在，请先向系统管理员建立公司"))
+                        st.error(zh("公司代碼不存在，請先向系統管理員建立公司", "公司代码不存在，请先向系统管理员建立公司") if lang == "zh" else "Company code not found. Please ask the system admin to create it.")
                     elif ca_new_email in ACCOUNTS or ca_new_email in guests:
-                        st.error("This email is already in use" if lang == "en" else zh("此 Email 已被使用", "此 Email 已被使用"))
+                        st.error(zh("此 Email 已被使用", "此 Email 已被使用") if lang == "zh" else "This email is already in use")
                     else:
                         guests[ca_new_email] = {"password": ca_new_pw, "role": "company_admin", "company_code": ca_company_code}
                         save_guest_accounts(guests)
@@ -1251,18 +1272,20 @@ def main():
                         if ca_new_email not in admins:
                             admins.append(ca_new_email)
                         entry["admins"] = admins
-                        entry.setdefault("company_name", "")
-                        entry.setdefault("content_access", False)
+                        if "company_name" not in entry:
+                            entry["company_name"] = ""
+                        if "content_access" not in entry:
+                            entry["content_access"] = False
                         companies[ca_company_code] = entry
                         save_companies(companies)
 
-                        st.success("Company admin account created" if lang == "en" else zh("公司管理者帳號已建立", "公司管理者账号已建立"))
+                        st.success(zh("公司管理者帳號已建立", "公司管理者账号已建立") if lang == "zh" else "Company admin account created")
 
         with col_ca_login:
-            st.markdown("**Company Admin Login**" if lang == "en" else "**" + zh("公司管理者登入", "公司管理者登录") + "**")
-            ca_email = st.text_input("Admin Email" if lang == "en" else "管理者 Email", key="ca_email")
-            ca_pw = st.text_input("Admin Password" if lang == "en" else zh("管理者密碼", "管理者密码"), type="password", key="ca_pw")
-            if st.button("Login as Company Admin" if lang == "en" else zh("管理者登入", "管理者登录"), key="ca_login_btn"):
+            st.markdown("**" + (zh("公司管理者登入", "公司管理者登录") if lang == "zh" else "Company Admin Login") + "**")
+            ca_email = st.text_input(zh("管理者 Email", "管理者 Email") if lang == "zh" else "Admin Email", key="ca_email")
+            ca_pw = st.text_input(zh("管理者密碼", "管理者密码") if lang == "zh" else "Admin Password", type="password", key="ca_pw")
+            if st.button(zh("管理者登入", "管理者登录") if lang == "zh" else "Login as Company Admin", key="ca_login_btn"):
                 guests = load_guest_accounts()
                 acc = guests.get(ca_email)
                 if acc and acc.get("password") == ca_pw and acc.get("role") == "company_admin":
@@ -1273,30 +1296,30 @@ def main():
                     save_state_to_disk()
                     st.rerun()
                 else:
-                    st.error("Invalid company admin credentials" if lang == "en" else zh("管理者帳號或密碼錯誤", "管理者账号或密码错误"))
+                    st.error(zh("管理者帳號或密碼錯誤", "管理者账号或密码错误") if lang == "zh" else "Invalid company admin credentials")
 
         st.markdown("---")
 
-        st.markdown("### Guest Trial Accounts" if lang == "en" else "### " + zh("Guest 試用帳號", "Guest 试用账号"))
+        st.markdown("### " + (zh("Guest 試用帳號", "Guest 试用账号") if lang == "zh" else "Guest Trial Accounts"))
         col_guest_signup, col_guest_login = st.columns(2)
 
         with col_guest_signup:
-            st.markdown("**Guest Signup**" if lang == "en" else "**" + zh("Guest 試用註冊", "Guest 试用注册") + "**")
-            new_guest_email = st.text_input("Email for signup" if lang == "en" else zh("註冊 Email", "注册 Email"), key="new_guest_email")
-            guest_company_code = st.text_input("Company Code", key="guest_company_code")
+            st.markdown("**" + (zh("Guest 試用註冊", "Guest 试用注册") if lang == "zh" else "Guest Signup") + "**")
+            new_guest_email = st.text_input(zh("註冊 Email", "注册 Email") if lang == "zh" else "Email for signup", key="new_guest_email")
+            guest_company_code = st.text_input(zh("公司代碼 Company Code", "公司代码 Company Code") if lang == "zh" else "Company Code", key="guest_company_code")
 
-            if st.button("Generate Guest Password" if lang == "en" else zh("取得 Guest 密碼", "获取 Guest 密码"), key="guest_signup_btn"):
+            if st.button(zh("取得 Guest 密碼", "获取 Guest 密码") if lang == "zh" else "Generate Guest Password", key="guest_signup_btn"):
                 if not new_guest_email:
-                    st.error("Please enter an email" if lang == "en" else zh("請輸入 Email", "请输入 Email"))
+                    st.error(zh("請輸入 Email", "请输入 Email") if lang == "zh" else "Please enter an email")
                 elif not guest_company_code:
-                    st.error("Please enter your Company Code" if lang == "en" else zh("請輸入公司代碼", "请输入公司代码"))
+                    st.error(zh("請輸入公司代碼", "请输入公司代码") if lang == "zh" else "Please enter your Company Code")
                 else:
                     guests = load_guest_accounts()
                     companies = load_companies()
                     if guest_company_code not in companies:
-                        st.error("Invalid Company Code. Please check with your instructor or admin." if lang == "en" else zh("公司代碼不存在，請向講師或公司窗口確認", "公司代码不存在，请向讲师或公司窗口确认"))
+                        st.error(zh("公司代碼不存在，請向講師或公司窗口確認", "公司代码不存在，请向讲师或公司窗口确认") if lang == "zh" else "Invalid Company Code. Please check with your instructor or admin.")
                     elif new_guest_email in guests or new_guest_email in ACCOUNTS:
-                        st.error("Email already exists" if lang == "en" else zh("Email 已存在", "Email 已存在"))
+                        st.error(zh("Email 已存在", "Email 已存在") if lang == "zh" else "Email already exists")
                     else:
                         pw = "".join(secrets.choice("0123456789") for _ in range(8))
                         guests[new_guest_email] = {"password": pw, "role": "free", "company_code": guest_company_code}
@@ -1307,18 +1330,20 @@ def main():
                         if new_guest_email not in users:
                             users.append(new_guest_email)
                         entry["users"] = users
-                        entry.setdefault("company_name", "")
-                        entry.setdefault("content_access", False)
+                        if "company_name" not in entry:
+                            entry["company_name"] = entry.get("company_name", "")
+                        if "content_access" not in entry:
+                            entry["content_access"] = False
                         companies[guest_company_code] = entry
                         save_companies(companies)
 
-                        st.success(f"Guest account created! Password: {pw}" if lang == "en" else zh(f"Guest 帳號已建立！密碼：{pw}", f"Guest 账号已建立！密码：{pw}"))
+                        st.success((zh(f"Guest 帳號已建立！密碼：{pw}", f"Guest 账号已建立！密码：{pw}") if lang == "zh" else f"Guest account created! Password: {pw}"))
 
         with col_guest_login:
-            st.markdown("**Guest Login**" if lang == "en" else "**" + zh("Guest 試用登入", "Guest 试用登录") + "**")
+            st.markdown("**" + (zh("Guest 試用登入", "Guest 试用登录") if lang == "zh" else "Guest Login") + "**")
             g_email = st.text_input("Guest Email", key="g_email")
-            g_pw = st.text_input("Password" if lang == "en" else zh("密碼", "密码"), type="password", key="g_pw")
-            if st.button("Login as Guest" if lang == "en" else zh("登入 Guest", "登录 Guest"), key="guest_login_btn"):
+            g_pw = st.text_input(zh("密碼", "密码") if lang == "zh" else "Password", type="password", key="g_pw")
+            if st.button(zh("登入 Guest", "登录 Guest") if lang == "zh" else "Login as Guest", key="guest_login_btn"):
                 guests = load_guest_accounts()
                 g_acc = guests.get(g_email)
                 if g_acc and g_acc.get("password") == g_pw:
@@ -1329,7 +1354,7 @@ def main():
                     save_state_to_disk()
                     st.rerun()
                 else:
-                    st.error("Invalid guest credentials" if lang == "en" else zh("帳號或密碼錯誤", "账号或密码错误"))
+                    st.error(zh("帳號或密碼錯誤", "账号或密码错误") if lang == "zh" else "Invalid guest credentials")
 
         return  # login page end
 
@@ -1352,59 +1377,15 @@ def main():
     is_guest = user_role == "free"
     model_name = resolve_model_for_user(user_role)
 
-    # Framework state setup
-    if not FRAMEWORKS:
-        st.error(zh("尚未在 frameworks.json 中定義任何框架。", "尚未在 frameworks.json 中定义任何框架。") if lang == "zh" else "No frameworks defined in frameworks.json.")
-        return
-
-    fw_keys = list(FRAMEWORKS.keys())
-    fw_labels = [FRAMEWORKS[k]["name_zh"] if lang == "zh" else FRAMEWORKS[k]["name_en"] for k in fw_keys]
-    key_to_label = dict(zip(fw_keys, fw_labels))
-    label_to_key = dict(zip(fw_labels, fw_keys))
-
-    current_fw_key = st.session_state.selected_framework_key or fw_keys[0]
-    if current_fw_key not in fw_keys:
-        current_fw_key = fw_keys[0]
-
-    framework_states = st.session_state.framework_states
-    if current_fw_key not in framework_states:
-        framework_states[current_fw_key] = {
-            "analysis_done": False,
-            "analysis_output": "",
-            "followup_history": [],
-            "download_used": False,
-            "step5_done": False,
-            "step5_output": "",
-            "step7_done": False,
-            "step7_output": "",
-        }
-    else:
-        state = framework_states[current_fw_key]
-        for k, v in [
-            ("analysis_done", False),
-            ("analysis_output", ""),
-            ("followup_history", []),
-            ("download_used", False),
-            ("step5_done", False),
-            ("step5_output", ""),
-            ("step7_done", False),
-            ("step7_output", ""),
-        ]:
-            if k not in state:
-                state[k] = v
-
-    current_state = framework_states[current_fw_key]
-    step5_done = bool(current_state.get("step5_done", False))
-
     # Step 1: upload review doc
-    st.subheader("Step 1: Upload Review Document" if lang == "en" else zh("步驟一：上傳審閱文件", "步骤一：上传审阅文件"))
-    st.caption("Note: Only 1 document can be uploaded for a complete content analysis." if lang == "en" else zh("提醒：一次只能上載 1 份文件進行完整內容分析。", "提醒：一次只能上传 1 份文件进行完整内容分析。"))
+    st.subheader(zh("步驟一：上傳審閱文件", "步骤一：上传审阅文件") if lang == "zh" else "Step 1: Upload Review Document")
+    st.caption(zh("提醒：一次只能上載 1 份文件進行完整內容分析。", "提醒：一次只能上传 1 份文件进行完整内容分析。") if lang == "zh" else "Note: Only 1 document can be uploaded for a complete content analysis.")
 
     doc_locked = bool(st.session_state.get("last_doc_text"))
 
     if not doc_locked:
         uploaded = st.file_uploader(
-            "Upload PDF / DOCX / TXT / Image" if lang == "en" else zh("請上傳 PDF / DOCX / TXT / 圖片", "请上传 PDF / DOCX / TXT / 图片"),
+            zh("請上傳 PDF / DOCX / TXT / 圖片", "请上传 PDF / DOCX / TXT / 图片") if lang == "zh" else "Upload PDF / DOCX / TXT / Image",
             type=["pdf", "docx", "txt", "jpg", "jpeg", "png"],
             key="review_doc_uploader",
         )
@@ -1415,7 +1396,7 @@ def main():
                 if is_guest:
                     docs = doc_tracking.get(user_email, [])
                     if len(docs) >= 3 and st.session_state.current_doc_id not in docs:
-                        st.error("Trial accounts may upload up to 3 documents only" if lang == "en" else zh("試用帳號最多上傳 3 份文件", "试用账号最多上传 3 份文件"))
+                        st.error(zh("試用帳號最多上傳 3 份文件", "试用账号最多上传 3 份文件") if lang == "zh" else "Trial accounts may upload up to 3 documents only")
                     else:
                         if st.session_state.current_doc_id not in docs:
                             new_id = f"doc_{datetime.datetime.now().timestamp()}"
@@ -1432,12 +1413,12 @@ def main():
                     st.session_state.last_doc_name = uploaded.name
                     save_state_to_disk()
     else:
-        shown_name = st.session_state.get("last_doc_name") or ("(uploaded)" if lang == "en" else zh("（已上傳）", "（已上传）"))
-        st.info(f"Review document uploaded: {shown_name}. To change it, please use Reset Whole Document." if lang == "en" else zh(f"已上傳審閱文件：{shown_name}。如需更換文件，請使用 Reset Whole Document。", f"已上传审阅文件：{shown_name}。如需更换文件，请使用 Reset Whole Document。"))
+        shown_name = st.session_state.get("last_doc_name") or zh("（已上傳）", "（已上传）")
+        st.info(zh(f"已上傳審閱文件：{shown_name}。如需更換文件，請使用 Reset document。", f"已上传审阅文件：{shown_name}。如需更换文件，请使用 Reset document。") if lang == "zh" else f"Review document uploaded: {shown_name}. To change it, please use Reset document.")
 
-    # Step 2: Document Type Selection (lock after Step 5)
-    st.subheader("Step 2: Document Type Selection" if lang == "en" else zh("步驟二：文件類型選擇（單選）", "步骤二：文件类型选择（单选）"))
-    st.caption("Single selection" if lang == "en" else zh("單選", "单选"))
+    # Step 2: Document Type Selection (Fix zh labels, keep value = English)
+    st.subheader(zh("步驟二：文件類型選擇（單選）", "步骤二：文件类型选择（单选）") if lang == "zh" else "Step 2: Document Type Selection")
+    st.caption(zh("單選", "单选") if lang == "zh" else "Single selection")
 
     DOC_TYPES = [
         "Conceptual Design",
@@ -1474,14 +1455,6 @@ def main():
     if st.session_state.get("document_type") not in DOC_TYPES:
         st.session_state.document_type = DOC_TYPES[0]
 
-    if st.session_state.document_type == "Specifications and Requirements" and not step5_done:
-        st.warning(
-            "After you run Step 5, the document type will be locked until you Reset Whole Document (to avoid confusion)." if lang == "en"
-            else zh("提醒：一旦按下步驟五開始分析後，文件類型會被鎖住，需 Reset Whole Document 才能重新選擇，避免來回切換造成混淆。", "提醒：一旦按下步骤五开始分析后，文件类型会被锁住，需 Reset Whole Document 才能重新选择，避免来回切换造成混淆。")
-        )
-
-    doc_type_disabled = step5_done
-
     if lang == "zh":
         mapping = DOC_TYPE_LABELS_ZH_CN if st.session_state.get("zh_variant", "tw") == "cn" else DOC_TYPE_LABELS_ZH_TW
         labels = [mapping.get(x, x) for x in DOC_TYPES]
@@ -1494,7 +1467,6 @@ def main():
             labels,
             index=labels.index(current_label) if current_label in labels else 0,
             key="document_type_select_zh",
-            disabled=doc_type_disabled,
         )
         st.session_state.document_type = label_to_value.get(picked_label, DOC_TYPES[0])
     else:
@@ -1503,340 +1475,341 @@ def main():
             DOC_TYPES,
             index=DOC_TYPES.index(st.session_state.document_type),
             key="document_type_select",
-            disabled=doc_type_disabled,
         )
     save_state_to_disk()
 
-    # Step 3: Reference docs split (更正2)
-    st.subheader("Step 3: Upload Reference Documents (optional)" if lang == "en" else zh("步驟三：上傳參考文件（選填）", "步骤三：上传参考文件（选填）"))
+    # Step 3: Reference docs (optional, one at a time)
+    st.subheader(zh("步驟三：上傳參考文件（選填）", "步骤三：上传参考文件（选填）") if lang == "zh" else "Step 3: Upload Reference Documents (optional)")
 
-    # 3-1 Upstream (main reference) — upload once
-    st.markdown("### 3-1 Upload Upstream Reference Document (optional)" if lang == "en" else "### 3-1 上傳主要參考文件（選填）")
-    upstream_ref = st.session_state.get("upstream_reference")
-    upstream_locked = bool(upstream_ref)
-
-    if upstream_locked:
-        st.info(
-            f"Upstream reference uploaded: {upstream_ref.get('name','(unknown)')}. This section is locked until Reset Whole Document." if lang == "en"
-            else zh(f"主要參考文件已上傳：{upstream_ref.get('name','(unknown)')}。此區已鎖定，需 Reset Whole Document 才能重置。", f"主要参考文件已上传：{upstream_ref.get('name','(unknown)')}。此区已锁定，需 Reset Whole Document 才能重置。")
-        )
-
-    upstream_file = st.file_uploader(
-        "Upload upstream reference (PDF / DOCX / TXT / Image)" if lang == "en" else "上傳主要參考文件（PDF / DOCX / TXT / 圖片）",
-        type=["pdf", "docx", "txt", "jpg", "jpeg", "png"],
-        key="upstream_uploader",
-        disabled=upstream_locked,
-    )
-
-    if upstream_file is not None and not upstream_locked:
-        ref_text = read_file_to_text(upstream_file)
-        if ref_text:
-            st.session_state.upstream_reference = {
-                "name": upstream_file.name,
-                "ext": Path(upstream_file.name).suffix.lstrip("."),
-                "text": ref_text,
-                "uploaded_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            }
-            save_state_to_disk()
-            st.rerun()
-
-    # 3-2 Quote reference — upload one at a time, can reset to upload another
-    st.markdown("### 3-2 Upload Quote Reference Document (optional)" if lang == "en" else "### 3-2 上傳次要參考文件（選填）")
-
-    quote_current = st.session_state.get("quote_current")
-    quote_locked = bool(quote_current)
-
-    if quote_locked:
-        st.info(
-            f"Quote reference uploaded: {quote_current.get('name','(unknown)')}. To upload another, use Reset Quote Reference below." if lang == "en"
-            else zh(f"次要參考文件已上傳：{quote_current.get('name','(unknown)')}。如需上傳新的次要參考文件，請使用下方 Reset Quote Reference。", f"次要参考文件已上传：{quote_current.get('name','(unknown)')}。如需上传新的次要参考文件，请使用下方 Reset Quote Reference。")
-        )
-
-    quote_file = st.file_uploader(
-        "Upload quote reference (PDF / DOCX / TXT / Image)" if lang == "en" else "上傳次要參考文件（PDF / DOCX / TXT / 圖片）",
-        type=["pdf", "docx", "txt", "jpg", "jpeg", "png"],
-        key="quote_uploader",
-        disabled=quote_locked,
-    )
-
-    if quote_file is not None and not quote_locked:
-        q_text = read_file_to_text(quote_file)
-        if q_text:
-            st.session_state.quote_current = {
-                "name": quote_file.name,
-                "ext": Path(quote_file.name).suffix.lstrip("."),
-                "text": q_text,
-                "uploaded_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            }
-            st.session_state.quote_step6_done_current = False
-            save_state_to_disk()
-            st.rerun()
-
-    col_qr1, col_qr2 = st.columns([1, 3])
-    with col_qr1:
-        if st.button("Reset quote reference", key="reset_quote_ref_btn"):
-            st.session_state.quote_current = None
-            st.session_state.quote_step6_done_current = False
-            save_state_to_disk()
-            st.rerun()
-    with col_qr2:
-        if st.session_state.get("quote_history"):
-            st.markdown("**Quote relevance history:**" if lang == "en" else "**次要參考文件相關性分析紀錄：**")
-            for i, h in enumerate(st.session_state.quote_history, start=1):
-                st.markdown(f"- {i}. {h.get('name','(unknown)')} — {h.get('analyzed_at','')}")
-
-    st.markdown("---")
-
-    # Step 4: select framework (lock after Step 5)
-    st.subheader("Step 4: Select Framework" if lang == "en" else zh("步驟四：選擇分析框架（僅單選）", "步骤四：选择分析框架（仅单选）"))
     st.caption(
-        "Single selection only. After Step 5, the framework will be locked until Reset Whole Document." if lang == "en"
-        else zh("僅單選。一旦按下步驟五開始分析後，框架會被鎖住，需 Reset Whole Document 才能重新選擇，避免來回切換造成混淆。", "仅单选。一旦按下步骤五开始分析后，框架会被锁住，需 Reset Whole Document 才能重新选择，避免来回切换造成混淆。")
+        zh(
+            "一次只能上傳 1 份參考文件。第一次分析可上傳 1 份；分析完成後，可再上傳第 2 份（依此類推），避免分析時間過長或輸出錯亂。",
+            "一次只能上传 1 份参考文件。第一次分析可上传 1 份；分析完成后，可再上传第 2 份（依此类推），避免分析时间过长或输出错乱。",
+        )
+        if lang == "zh"
+        else "You can upload only 1 reference document at a time. Upload 1 for the first analysis; after analysis completes, you may upload the 2nd (and so on) to avoid long runtimes or confused outputs."
     )
 
+    if "reference_history" not in st.session_state:
+        st.session_state.reference_history = []
+    if "ref_pending" not in st.session_state:
+        st.session_state.ref_pending = False
+
+    if st.session_state.reference_history:
+        st.markdown("**" + (zh("已上傳參考文件紀錄：", "已上传参考文件记录：") if lang == "zh" else "Reference documents uploaded:") + "**")
+        for i, r in enumerate(st.session_state.reference_history, start=1):
+            fname = r.get("name", f"ref_{i}")
+            ext = r.get("ext", "").upper()
+            st.markdown(f"- {i}. {fname}" + (f" ({ext})" if ext else ""))
+
+    ref_disabled = bool(st.session_state.ref_pending)
+    ref_uploader_key = f"ref_uploader_{len(st.session_state.reference_history)}"
+    reference_file = st.file_uploader(
+        zh("上傳參考文件（PDF / DOCX / TXT / 圖片）", "上传参考文件（PDF / DOCX / TXT / 图片）") if lang == "zh" else "Upload reference document (PDF / DOCX / TXT / Image)",
+        type=["pdf", "docx", "txt", "jpg", "jpeg", "png"],
+        key=ref_uploader_key,
+        disabled=ref_disabled,
+    )
+
+    if ref_disabled:
+        st.info(
+            zh("已上傳 1 份參考文件，請先完成一次分析後再上傳下一份。", "已上传 1 份参考文件，请先完成一次分析后再上传下一份。")
+            if lang == "zh"
+            else "A reference document has been uploaded. Please run analysis once before uploading the next reference."
+        )
+
+    if reference_file is not None and not ref_disabled:
+        ref_text = read_file_to_text(reference_file)
+        if ref_text:
+            name = reference_file.name
+            ext = Path(name).suffix.lstrip(".")
+            st.session_state.reference_history.append(
+                {"name": name, "ext": ext, "text": ref_text, "uploaded_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+            )
+            st.session_state.ref_pending = True
+            save_state_to_disk()
+            st.rerun()
+
+    # Step 4: select framework
+    st.subheader(zh("步驟四：選擇分析框架（僅單選）", "步骤四：选择分析框架（仅单选）") if lang == "zh" else "Step 4: Select Framework")
+    st.caption(
+        zh(
+            "僅單選。如需分析下一個 Framework，建議先 Reset document（一次分析一個 Framework），避免分析時間過長或輸出錯亂。",
+            "仅单选。如需分析下一个 Framework，建议先 Reset document（一次分析一个 Framework），避免分析时间过长或输出错乱。",
+        )
+        if lang == "zh"
+        else "Single selection only. To analyze the next framework, it is recommended to Reset document (one framework per run) to avoid long runtimes or confused outputs."
+    )
+
+    if not FRAMEWORKS:
+        st.error(zh("尚未在 frameworks.json 中定義任何框架。", "尚未在 frameworks.json 中定义任何框架。") if lang == "zh" else "No frameworks defined in frameworks.json.")
+        return
+
+    fw_keys = list(FRAMEWORKS.keys())
+    fw_labels = [FRAMEWORKS[k]["name_zh"] if lang == "zh" else FRAMEWORKS[k]["name_en"] for k in fw_keys]
+    key_to_label = dict(zip(fw_keys, fw_labels))
+    label_to_key = dict(zip(fw_labels, fw_keys))
+
+    current_fw_key = st.session_state.selected_framework_key or fw_keys[0]
     current_label = key_to_label.get(current_fw_key, fw_labels[0])
+
     selected_label = st.selectbox(
-        "Select framework" if lang == "en" else zh("選擇框架", "选择框架"),
+        zh("選擇框架", "选择框架") if lang == "zh" else "Select framework",
         fw_labels,
         index=fw_labels.index(current_label) if current_label in fw_labels else 0,
         key="framework_selectbox",
-        disabled=step5_done,
     )
     selected_key = label_to_key[selected_label]
     st.session_state.selected_framework_key = selected_key
 
-    if selected_key != current_fw_key:
-        if selected_key not in framework_states:
-            framework_states[selected_key] = {
-                "analysis_done": False,
-                "analysis_output": "",
-                "followup_history": [],
-                "download_used": False,
-                "step5_done": False,
-                "step5_output": "",
-                "step7_done": False,
-                "step7_output": "",
-            }
-        current_state = framework_states[selected_key]
-        step5_done = bool(current_state.get("step5_done", False))
-        current_fw_key = selected_key
+    framework_states = st.session_state.framework_states
+    if selected_key not in framework_states:
+        framework_states[selected_key] = {
+            "analysis_done": False,
+            "analysis_output": "",
+            "followup_history": [],
+            "download_used": False,
+            # New staged outputs:
+            "step5_done": False,
+            "step5_output": "",
+            "step6_done": False,
+            "step6_output": "",
+            "step7_done": False,
+            "step7_output": "",
+            "step8_done": False,
+            "step8_output": "",
+        }
+    else:
+        # Backward compatibility for existing saved sessions
+        state = framework_states[selected_key]
+        for k, v in [
+            ("step5_done", False),
+            ("step5_output", ""),
+            ("step6_done", False),
+            ("step6_output", ""),
+            ("step7_done", False),
+            ("step7_output", ""),
+            ("step8_done", False),
+            ("step8_output", ""),
+        ]:
+            if k not in state:
+                state[k] = v
 
     save_state_to_disk()
+    current_state = framework_states[selected_key]
 
     st.markdown("---")
 
-    # Step 5: main analysis
-    st.subheader("Step 5: Analyze MAIN document first (fast)" if lang == "en" else zh("步驟五：先分析主要文件（快速）", "步骤五：先分析主要文件（快速）"))
+    # =========================
+    # Step 5 / 6 / 7 (always visible)
+    # =========================
+
+    st.subheader(zh("步驟五：先分析主要文件（快速）", "步骤五：先分析主要文件（快速）") if lang == "zh" else "Step 5: Analyze MAIN document first (fast)")
     st.caption(
-        "This step analyzes ONLY the main document (no references) to produce a fast first result." if lang == "en"
-        else zh("此步驟只分析主要文件，不處理參考文件，先快速產生第一份分析結果。", "此步骤只分析主要文件，不处理参考文件，先快速产生第一份分析结果。")
+        zh(
+            "此步驟只分析主要文件，不處理參考文件，先快速產生第一份分析結果。",
+            "此步骤只分析主要文件，不处理参考文件，先快速产生第一份分析结果。",
+        )
+        if lang == "zh"
+        else "This step analyzes ONLY the main document (no references) to produce a fast first result."
     )
 
+    step5_can_run = (not current_state.get("step5_done", False))
+
     run_step5 = st.button(
-        "Run analysis (main only)" if lang == "en" else zh("Run analysis（主文件）", "Run analysis（主文件）"),
+        zh("Run analysis（主文件）", "Run analysis（主文件）") if lang == "zh" else "Run analysis (main only)",
         key="run_step5_btn",
-        disabled=step5_done,
+        disabled=not step5_can_run,
     )
+
+    # Reset button unchanged
+    if not is_guest:
+        if st.button(zh("重置（新文件）", "重置（新文件）") if lang == "zh" else "Reset document", key="reset_doc_btn"):
+            st.session_state.framework_states = {}
+            st.session_state.last_doc_text = ""
+            st.session_state.last_doc_name = ""
+            st.session_state.document_type = None
+            st.session_state.reference_history = []
+            st.session_state.ref_pending = False
+            st.session_state.current_doc_id = None
+            save_state_to_disk()
+            st.rerun()
 
     if run_step5:
         if not st.session_state.last_doc_text:
-            st.error("Please upload a review document first (Step 1)." if lang == "en" else zh("請先上傳審閱文件（Step 1）", "请先上传审阅文件（Step 1）"))
+            st.error(zh("請先上傳審閱文件（Step 1）", "请先上传审阅文件（Step 1）") if lang == "zh" else "Please upload a review document first (Step 1).")
         elif not st.session_state.get("document_type"):
-            st.error("Please select a document type first (Step 2)." if lang == "en" else zh("請先選擇文件類型（Step 2）", "请先选择文件类型（Step 2）"))
+            st.error(zh("請先選擇文件類型（Step 2）", "请先选择文件类型（Step 2）") if lang == "zh" else "Please select a document type first (Step 2).")
         else:
-            with st.spinner("Analyzing... (main only)" if lang == "en" else zh("分析中...（僅主文件）", "分析中...（仅主文件）")):
-                main_analysis_text = run_llm_analysis(selected_key, lang, st.session_state.last_doc_text, model_name) or ""
-
+            with st.spinner(zh("分析中...（僅主文件）", "分析中...（仅主文件）") if lang == "zh" else "Analyzing... (main only)"):
+                # Step5: framework analysis on main-only (fast path)
+                main_analysis_text = run_llm_analysis(
+                    selected_key,
+                    lang,
+                    st.session_state.last_doc_text,
+                    model_name,
+                ) or ""
             current_state["step5_done"] = True
             current_state["step5_output"] = clean_report_text(main_analysis_text)
             save_state_to_disk()
             record_usage(user_email, selected_key, "analysis")
-            st.success("Step 5 completed. Main analysis generated." if lang == "en" else zh("步驟五完成！已產出主文件第一份分析。", "步骤五完成！已产出主文件第一份分析。"))
-            st.rerun()
+            st.success(zh("步驟五完成！已產出主文件第一份分析。", "步骤五完成！已产出主文件第一份分析。") if lang == "zh" else "Step 5 completed. Main analysis generated.")
 
     st.markdown("---")
 
-    # Step 6: relevance analysis buttons (更正2)
-    st.subheader("Step 6: Reference relevance analysis" if lang == "en" else zh("步驟六：參考文件相關性分析", "步骤六：参考文件相关性分析"))
+    # Step 6 appears only if references exist (and step5 done)
+    has_refs = bool(st.session_state.reference_history)
+    step5_done = bool(current_state.get("step5_done", False))
+
+    st.subheader(zh("步驟六：參考文件相關性分析（有上傳參考文件才會啟用）", "步骤六：参考文件相关性分析（有上传参考文件才会启用）") if lang == "zh" else "Step 6: Reference relevance analysis (enabled only if references uploaded)")
     st.caption(
-        "Run upstream relevance once (if uploaded). Run quote relevance multiple times by uploading quote references one at a time." if lang == "en"
-        else zh(
-            "上游主要參考文件：只能分析一次；次要參考文件：可透過多次上傳逐次分析（一次一份）。",
-            "上游主要参考文件：只能分析一次；次要参考文件：可透过多次上传逐次分析（一次一份）。",
+        zh(
+            "在已完成步驟五且有參考文件時，按下 Run analysis 產生『相關性重點』，以便後續最終整合。",
+            "在已完成步骤五且有参考文件时，按下 Run analysis 产生“相关性重点”，以便后续最终整合。",
         )
+        if lang == "zh"
+        else "After Step 5, if references exist, click Run analysis to extract relevance key points for final integration."
     )
 
-    upstream_exists = bool(st.session_state.get("upstream_reference"))
-    quote_exists = bool(st.session_state.get("quote_current"))
+    step6_can_run = (step5_done and has_refs and (not current_state.get("step6_done", False)))
+    run_step6 = st.button(
+        zh("Run analysis（相關性）", "Run analysis（相关性）") if lang == "zh" else "Run analysis (relevance)",
+        key="run_step6_btn",
+        disabled=not step6_can_run,
+    )
 
-    upstream_done = bool(st.session_state.get("upstream_step6_done", False))
-    quote_done_current = bool(st.session_state.get("quote_step6_done_current", False))
+    if run_step6:
+        with st.spinner(zh("分析中...（相關性重點提取）", "分析中...（相关性重点提取）") if lang == "zh" else "Analyzing... (extracting relevance points)"):
+            # Summarize references first (token control)
+            ref_summaries = []
+            for r in st.session_state.reference_history:
+                summary = summarize_reference_text(lang, r.get("name", "reference"), r.get("text", "") or "", model_name)
+                ref_summaries.append({"name": r.get("name", "reference"), "summary": summary})
 
-    quote_gate = (not upstream_exists) or upstream_done
+            relevance_file_text = build_relevance_file(
+                lang,
+                selected_key,
+                st.session_state.document_type,
+                current_state.get("step5_output", ""),
+                ref_summaries,
+            )
+            relevance_points = derive_relevance_points(lang, relevance_file_text, model_name)
 
-    col_s6a, col_s6b = st.columns(2)
-
-    with col_s6a:
-        run_upstream = st.button(
-            "Run Analysis (upstream relevance)" if lang == "en" else "Run analysis（上游相關性）",
-            key="run_upstream_btn",
-            disabled=(not step5_done) or (not upstream_exists) or upstream_done,
-        )
-    with col_s6b:
-        run_quote = st.button(
-            "Run Analysis (quote relevance)" if lang == "en" else "Run Analysis（引用一致性）",
-            key="run_quote_btn",
-            disabled=(not step5_done) or (not quote_exists) or quote_done_current or (not quote_gate),
-        )
-
-    if upstream_exists and (not upstream_done) and step5_done:
-        st.info(
-            "Upstream relevance can be run once. After completion it will be locked until Reset Whole Document." if lang == "en"
-            else zh("上游相關性分析只能執行一次；完成後會鎖定，需 Reset Whole Document 才能重置。", "上游相关性分析只能执行一次；完成后会锁定，需 Reset Whole Document 才能重置。")
-        )
-
-    if upstream_exists and (not upstream_done) and quote_exists and step5_done:
-        st.info(
-            "To avoid long runtime, please run upstream relevance first; quote relevance will be enabled afterwards." if lang == "en"
-            else zh("為避免等待過久，建議先完成上游相關性分析，完成後才會開放引用一致性分析。", "为避免等待过久，建议先完成上游相关性分析，完成后才会开放引用一致性分析。")
-        )
-
-    if run_upstream:
-        with st.spinner("Analyzing... (upstream relevance)" if lang == "en" else zh("分析中...（上游相關性）", "分析中...（上游相关性）")):
-            upstream_text = st.session_state.upstream_reference.get("text", "") if st.session_state.upstream_reference else ""
-            out = run_upstream_relevance(lang, st.session_state.last_doc_text or "", upstream_text, model_name)
-        st.session_state.upstream_step6_done = True
-        st.session_state.upstream_step6_output = clean_report_text(out)
+        current_state["step6_done"] = True
+        current_state["step6_output"] = clean_report_text(relevance_points)
         save_state_to_disk()
-        st.success("Upstream relevance completed." if lang == "en" else zh("上游相關性分析完成。", "上游相关性分析完成。"))
-        st.rerun()
-
-    if run_quote:
-        with st.spinner("Analyzing... (quote relevance)" if lang == "en" else zh("分析中...（引用一致性）", "分析中...（引用一致性）")):
-            quote_text = st.session_state.quote_current.get("text", "") if st.session_state.quote_current else ""
-            out = run_quote_relevance(lang, st.session_state.last_doc_text or "", quote_text, model_name)
-
-        rec = {
-            "name": st.session_state.quote_current.get("name", "(unknown)"),
-            "ext": st.session_state.quote_current.get("ext", ""),
-            "uploaded_at": st.session_state.quote_current.get("uploaded_at", ""),
-            "analyzed_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "output": clean_report_text(out),
-        }
-        st.session_state.quote_history = (st.session_state.quote_history or []) + [rec]
-        st.session_state.quote_step6_done_current = True
-        save_state_to_disk()
-        st.success("Quote relevance completed." if lang == "en" else zh("引用一致性分析完成。", "引用一致性分析完成。"))
-        st.rerun()
+        st.success(zh("步驟六完成！已產出參考文件相關性重點。", "步骤六完成！已产出参考文件相关性重点。") if lang == "zh" else "Step 6 completed. Relevance key points generated.")
 
     st.markdown("---")
 
-    # Step 7: final integration
-    st.subheader("Step 7: Final integration (Run final analysis)" if lang == "en" else zh("步驟七：最終整合（Run final analysis）", "步骤七：最终整合（Run final analysis）"))
+    # Step 7 final integration (requires step5; if refs exist then step6 required)
+    st.subheader(zh("步驟七：最終整合（Run final analysis）", "步骤七：最终整合（Run final analysis）") if lang == "zh" else "Step 7: Final integration (Run final analysis)")
     st.caption(
-        "Integrate Step 5 and all Step 6 outputs into a formal deliverable report (preferably with tables)." if lang == "en"
-        else zh("整合步驟五與步驟六所有分析結果，輸出正式完整報告（建議以表格呈現重點）。", "整合步骤五与步骤六所有分析结果，输出正式完整报告（建议以表格呈现重点）。")
+        zh(
+            "用零錯誤框架整合：步驟五（主文件分析）與步驟六（相關性重點）。若未上傳參考文件，則只整合步驟五並輸出最終版本。",
+            "用零错误框架整合：步骤五（主文件分析）与步骤六（相关性重点）。若未上传参考文件，则只整合步骤五并输出最终版本。",
+        )
+        if lang == "zh"
+        else "Integrate Step 5 (main analysis) and Step 6 (relevance points) under the same framework. If no references, finalize using Step 5 only."
     )
 
-    step7_done = bool(current_state.get("step7_done", False))
-    step7_can_run = step5_done and (not step7_done)
+    step6_done = bool(current_state.get("step6_done", False))
+    step7_need_step6 = has_refs  # If references exist, require step6 first
+    step7_can_run = (
+        step5_done
+        and (not current_state.get("step7_done", False))
+        and ((not step7_need_step6) or step6_done)
+    )
 
     run_step7 = st.button(
-        "Run final analysis (final integration)" if lang == "en" else "Run final analysis（最終整合）",
+        zh("Run final analysis（最終整合）", "Run final analysis（最终整合）") if lang == "zh" else "Run final analysis (final integration)",
         key="run_step7_btn",
         disabled=not step7_can_run,
     )
 
     if run_step7:
-        with st.spinner("Analyzing... (final integration)" if lang == "en" else zh("分析中...（最終整合）", "分析中...（最终整合）")):
-            parts: List[str] = []
-            if lang == "zh":
-                parts.append("【最終整合分析輸入（步驟七）】")
-                parts.append(f"- 文件類型：{st.session_state.document_type or '（未選擇）'}")
-                parts.append(f"- 框架：{FRAMEWORKS.get(selected_key, {}).get('name_zh', selected_key)}")
-                parts.append("")
-                parts.append("=====（步驟五）主文件零錯誤框架分析結果=====")
-                parts.append(current_state.get("step5_output", ""))
-
-                if st.session_state.get("upstream_reference"):
-                    parts.append("")
-                    parts.append("=====（步驟六-A）上游主要參考文件相關性分析（Upstream relevance）=====")
-                    parts.append(st.session_state.get("upstream_step6_output", "") if st.session_state.get("upstream_step6_done") else "（尚未執行上游相關性分析）")
-
-                if st.session_state.get("quote_history"):
-                    parts.append("")
-                    parts.append("=====（步驟六-B）次要參考文件引用一致性分析（Quote relevance）=====")
-                    for i, h in enumerate(st.session_state.quote_history, start=1):
-                        parts.append(f"--- Quote reference {i}: {h.get('name','(unknown)')} ---")
-                        parts.append(h.get("output", ""))
-
-                parts.append("")
-                parts.append("【任務】")
-                parts.append(
-                    "請用同一個零錯誤框架，整合上述內容，輸出『最終正式報告』，要求：\n"
-                    "1) 去重、補強，不要把內容重複貼上。\n"
-                    "2) 必須明確指出：哪些結論被上游文件支持、哪些存在衝突、哪些是引用不一致（reference inconsistency error）。\n"
-                    "3) 以表格呈現關鍵差異（至少包含：項目/主文件/參考文件/一致性/建議修正）。\n"
-                    "4) 產出可執行的修正/補件/澄清問題清單（含優先順序）。"
+        with st.spinner(zh("分析中...（最終整合）", "分析中...（最终整合）") if lang == "zh" else "Analyzing... (final integration)"):
+            if has_refs and step6_done:
+                final_input = build_final_integration_input(
+                    lang,
+                    st.session_state.document_type,
+                    selected_key,
+                    current_state.get("step5_output", ""),
+                    current_state.get("step6_output", ""),
                 )
             else:
-                parts.append("[Final Integration Input (Step 7)]")
-                parts.append(f"- Document type: {st.session_state.document_type or '(not selected)'}")
-                parts.append(f"- Framework: {FRAMEWORKS.get(selected_key, {}).get('name_en', selected_key)}")
-                parts.append("")
-                parts.append("===== (Step 5) Main framework analysis =====")
-                parts.append(current_state.get("step5_output", ""))
+                # No references: finalize based on step5 only, but keep final form.
+                if lang == "zh":
+                    final_input = "\n".join(
+                        [
+                            "【最終整合分析輸入（步驟七）】",
+                            f"- 文件類型：{st.session_state.document_type or '（未選擇）'}",
+                            "",
+                            "==============================",
+                            "一、步驟五：主文件零錯誤框架分析結果",
+                            "==============================",
+                            current_state.get("step5_output", ""),
+                            "",
+                            "【任務】",
+                            "請你用同一個零錯誤框架，將上述內容整理成『最終成品分析報告』：去重、補強、並提供可執行的修正/澄清問題清單。",
+                        ]
+                    )
+                else:
+                    final_input = "\n".join(
+                        [
+                            "[Final Integration Input (Step 7)]",
+                            f"- Document type: {st.session_state.document_type or '(not selected)'}",
+                            "",
+                            "==============================",
+                            "1) Step 5: Main document framework analysis",
+                            "==============================",
+                            current_state.get("step5_output", ""),
+                            "",
+                            "[Task]",
+                            "Using the same framework, rewrite the above into a FINAL deliverable report: dedupe, strengthen, and provide actionable fixes / clarification questions.",
+                        ]
+                    )
 
-                if st.session_state.get("upstream_reference"):
-                    parts.append("")
-                    parts.append("===== (Step 6-A) Upstream relevance =====")
-                    parts.append(st.session_state.get("upstream_step6_output", "") if st.session_state.get("upstream_step6_done") else "(Upstream relevance not run yet)")
-
-                if st.session_state.get("quote_history"):
-                    parts.append("")
-                    parts.append("===== (Step 6-B) Quote relevance (multiple) =====")
-                    for i, h in enumerate(st.session_state.quote_history, start=1):
-                        parts.append(f"--- Quote reference {i}: {h.get('name','(unknown)')} ---")
-                        parts.append(h.get("output", ""))
-
-                parts.append("")
-                parts.append("[Task]")
-                parts.append(
-                    "Using the same framework, integrate the above into a FINAL formal report:\n"
-                    "1) Integrate and dedupe; do not repeat the same content.\n"
-                    "2) Clearly state what is supported by upstream references, what conflicts, and what are reference inconsistency errors.\n"
-                    "3) Use tables for key deltas (Item / Main / Reference / Consistent? / Fix).\n"
-                    "4) Provide an actionable fixes/addenda/clarification questions list with priorities."
-                )
-
-            final_input = "\n".join(parts)
             final_output = run_llm_analysis(selected_key, lang, final_input, model_name) or ""
 
         current_state["step7_done"] = True
         current_state["step7_output"] = clean_report_text(final_output)
 
+        # Build the final product (single analysis_output) for download + follow-ups
         if lang == "zh":
             prefix_lines = [
                 "### 分析紀錄（必讀）",
                 f"- 文件類型（Document Type）：{st.session_state.document_type}",
                 f"- 框架（Framework）：{FRAMEWORKS.get(selected_key, {}).get('name_zh', selected_key)}",
             ]
-            if st.session_state.get("upstream_reference"):
-                prefix_lines.append(f"- 主要參考文件（Upstream）：{st.session_state.upstream_reference.get('name','(unknown)')}")
+            if st.session_state.reference_history:
+                prefix_lines.append("- 參考文件（Reference Documents）上傳紀錄：")
+                for i, r in enumerate(st.session_state.reference_history, start=1):
+                    fname = r.get("name", f"ref_{i}")
+                    ext = r.get("ext", "").upper()
+                    prefix_lines.append(f"  {i}. {fname}" + (f" ({ext})" if ext else ""))
             else:
-                prefix_lines.append("- 主要參考文件（Upstream）：（未上傳）")
-
-            if st.session_state.get("quote_history"):
-                prefix_lines.append("- 次要參考文件（Quote References）分析紀錄：")
-                for i, h in enumerate(st.session_state.quote_history, start=1):
-                    prefix_lines.append(f"  {i}. {h.get('name','(unknown)')} ({h.get('analyzed_at','')})")
-            else:
-                prefix_lines.append("- 次要參考文件（Quote References）：（未上傳）")
-
+                prefix_lines.append("- 參考文件（Reference Documents）：（未上傳）")
             prefix = "\n".join(prefix_lines) + "\n\n"
-            final_bundle = [
+
+            combined_sections = [
                 "==============================",
-                "（步驟七）最終正式報告",
+                "（步驟五）主文件分析結果",
+                "==============================",
+                current_state.get("step5_output", ""),
+            ]
+            if has_refs:
+                combined_sections += [
+                    "",
+                    "==============================",
+                    "（步驟六）參考文件相關性重點",
+                    "==============================",
+                    current_state.get("step6_output", "") if current_state.get("step6_done") else "（尚未執行步驟六）",
+                ]
+            combined_sections += [
+                "",
+                "==============================",
+                "（步驟七）最終整合成品",
                 "==============================",
                 current_state.get("step7_output", ""),
             ]
@@ -1846,117 +1819,237 @@ def main():
                 f"- Document Type: {st.session_state.document_type}",
                 f"- Framework: {FRAMEWORKS.get(selected_key, {}).get('name_en', selected_key)}",
             ]
-            if st.session_state.get("upstream_reference"):
-                prefix_lines.append(f"- Upstream reference: {st.session_state.upstream_reference.get('name','(unknown)')}")
+            if st.session_state.reference_history:
+                prefix_lines.append("- Reference documents upload log:")
+                for i, r in enumerate(st.session_state.reference_history, start=1):
+                    fname = r.get("name", f"ref_{i}")
+                    ext = r.get("ext", "").upper()
+                    prefix_lines.append(f"  {i}. {fname}" + (f" ({ext})" if ext else ""))
             else:
-                prefix_lines.append("- Upstream reference: (none)")
-
-            if st.session_state.get("quote_history"):
-                prefix_lines.append("- Quote reference analysis log:")
-                for i, h in enumerate(st.session_state.quote_history, start=1):
-                    prefix_lines.append(f"  {i}. {h.get('name','(unknown)')} ({h.get('analyzed_at','')})")
-            else:
-                prefix_lines.append("- Quote references: (none)")
-
+                prefix_lines.append("- Reference documents: (none)")
             prefix = "\n".join(prefix_lines) + "\n\n"
-            final_bundle = [
+
+            combined_sections = [
                 "==============================",
-                "(Step 7) Final formal report",
+                "(Step 5) Main analysis result",
+                "==============================",
+                current_state.get("step5_output", ""),
+            ]
+            if has_refs:
+                combined_sections += [
+                    "",
+                    "==============================",
+                    "(Step 6) Relevance key points",
+                    "==============================",
+                    current_state.get("step6_output", "") if current_state.get("step6_done") else "(Step 6 not run yet)",
+                ]
+            combined_sections += [
+                "",
+                "==============================",
+                "(Step 7) Integration analysis",
                 "==============================",
                 current_state.get("step7_output", ""),
             ]
 
-        current_state["analysis_done"] = True
-        current_state["analysis_output"] = clean_report_text(prefix + "\n".join(final_bundle))
+        current_state["analysis_done"] = False
+        current_state["analysis_output"] = ""
         save_state_to_disk()
-        st.success("Step 7 completed. Final deliverable generated." if lang == "en" else zh("步驟七完成！已產出最終成品。", "步骤七完成！已产出最终成品。"))
-        st.rerun()
+        st.session_state.ref_pending = False
+        save_state_to_disk()
+        st.success(zh("步驟七完成！已產出整合分析結果。", "步骤七完成！已产出整合分析结果。") if lang == "zh" else "Step 7 completed. Integration analysis generated.")
 
     # =========================
-    # RESULTS area (clean + collapsible)
-    # =========================
     st.markdown("---")
-    st.markdown(
-        f"""
-<div class="ef-results-banner">
-  <div class="title">{'RESULTS' if lang == 'en' else zh('結果總覽', '结果总览')}</div>
-  <div class="subtitle">{'All outputs are grouped below by steps.' if lang == 'en' else zh('所有輸出依步驟整理在此區，點選可展開 / 收起。', '所有输出依步骤整理在此区，点选可展开 / 收起。')}</div>
-</div>
-        """,
-        unsafe_allow_html=True,
+
+    # Step 8 Final Analysis (final deliverable) — cross-checking analysis based on provided framework
+    st.subheader(zh("步驟八：最終報告（Final Analysis）", "步骤八：最终报告（Final Analysis）") if lang == "zh" else "Step 8: Final Analysis")
+    st.caption(
+        zh(
+            "此步驟為最終交付成果：依照 Cross-Checking Analysis 指引，重新執行一次識別分析並與步驟七結果交叉比對，最後以表格方式輸出最終經驗證之清單。",
+            "此步骤为最终交付成果：依照 Cross-Checking Analysis 指引，重新执行一次识别分析并与步骤七结果交叉比对，最后以表格方式输出最终经验证之清单。",
+        )
+        if lang == "zh"
+        else "This is the final deliverable. It re-performs the identification analysis and cross-checks Step 7 results, then outputs validated results in summary tables (Cross-Checking Analysis)."
     )
 
-    if current_state.get("step5_done"):
-        render_step_block(
-            "Step 5 — Main analysis result" if lang == "en" else "Step 5 — 主文件分析結果",
-            current_state.get("step5_output", ""),
-            expanded=False,
-        )
+    step8_can_run = bool(current_state.get("step7_done", False)) and (not current_state.get("step8_done", False))
+    run_step8 = st.button(
+        (zh("執行最終報告（Final Analysis）", "执行最终报告（Final Analysis）") if lang == "zh" else "Run final analysis (Final Analysis)"),
+        disabled=not step8_can_run,
+        key=f"btn_step8_{selected_key}",
+    )
 
-    if st.session_state.get("upstream_reference"):
-        if st.session_state.get("upstream_step6_done"):
-            render_step_block(
-                "Step 6-A — Upstream relevance" if lang == "en" else "Step 6-A — 上游相關性",
-                st.session_state.get("upstream_step6_output", ""),
-                expanded=False,
-            )
+    if run_step8:
+        if not current_state.get("step7_done"):
+            st.error(zh("請先完成步驟七（Integration analysis）。", "请先完成步骤七（Integration analysis）。") if lang == "zh" else "Please complete Step 7 (Integration analysis) first.")
         else:
-            render_step_block(
-                "Step 6-A — Upstream relevance" if lang == "en" else "Step 6-A — 上游相關性",
-                "",
-                expanded=False,
-            )
+            with st.spinner(zh("分析中...（最終報告 / Cross-checking）", "分析中...（最终报告 / Cross-checking）") if lang == "zh" else "Analyzing... (Final Analysis / Cross-checking)"):
+                # Build Cross-Checking Analysis prompt (7 steps; output 5 summary tables)
+                fw = FRAMEWORKS.get(selected_key, {})
+                wrapper_text = fw.get("wrapper_zh") if lang == "zh" else fw.get("wrapper_en")
 
-    if st.session_state.get("quote_history"):
-        st.markdown(f'<div class="ef-step-title">{"Step 6-B — Quote relevance (history)" if lang == "en" else "Step 6-B — 引用一致性（歷史）"}</div>', unsafe_allow_html=True)
-        with st.expander("Show / Hide" if lang == "en" else zh("展開 / 收起", "展开 / 收起"), expanded=False):
-            for i, h in enumerate(st.session_state.quote_history, start=1):
-                st.markdown(f"**{i}. {h.get('name','(unknown)')}** — {h.get('analyzed_at','')}")
-                st.markdown(h.get("output", ""))
-                st.markdown("---")
+                # Provide the "review framework" as required input for Step 1 of cross-checking analysis
+                review_framework_for_crosscheck = wrapper_text or ""
 
-    if current_state.get("step7_done"):
-        render_step_block(
-            "Step 7 — Final deliverable" if lang == "en" else "Step 7 — 最終正式報告",
-            current_state.get("step7_output", ""),
-            expanded=False,
-        )
-    else:
-        render_step_block(
-            "Step 7 — Final deliverable" if lang == "en" else "Step 7 — 最終正式報告",
-            "",
-            expanded=False,
-        )
+                # "Prompts written by the Reviewer to Guide the Original Review" — provide the app’s effective prompts used in Steps 5-7
+                prompts_used = []
+                if lang == "zh":
+                    prompts_used.append("Step 5 提示：以下是要分析的文件內容：\\n\\n[主文件內容略]")
+                    if has_refs:
+                        prompts_used.append("Step 6 提示：提取參考文件與主文件的相關性重點，以便最終整合。")
+                    prompts_used.append("Step 7 提示：以同一框架整合 Step 5 與 Step 6（如有）輸出成正式報告（偏好表格）。")
+                else:
+                    prompts_used.append("Step 5 prompt: Here is the document to analyze:\\n\\n[Main document omitted here]")
+                    if has_refs:
+                        prompts_used.append("Step 6 prompt: Extract relevance key points between reference documents and the main document for final integration.")
+                    prompts_used.append("Step 7 prompt: Integrate Step 5 and (if present) Step 6 outputs into a formal report (preferably with tables).")
 
-    # Follow-up history after results
-    st.markdown("---")
-    st.subheader("Follow-up (Q&A)" if lang == "en" else zh("後續提問（Q&A）", "后续提问（Q&A）"))
-    render_followup_history_chat(current_state.get("followup_history", []), lang)
+                prompts_text = "\\n".join(f"- {p}" for p in prompts_used)
 
-    # =========================
-    # Download (3) choose include follow-ups
-    # =========================
-    st.markdown("---")
-    st.subheader("Download report" if lang == "en" else zh("下載報告", "下载报告"))
+                original_identification = current_state.get("step7_output", "")
 
-    if current_state.get("analysis_done") and current_state.get("analysis_output"):
-        if is_guest and current_state.get("download_used"):
-            st.error("Download limit reached (1 time)." if lang == "en" else zh("已達下載次數上限（1 次）", "已达下载次数上限（1 次）"))
-        else:
-            now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            with st.expander("Download"):
-                include_qa = st.checkbox(
-                    "Include follow-up Q&A replies (optional)" if lang == "en" else zh("是否包含追問回覆紀錄（選填）", "是否包含追问回复记录（选填）"),
-                    value=True,
-                    key=f"include_qa_{selected_key}",
+                crosscheck_user_prompt = (
+                    ("請依照《Cross-Check Analysis》指引執行『交叉審查（Cross-checking analysis）』。\\n\\n" if lang == "zh" else "Perform a Cross-Checking Analysis per the provided Cross-Check Analysis guidance.\\n\\n")
+                    + "Cross-Check Analysis Steps (execute all steps):\\n"
+                    + "1) Obtain Review Document, Review Framework, and Prompts used for the original review\\n"
+                    + "2) Re-perform the original identification analysis (do NOT refer to original results while redoing)\\n"
+                    + "3) Compare original identification analysis vs cross-check analysis: Matching / Similar matching / I-only / C-only\\n"
+                    + "4) Validate Similar matching items (re-analyze risk level per framework)\\n"
+                    + "5) Validate I-only items\\n"
+                    + "6) Validate C-only items\\n"
+                    + "7) Prepare report in 5 summary tables: Table 1-5\\n\\n"
+                    + ("【Review Document】\\n" + (st.session_state.last_doc_text or "") + "\\n\\n")
+                    + ("【Review Framework (wrapper)】\\n" + review_framework_for_crosscheck + "\\n\\n")
+                    + ("【Prompts used in original review】\\n" + prompts_text + "\\n\\n")
+                    + ("【Original identification analysis (Step 7 output)】\\n" + original_identification + "\\n\\n")
+                    + ("請以 Markdown 表格輸出 Table 1 ~ Table 5，並在 Table 5 後附上『最終結論』與『建議修正』摘要。\\n" if lang == "zh" else "Output Table 1 to Table 5 as Markdown tables, then provide a short Final Conclusions and Recommended Fixes summary.")
                 )
+
+                if client is None:
+                    final_text = "[Error] OPENAI_API_KEY 尚未設定，無法連線至 OpenAI。"
+                else:
+                    try:
+                        resp = client.responses.create(
+                            model=model_name,
+                            input=[
+                                {"role": "system", "content": ("你是一個嚴謹的技術文件交叉審查專家。請務必遵循步驟，避免臆測，不要捏造。輸出需可直接交付給客戶。" if lang == "zh" else "You are a rigorous technical cross-checking analyst. Follow the steps strictly, do not hallucinate, and produce a client-ready deliverable.")},
+                                {"role": "user", "content": crosscheck_user_prompt},
+                            ],
+                        )
+                        try:
+                            final_text = resp.output_text or ""
+                        except Exception:
+                            final_text = str(resp)
+                    except Exception as e:
+                        final_text = f"[Error] Final Analysis failed: {e}"
+
+                current_state["step8_done"] = True
+                current_state["step8_output"] = clean_report_text(final_text)
+
+                # Build the downloadable "whole report" output (Steps 5-8)
+                prefix_lines = []
+                if lang == "zh":
+                    prefix_lines = [
+                        "【本次審查摘要】",
+                        f"- 文件：{st.session_state.last_doc_name or ''}",
+                        f"- 文件類型：{st.session_state.document_type or ''}",
+                        f"- 框架：{FRAMEWORKS.get(selected_key, {}).get('name_zh', selected_key)}",
+                    ]
+                else:
+                    prefix_lines = [
+                        "[Review Summary]",
+                        f"- Document: {st.session_state.last_doc_name or ''}",
+                        f"- Document type: {st.session_state.document_type or ''}",
+                        f"- Framework: {FRAMEWORKS.get(selected_key, {}).get('name_en', selected_key)}",
+                    ]
+                prefix = "\\n".join(prefix_lines) + "\\n\\n"
+
+                combined_sections = [
+                    "==============================",
+                    "(Step 5) Main analysis result",
+                    "==============================",
+                    current_state.get("step5_output", ""),
+                    "",
+                    "==============================",
+                    "(Step 6) Relevance key points",
+                    "==============================",
+                    current_state.get("step6_output", "") if current_state.get("step6_done") else "(Step 6 not run yet)",
+                    "",
+                    "==============================",
+                    "(Step 7) Integration analysis",
+                    "==============================",
+                    current_state.get("step7_output", ""),
+                    "",
+                    "==============================",
+                    "(Step 8) Final Analysis",
+                    "==============================",
+                    current_state.get("step8_output", ""),
+                ]
+
+                current_state["analysis_done"] = True
+                current_state["analysis_output"] = clean_report_text(prefix + "\\n".join(combined_sections))
+                save_state_to_disk()
+                record_usage(user_email, selected_key, "analysis")
+                st.success(zh("步驟八完成！已產出最終報告。", "步骤八完成！已产出最终报告。") if lang == "zh" else "Step 8 completed. Final deliverable generated.")
+    # Results area (AFTER Step 7) — keep all together, ordered, no interleaving
+    # =========================
+    st.markdown("---")
+    st.subheader(zh("分析結果（依步驟排列）", "分析结果（依步骤排列）") if lang == "zh" else "Results (ordered by steps)")
+
+    if current_state.get("step5_done"):
+        st.markdown("### " + (zh("步驟五：主文件分析結果", "步骤五：主文件分析结果") if lang == "zh" else "Step 5: Main analysis result"))
+        st.markdown(current_state.get("step5_output", ""))
+
+    if has_refs:
+        st.markdown("### " + (zh("步驟六：相關性重點", "步骤六：相关性重点") if lang == "zh" else "Step 6: Relevance key points"))
+        if current_state.get("step6_done"):
+            st.markdown(current_state.get("step6_output", ""))
+        else:
+            st.info(zh("尚未執行步驟六。", "尚未执行步骤六。") if lang == "zh" else "Step 6 has not been run yet.")
+
+    st.markdown("### " + (zh("步驟七：整合分析", "步骤七：整合分析") if lang == "zh" else "Step 7: Integration analysis"))
+    if current_state.get("step7_done"):
+        st.markdown(current_state.get("step7_output", ""))
+    else:
+        st.info(zh("尚未執行步驟七。", "尚未执行步骤七。") if lang == "zh" else "Step 7 has not been run yet.")
+
+    st.markdown("### " + (zh("步驟八：最終報告", "步骤八：最终报告") if lang == "zh" else "Step 8: Final Analysis"))
+    if current_state.get("step8_done"):
+        st.markdown(current_state.get("step8_output", ""))
+    else:
+        st.info(zh("尚未執行步驟八。", "尚未执行步骤八。") if lang == "zh" else "Step 8 has not been run yet.")
+
+
+    # =========================
+    # Download / Q&A / whole report area (kept as original, below results)
+    # =========================
+    st.markdown("---")
+    st.subheader(zh("⭐ 分析結果＋下載", "⭐ 分析结果＋下载") if lang == "zh" else "⭐ Analysis result + Download")
+
+    # Only show download if we have final analysis_output (analysis_done)
+    if current_state.get("analysis_done") and current_state.get("analysis_output"):
+        st.markdown("#### " + (zh("分析結果", "分析结果") if lang == "zh" else "Analysis result"))
+        st.markdown(current_state["analysis_output"])
+
+        st.markdown("##### " + (zh("下載報告", "下载报告") if lang == "zh" else "Download report"))
+        st.caption(zh("報告只包含分析與 Q&A，不含原始文件。", "报告只包含分析与 Q&A，不含原始文件。") if lang == "zh" else "Report includes analysis + Q&A only (no original document).")
+
+        if is_guest and current_state.get("download_used"):
+            st.error(zh("已達下載次數上限（1 次）", "已达下载次数上限（1 次）") if lang == "zh" else "Download limit reached (1 time).")
+        else:
+            report = build_full_report(lang, selected_key, current_state)
+            now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+            with st.expander("Download"):
                 fmt = st.radio(
-                    "Select format" if lang == "en" else zh("選擇格式", "选择格式"),
+                    zh("選擇格式", "选择格式") if lang == "zh" else "Select format",
                     ["Word (DOCX)", "PDF", "PowerPoint (PPTX)"],
                     key=f"fmt_{selected_key}",
                 )
 
-                report = build_full_report(lang, selected_key, current_state, include_followups=include_qa)
+                data: bytes
+                mime: str
+                ext: str
 
                 if fmt.startswith("Word"):
                     data = build_docx_bytes(report)
@@ -1967,66 +2060,59 @@ def main():
                     mime = "application/pdf"
                     ext = "pdf"
                 else:
-                    data = build_pptx_bytes(report)
-                    mime = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                    ext = "pptx"
+                    try:
+                        data = build_pptx_bytes(report)
+                        mime = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                        ext = "pptx"
+                    except Exception as e:
+                        st.error((zh(f"PPTX 匯出失敗：{e}", f"PPTX 导出失败：{e}") if lang == "zh" else f"PPTX export failed: {e}"))
+                        data = b""
+                        mime = "application/octet-stream"
+                        ext = "pptx"
 
-                clicked = st.download_button(
-                    "Download" if lang == "en" else zh("開始下載", "开始下载"),
-                    data=data,
-                    file_name=f"errorfree_{selected_key}_{now_str}.{ext}",
-                    mime=mime,
-                    key=f"dl_{selected_key}_{ext}",
-                )
-                if clicked:
-                    current_state["download_used"] = True
-                    save_state_to_disk()
-                    record_usage(user_email, selected_key, "download")
+                if data:
+                    clicked = st.download_button(
+                        zh("開始下載", "开始下载") if lang == "zh" else "Download",
+                        data=data,
+                        file_name=f"errorfree_{selected_key}_{now_str}.{ext}",
+                        mime=mime,
+                        key=f"dl_{selected_key}_{ext}",
+                    )
+                    if clicked:
+                        current_state["download_used"] = True
+                        save_state_to_disk()
+                        record_usage(user_email, selected_key, "download")
     else:
-        st.info("Complete Step 7 to enable downloads." if lang == "en" else zh("請先完成步驟七，產出最終正式報告後才能下載。", "请先完成步骤七，产出最终正式报告后才能下载。"))
+        st.info(zh("尚未完成最終整合（步驟七）。完成後才能下載完整報告。", "尚未完成最终整合（步骤七）。完成后才能下载完整报告。") if lang == "zh" else "Final integration (Step 7) not completed yet. Complete it to enable full report download.")
 
-    # =========================
-    # Follow-up input (FIXED: no StreamlitAPIException)
-    # =========================
+    # Follow-up/Q&A (unchanged behavior, but only meaningful after final analysis exists)
     st.markdown("---")
-    st.subheader("Ask a follow-up question" if lang == "en" else zh("提出追問", "提出追问"))
+    st.subheader(zh("後續提問", "后续提问") if lang == "zh" else "Follow-up questions")
 
     if not current_state.get("analysis_output"):
-        st.info("Please complete Step 7 before asking follow-up questions." if lang == "en" else zh("請先完成步驟七，產出最終成品後再進行追問。", "请先完成步骤七，产出最终成品后再进行追问。"))
+        st.info(zh("請先完成步驟七，產出最終成品後再進行追問。", "请先完成步骤七，产出最终成品后再进行追问。") if lang == "zh" else "Please complete Step 7 (final deliverable) before asking follow-up questions.")
     else:
         if is_guest and len(current_state.get("followup_history", [])) >= 3:
-            st.error("Follow-up limit reached (3 times)." if lang == "en" else zh("已達追問上限（3 次）", "已达追问上限（3 次）"))
+            st.error(zh("已達追問上限（3 次）", "已达追问上限（3 次）") if lang == "zh" else "Follow-up limit reached (3 times).")
         else:
+            col_text, col_file = st.columns([3, 1])
             followup_key = f"followup_input_{selected_key}"
 
-            # ---- FIX: clear follow-up input on the next rerun (must be BEFORE the widget is instantiated) ----
-            _pending_clear = st.session_state.get("_pending_clear_followup_key")
-            if _pending_clear == followup_key:
-                st.session_state[followup_key] = ""
-                st.session_state["_pending_clear_followup_key"] = None
-            # ---- END FIX ----
-
-            col_text, col_file = st.columns([3, 1])
-
             with col_text:
-                prompt = st.text_area(
-                    "Ask a follow-up question" if lang == "en" else zh("請輸入你的追問", "请输入你的追问"),
-                    key=followup_key,
-                    height=140,
-                    placeholder="Type your question here..." if lang == "en" else zh("在此輸入問題…", "在此输入问题…"),
-                )
+                prompt_label = (f"{zh('針對', '针对')} {FRAMEWORKS[selected_key]['name_zh']} {zh('的追問', '的追问')}" if lang == "zh" else "Ask Error-Free® Intelligence Engine a follow-up?")
+                prompt = st.text_area(prompt_label, key=followup_key, height=150)
 
             with col_file:
                 extra_file = st.file_uploader(
-                    "Attach image/document (optional)" if lang == "en" else zh("📎 上傳圖片/文件（選填）", "📎 上传图片/文件（选填）"),
+                    zh("📎 上傳圖片/文件（選填）", "📎 上传图片/文件（选填）") if lang == "zh" else "📎 Attach image/document (optional)",
                     type=["pdf", "docx", "txt", "jpg", "jpeg", "png"],
                     key=f"extra_{selected_key}",
                 )
             extra_text = read_file_to_text(extra_file) if extra_file else ""
 
-            if st.button("Send follow-up" if lang == "en" else zh("送出追問", "送出追问"), key=f"followup_btn_{selected_key}"):
+            if st.button(zh("送出追問", "送出追问") if lang == "zh" else "Send follow-up", key=f"followup_btn_{selected_key}"):
                 if prompt and prompt.strip():
-                    with st.spinner("Thinking..." if lang == "en" else zh("思考中...", "思考中...")):
+                    with st.spinner(zh("思考中...", "思考中...") if lang == "zh" else "Thinking..."):
                         answer = run_followup_qa(
                             selected_key,
                             lang,
@@ -2037,27 +2123,9 @@ def main():
                             extra_text,
                         )
                     current_state["followup_history"].append((prompt, clean_report_text(answer)))
-
-                    # FIX: DO NOT modify widget state after instantiation; clear on next rerun
-                    st.session_state["_pending_clear_followup_key"] = followup_key
-
                     save_state_to_disk()
                     record_usage(user_email, selected_key, "followup")
                     st.rerun()
-                else:
-                    st.warning("Please enter a question first." if lang == "en" else zh("請先輸入追問內容。", "请先输入追问内容。"))
-
-    # Reset Whole Document (更正2)
-    st.markdown("---")
-    st.subheader("Reset Whole Document" if lang == "en" else "Reset Whole Document（全部重置）")
-    st.warning(
-        "Reminder: Please make sure you have downloaded your report. We do not retain your documents. Reset will remove the current review session." if lang == "en"
-        else zh("溫馨提示：請確認您已經下載資料。我們不留存你們的資料；按下重置後，本次審查的文件與分析紀錄將會清空。", "温馨提示：请确认您已经下载资料。我们不留存你们的资料；按下重置后，本次审查的文件与分析纪录将会清空。")
-    )
-    confirm = st.checkbox("I understand and want to reset." if lang == "en" else zh("我已確認要重置。", "我已确认要重置。"), key="reset_confirm")
-    if st.button("Reset Whole Document" if lang == "en" else "Reset Whole Document", key="reset_whole_btn", disabled=not confirm):
-        _reset_whole_document()
-        st.rerun()
 
     save_state_to_disk()
 
