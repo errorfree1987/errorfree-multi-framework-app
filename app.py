@@ -433,9 +433,8 @@ def run_llm_analysis(framework_key: str, language: str, document_text: str, mode
             err_type = "network"
         st.session_state["_ef_last_openai_error_type"] = err_type
         st.session_state["_ef_last_openai_error"] = (msg[:240] + ("..." if len(msg) > 240 else ""))
-        if err_type == "quota_or_429":
-            return "[OpenAI API quota/billing issue. Please check your plan, billing, or API key settings.]"
-        return "[OpenAI API call failed. Please verify your API key and network, then try again.]"
+        # Do NOT leak or guess billing/quota in the main output. Store details in diagnostics instead.
+        return f"[OpenAI API ERROR: {err_type or 'unknown'}]"
 
 
 def _openai_simple(system_prompt: str, user_prompt: str, model_name: str, max_output_tokens: int) -> str:
@@ -469,9 +468,8 @@ def _openai_simple(system_prompt: str, user_prompt: str, model_name: str, max_ou
             err_type = "network"
         st.session_state["_ef_last_openai_error_type"] = err_type
         st.session_state["_ef_last_openai_error"] = (msg[:240] + ("..." if len(msg) > 240 else ""))
-        if err_type == "quota_or_429":
-            return "[OpenAI API quota/billing issue. Please check your plan, billing, or API key settings.]"
-        return "[OpenAI API call failed. Please verify your API key and network, then try again.]"
+        # Do NOT leak or guess billing/quota in the main output. Store details in diagnostics instead.
+        return f"[OpenAI API ERROR: {err_type or 'unknown'}]"
 
 
 def _chunk_text(text: str, chunk_size: int = 12000, overlap: int = 600) -> List[str]:
@@ -573,6 +571,24 @@ def is_openai_error_output(text: str) -> bool:
         return False
     t = str(text).strip()
     return t.startswith("[OpenAI API") or t.startswith("[OpenAI")
+
+def render_openai_error(language: str) -> None:
+    """Render a helpful OpenAI error without polluting step outputs."""
+    err_type = st.session_state.get("_ef_last_openai_error_type", "")
+    err_msg = st.session_state.get("_ef_last_openai_error", "")
+    if language == "en":
+        st.error("OpenAI API call failed. This is not an app logic error. Please check your OpenAI Project billing/usage and model access.")
+        st.caption("Tip: In OpenAI dashboard, verify the key belongs to a Project with billing enabled and usage limits > 0. Then redeploy/restart.")
+    else:
+        st.error("OpenAI API 呼叫失敗。這不是流程邏輯錯誤，請檢查 OpenAI 專案的 Billing/用量與模型權限。")
+        st.caption("建議：到 OpenAI Dashboard 確認此 API key 所屬 Project 已開啟計費、用量上限 > 0，且有模型使用權限；之後重啟/重新部署。")
+    with st.expander("Diagnostics / 詳細錯誤" if language == "en" else "Diagnostics / 詳細錯誤", expanded=False):
+        st.write(f"error_type: {err_type or 'unknown'}")
+        if err_msg:
+            st.code(err_msg)
+        else:
+            st.write("(no additional error details captured)")
+
 
 def run_upstream_relevance(language: str, main_doc: str, upstream_doc: str, model_name: str) -> str:
     """Main reference relevance analysis: identify upstream document errors."""
@@ -831,9 +847,8 @@ def run_followup_qa(
             err_type = "network"
         st.session_state["_ef_last_openai_error_type"] = err_type
         st.session_state["_ef_last_openai_error"] = (msg[:240] + ("..." if len(msg) > 240 else ""))
-        if err_type == "quota_or_429":
-            return "[OpenAI API quota/billing issue. Please check your plan, billing, or API key settings.]"
-        return "[OpenAI API call failed. Please verify your API key and network, then try again.]"
+        # Do NOT leak or guess billing/quota in the main output. Store details in diagnostics instead.
+        return f"[OpenAI API ERROR: {err_type or 'unknown'}]"
 
 
 
@@ -1933,7 +1948,7 @@ def main():
                 main_analysis_text = run_llm_analysis(selected_key, lang, st.session_state.last_doc_text, model_name) or ""
 
             if is_openai_error_output(main_analysis_text):
-                st.error(main_analysis_text)
+                render_openai_error(lang)
                 save_state_to_disk()
                 st.stop()
 
@@ -1997,7 +2012,7 @@ def main():
             out = run_upstream_relevance(lang, st.session_state.last_doc_text or "", upstream_text, model_name)
         st.session_state.upstream_step6_done = True
         if is_openai_error_output(out):
-            st.error(out)
+            render_openai_error(lang)
             save_state_to_disk()
             st.stop()
 
@@ -2012,7 +2027,7 @@ def main():
             out = run_quote_relevance(lang, st.session_state.last_doc_text or "", quote_text, model_name)
 
         if is_openai_error_output(out):
-            st.error(out)
+            render_openai_error(lang)
             save_state_to_disk()
             st.stop()
 
@@ -2140,7 +2155,7 @@ def main():
                 final_output = run_llm_analysis(selected_key, lang, final_input, model_name) or ""
 
                 if is_openai_error_output(final_output):
-                    st.error(final_output)
+                    render_openai_error(lang)
                     save_state_to_disk()
                     st.stop()
 
@@ -2239,7 +2254,7 @@ def main():
             )
 
         if is_openai_error_output(out):
-            st.error(out)
+            render_openai_error(lang)
             save_state_to_disk()
             st.stop()
 
