@@ -240,9 +240,14 @@ def save_state_to_disk():
         "upstream_reference": st.session_state.get("upstream_reference"),
         "quote_current": st.session_state.get("quote_current"),
         "quote_history": st.session_state.get("quote_history", []),
+        "quote_upload_nonce": st.session_state.get("quote_upload_nonce", 0),
+        "quote_upload_finalized": st.session_state.get("quote_upload_finalized", False),
         "upstream_step6_done": st.session_state.get("upstream_step6_done", False),
         "upstream_step6_output": st.session_state.get("upstream_step6_output", ""),
         "quote_step6_done_current": st.session_state.get("quote_step6_done_current", False),
+
+        # Step 7 history (re-run when new quote refs are analyzed)
+        "step7_history": st.session_state.get("step7_history", []),
 
         # Follow-up clear flag (fix StreamlitAPIException)
         "_pending_clear_followup_key": st.session_state.get("_pending_clear_followup_key"),
@@ -1259,9 +1264,13 @@ def _reset_whole_document():
     st.session_state.upstream_reference = None
     st.session_state.quote_current = None
     st.session_state.quote_history = []
+    st.session_state.quote_upload_nonce = 0
+    st.session_state.quote_upload_finalized = False
     st.session_state.upstream_step6_done = False
     st.session_state.upstream_step6_output = ""
     st.session_state.quote_step6_done_current = False
+
+    st.session_state.step7_history = []
 
     # Follow-up clear flag (fix)
     st.session_state._pending_clear_followup_key = None
@@ -1296,9 +1305,14 @@ def main():
         ("upstream_reference", None),         # dict or None
         ("quote_current", None),              # dict or None (single upload slot)
         ("quote_history", []),                # list of analyzed quote relevance records
+        ("quote_upload_nonce", 0),            # reset uploader key to allow unlimited quote ref uploads
+        ("quote_upload_finalized", False),    # user confirmed no more quote refs will be uploaded
         ("upstream_step6_done", False),
         ("upstream_step6_output", ""),
         ("quote_step6_done_current", False),
+
+        # Step 7 history (keep old integration outputs when re-running)
+        ("step7_history", []),
 
         # Follow-up clear flag (fix StreamlitAPIException)
         ("_pending_clear_followup_key", None),
@@ -1550,6 +1564,8 @@ def main():
             "step5_output": "",
             "step7_done": False,
             "step7_output": "",
+            "step7_history": [],
+            "step7_quote_count": 0,
             # Step 8 (NEW)
             "step8_done": False,
             "step8_output": "",
@@ -1565,6 +1581,8 @@ def main():
             ("step5_output", ""),
             ("step7_done", False),
             ("step7_output", ""),
+            ("step7_history", []),
+            ("step7_quote_count", 0),
             ("step8_done", False),
             ("step8_output", ""),
         ]:
@@ -1723,6 +1741,8 @@ def main():
 
     quote_current = st.session_state.get("quote_current")
     quote_locked = bool(quote_current)
+    quote_finalized = bool(st.session_state.get("quote_upload_finalized", False))
+    quote_nonce = int(st.session_state.get("quote_upload_nonce", 0))
 
     if quote_locked:
         st.info(
@@ -1733,8 +1753,8 @@ def main():
     quote_file = st.file_uploader(
         "Upload quote reference (PDF / DOCX / TXT / Image)" if lang == "en" else "上傳次要參考文件（PDF / DOCX / TXT / 圖片）",
         type=["pdf", "docx", "txt", "jpg", "jpeg", "png"],
-        key="quote_uploader",
-        disabled=quote_locked,
+        key=f"quote_uploader_{quote_nonce}",
+        disabled=quote_locked or quote_finalized,
     )
 
     if quote_file is not None and not quote_locked:
@@ -1750,14 +1770,47 @@ def main():
             save_state_to_disk()
             st.rerun()
 
-    col_qr1, col_qr2 = st.columns([1, 3])
+    col_qr1, col_qr2, col_qr3 = st.columns([1, 2, 3])
     with col_qr1:
-        if st.button("Reset quote reference", key="reset_quote_ref_btn"):
+        if st.button(
+            "Reset quote reference",
+            key="reset_quote_ref_btn",
+            disabled=quote_finalized,
+        ):
+            # Allow uploading the next quote reference by switching the uploader widget key.
             st.session_state.quote_current = None
             st.session_state.quote_step6_done_current = False
+            st.session_state.quote_upload_nonce = int(st.session_state.get("quote_upload_nonce", 0)) + 1
+            # Best-effort clear for the prior uploader widget state
+            try:
+                old_key = f"quote_uploader_{quote_nonce}"
+                if old_key in st.session_state:
+                    st.session_state[old_key] = None
+            except Exception:
+                pass
             save_state_to_disk()
             st.rerun()
+
     with col_qr2:
+        finalize_disabled = False
+        # If a quote file is uploaded but not yet analyzed in Step 6, we still allow finalization,
+        # but we guide users to finish Step 6 first.
+        if st.button(
+            "Confirm no more quote references" if lang == "en" else zh("確認已無其他參考文件要上傳", "確認已無其他參考文件要上傳"),
+            key="finalize_quote_upload_btn",
+            disabled=finalize_disabled or quote_finalized,
+        ):
+            st.session_state.quote_upload_finalized = True
+            save_state_to_disk()
+            st.rerun()
+
+        if quote_finalized:
+            st.info(
+                "Quote reference uploads are finalized. Upload/Reset is now locked." if lang == "en"
+                else zh("已確認不再上傳次要參考文件；上傳與 Reset 已鎖定。", "已确认不再上传次要参考文件；上传与 Reset 已锁定。")
+            )
+
+    with col_qr3:
         if st.session_state.get("quote_history"):
             st.markdown("**Quote relevance history:**" if lang == "en" else "**次要參考文件相關性分析紀錄：**")
             for i, h in enumerate(st.session_state.quote_history, start=1):
@@ -1794,6 +1847,8 @@ def main():
                 "step5_output": "",
                 "step7_done": False,
                 "step7_output": "",
+                "step7_history": [],
+                "step7_quote_count": 0,
                 "step8_done": False,
                 "step8_output": "",
             }
@@ -1919,7 +1974,13 @@ def main():
     )
 
     step7_done = bool(current_state.get("step7_done", False))
-    step7_can_run = step5_done and (not step7_done)
+    current_quote_count = len(st.session_state.get("quote_history") or [])
+    last_step7_quote_count = int(current_state.get("step7_quote_count", 0) or 0)
+    step7_needs_refresh = current_quote_count != last_step7_quote_count
+
+    # Step 7 can be re-run whenever Step 6 quote relevance adds new history entries.
+    # Keep old Step 7 outputs in history, and always use the latest as the current Step 7 result.
+    step7_can_run = step5_done and (not current_state.get("step8_done", False)) and ((not step7_done) or step7_needs_refresh)
 
     run_step7 = st.button(
         "Run integration analysis" if lang == "en" else "Run analysis（整合分析）",
@@ -1928,6 +1989,18 @@ def main():
     )
 
     if run_step7:
+        # Preserve previous Step 7 output before overwriting (history must stay in Results).
+        if current_state.get("step7_done") and current_state.get("step7_output"):
+            hist = current_state.get("step7_history") or []
+            hist.append(
+                {
+                    "generated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "quote_count": last_step7_quote_count,
+                    "output": current_state.get("step7_output", ""),
+                }
+            )
+            current_state["step7_history"] = hist
+
         with st.spinner("Analyzing... (integration)" if lang == "en" else zh("分析中...（整合）", "分析中...（整合）")):
             parts: List[str] = []
             if lang == "zh":
@@ -1994,6 +2067,7 @@ def main():
 
         current_state["step7_done"] = True
         current_state["step7_output"] = clean_report_text(final_output)
+        current_state["step7_quote_count"] = current_quote_count
 
         # NOTE: Step 7 is NO LONGER the final deliverable; Step 8 will generate final deliverable & analysis_output.
         save_state_to_disk()
@@ -2010,7 +2084,24 @@ def main():
     )
 
     step8_done = bool(current_state.get("step8_done", False))
-    step8_can_run = bool(current_state.get("step7_done")) and (not step8_done)
+    quote_finalized = bool(st.session_state.get("quote_upload_finalized", False))
+    current_quote_count = len(st.session_state.get("quote_history") or [])
+    step7_quote_count = int(current_state.get("step7_quote_count", 0) or 0)
+
+    if not quote_finalized:
+        st.info(
+            "To enable Step 8, please click 'Confirm no more quote references' in Step 3-2 after you finish uploading quote references." if lang == "en"
+            else zh("要啟用步驟八，請在步驟三-2上傳完所有次要參考文件後，按下『確認已無其他參考文件要上傳』。", "要启用步骤八，请在步骤三-2上传完所有次要参考文件后，按下『确认已无其他参考文件要上传』。")
+        )
+    elif step7_quote_count != current_quote_count:
+        st.info(
+            "New quote reference analyses were added after the last Step 7 run. Please run Step 7 again to include the latest Step 6 history." if lang == "en"
+            else zh("在上次步驟七之後，步驟六新增了次要參考文件分析；請重新執行步驟七，以納入最新紀錄。", "在上次步骤七之后，步骤六新增了次要参考文件分析；请重新执行步骤七，以纳入最新记录。")
+        )
+
+    # Step 8 should be runnable ONLY once, and only after the user confirms there are no more quote references to upload.
+    # Also ensure Step 7 has been run against the latest Step 6 quote reference history.
+    step8_can_run = bool(current_state.get("step7_done")) and quote_finalized and (step7_quote_count == current_quote_count) and (not step8_done)
 
     run_step8 = st.button(
         "Run final analysis (Step 8)" if lang == "en" else "Run final analysis（步驟八）",
@@ -2140,6 +2231,14 @@ def main():
             current_state.get("step7_output", ""),
             expanded=False,
         )
+        # Keep old Step 7 outputs in Results (history must be preserved).
+        if current_state.get("step7_history"):
+            st.markdown(f'<div class="ef-step-title">{"Step 7 — Integration analysis (history)" if lang == "en" else "Step 7 — 整合分析（歷史）"}</div>', unsafe_allow_html=True)
+            with st.expander("Show / Hide" if lang == "en" else zh("展開 / 收起", "展开 / 收起"), expanded=False):
+                for i, h in enumerate(current_state.get("step7_history", []), start=1):
+                    st.markdown(f"**{i}.** — {h.get('generated_at','')} (quote refs: {h.get('quote_count','')})")
+                    st.markdown(h.get("output", ""))
+                    st.markdown("---")
     else:
         render_step_block(
             "Step 7 — Integration analysis" if lang == "en" else "Step 7 — 整合分析",
