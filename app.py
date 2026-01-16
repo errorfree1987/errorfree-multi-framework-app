@@ -2222,6 +2222,7 @@ def main():
     # =========================
     # Ensure current_state exists even before a framework is selected
     try:
+        _ = current_state
     except NameError:
         current_state = {}
 
