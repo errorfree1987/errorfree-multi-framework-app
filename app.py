@@ -2171,7 +2171,20 @@ def main():
 
     # Step 7 can be re-run whenever Step 6 quote relevance adds new history entries.
     # Keep old Step 7 outputs in history, and always use the latest as the current Step 7 result.
-    step7_can_run = step5_done and (not current_state.get("step8_done", False)) and (not quote_finalized) and ((not step7_done) or step7_needs_refresh)
+    # Gate Step 7 strictly on Step 6 completion:
+    # - If an upstream reference was uploaded, upstream relevance must be done.
+    # - If a quote reference is currently uploaded, quote relevance must be done for that upload.
+    upstream_ok_for_step7 = (not upstream_exists) or upstream_done
+    quote_ok_for_step7 = (not quote_exists) or bool(st.session_state.get("quote_step6_done_current", False))
+
+    step7_can_run = (
+        step5_done
+        and upstream_ok_for_step7
+        and quote_ok_for_step7
+        and (not current_state.get("step8_done", False))
+        and (not quote_finalized)
+        and ((not step7_done) or step7_needs_refresh)
+    )
 
     run_step7 = st.button(
         "Run integration analysis" if lang == "en" else "Run analysis（整合分析）",
@@ -2566,22 +2579,28 @@ def main():
                         "PDF/PPTX download is temporarily unavailable." if lang == "en" else zh("PDF / PPTX 下載暫不開放。", "PDF / PPTX 下载暂不开放。")
                     )
                 else:
-                    # Use a data: URL link to avoid intermittent 404s behind reverse proxies (Railway)
+                    # Download (DOCX)
                     data = build_docx_bytes(report)
                     mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    filename = f"errorfree_{selected_key}_{now_str}.docx"
-                    st.markdown(
-                        build_data_download_link(
-                            data=data,
-                            filename=filename,
-                            mime=mime,
-                            label=("Download" if lang == "en" else zh("開始下載", "开始下载")),
-                        ),
-                        unsafe_allow_html=True,
+
+                    base_name = "Error-Free® Intelligence Engine Report"
+                    if include_qa:
+                        base_name += " (Analysis + Q&A)"
+                    filename = f"{base_name}.docx"
+
+                    st.download_button(
+                        label=("Download" if lang == "en" else zh("開始下載", "开始下载")),
+                        data=data,
+                        file_name=filename,
+                        mime=mime,
+                        key=f"download_docx_{selected_key}_{now_str}",
                     )
-                    # Mark download used (guest limitation) on the next rerun when the user clicks.
-                    # Streamlit cannot detect clicks on raw HTML links reliably, so we keep the guest
-                    # limit logic on the server side for future if needed.
+
+                    st.caption(
+                        "Tip: If you want a 'Save As' location prompt, enable 'Ask where to save each file' in your browser settings."
+                        if lang == "en"
+                        else zh("提示：若你希望每次都跳出『選擇下載位置』視窗，請在瀏覽器下載設定中開啟『每次下載前詢問儲存位置』。", "提示：若你希望每次都跳出『选择下载位置』视窗，请在浏览器下载设置中开启『每次下载前询问保存位置』。")
+                    )
     else:
         st.info("Complete Step 8 to enable downloads." if lang == "en" else zh("請先完成步驟八，產出最終交付報告後才能下載。", "请先完成步骤八，产出最终交付报告后才能下载。"))
 
