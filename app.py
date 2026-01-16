@@ -1289,14 +1289,79 @@ def inject_ui_css():
   margin: 4px 0 6px 0;
 }
 
+/* Keep analysis content headings from becoming larger than the Step title.
+   (LLM outputs often include markdown H1/H2 which Streamlit renders huge.) */
+div[data-testid="stExpander"] .stMarkdown h1 { font-size: 18px; }
+div[data-testid="stExpander"] .stMarkdown h2 { font-size: 16px; }
+div[data-testid="stExpander"] .stMarkdown h3 { font-size: 14px; }
+div[data-testid="stExpander"] .stMarkdown h4 { font-size: 13px; }
+div[data-testid="stExpander"] .stMarkdown h5 { font-size: 12px; }
+div[data-testid="stExpander"] .stMarkdown h6 { font-size: 12px; }
+
 /* Make expander header look cleaner */
 div[data-testid="stExpander"] details summary p {
+  font-weight: 700;
+}
+
+/* Large, obvious "running" indicator (separate from Streamlit's tiny top-right icon) */
+.ef-running {
+  margin: 10px 0 14px 0;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 75, 75, 0.25);
+  background: rgba(255, 75, 75, 0.06);
+}
+.ef-running .row { display: flex; align-items: center; gap: 12px; }
+.ef-running .label { font-size: 16px; font-weight: 800; }
+.ef-spinner {
+  width: 22px; height: 22px;
+  border-radius: 999px;
+  border: 3px solid rgba(49, 51, 63, 0.20);
+  border-top-color: rgba(255, 75, 75, 0.80);
+  animation: efspin 0.9s linear infinite;
+}
+@keyframes efspin { to { transform: rotate(360deg); } }
+
+/* Download link styled like a button (avoids 404s from reverse-proxy paths) */
+.ef-download-btn {
+  display: inline-block;
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 1px solid rgba(49, 51, 63, 0.25);
+  text-decoration: none !important;
   font-weight: 700;
 }
 </style>
         """,
         unsafe_allow_html=True,
     )
+
+
+def build_data_download_link(data: bytes, filename: str, mime: str, label: str) -> str:
+    """Return an HTML <a> link that downloads via a data: URL.
+
+    This avoids hitting Streamlit's download endpoint (which can return 404
+    behind certain reverse proxies) and works consistently on Railway.
+    """
+    b64 = base64.b64encode(data).decode("ascii")
+    return f'<a class="ef-download-btn" download="{filename}" href="data:{mime};base64,{b64}">{label}</a>'
+
+
+def show_running_banner(text: str):
+    """Show a large, obvious 'running' indicator and return a placeholder handle."""
+    ph = st.empty()
+    ph.markdown(
+        f"""
+<div class="ef-running">
+  <div class="row">
+    <div class="ef-spinner"></div>
+    <div class="label">{text}</div>
+  </div>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+    return ph
 
 
 def render_step_block(title: str, body_markdown: str, expanded: bool = False):
@@ -1944,8 +2009,14 @@ def main():
         elif not st.session_state.get("document_type"):
             st.error("Please select a document type first (Step 2)." if lang == "en" else zh("請先選擇文件類型（Step 2）", "请先选择文件类型（Step 2）"))
         else:
-            with st.spinner("Analyzing... (main only)" if lang == "en" else zh("分析中...（僅主文件）", "分析中...（仅主文件）")):
-                main_analysis_text = run_llm_analysis(selected_key, lang, st.session_state.last_doc_text, model_name) or ""
+            banner = show_running_banner(
+                "Analyzing... (main only)" if lang == "en" else zh("分析中...（僅主文件）", "分析中...（仅主文件）")
+            )
+            try:
+                with st.spinner(" "):
+                    main_analysis_text = run_llm_analysis(selected_key, lang, st.session_state.last_doc_text, model_name) or ""
+            finally:
+                banner.empty()
 
             if is_openai_error_output(main_analysis_text):
                 render_openai_error(lang)
@@ -2007,9 +2078,15 @@ def main():
         )
 
     if run_upstream:
-        with st.spinner("Analyzing... (upstream relevance)" if lang == "en" else zh("分析中...（上游相關性）", "分析中...（上游相关性）")):
-            upstream_text = st.session_state.upstream_reference.get("text", "") if st.session_state.upstream_reference else ""
-            out = run_upstream_relevance(lang, st.session_state.last_doc_text or "", upstream_text, model_name)
+        banner = show_running_banner(
+            "Analyzing... (upstream relevance)" if lang == "en" else zh("分析中...（上游相關性）", "分析中...（上游相关性）")
+        )
+        try:
+            with st.spinner(" "):
+                upstream_text = st.session_state.upstream_reference.get("text", "") if st.session_state.upstream_reference else ""
+                out = run_upstream_relevance(lang, st.session_state.last_doc_text or "", upstream_text, model_name)
+        finally:
+            banner.empty()
         st.session_state.upstream_step6_done = True
         if is_openai_error_output(out):
             render_openai_error(lang)
@@ -2022,9 +2099,15 @@ def main():
         st.rerun()
 
     if run_quote:
-        with st.spinner("Analyzing... (quote relevance)" if lang == "en" else zh("分析中...（引用一致性）", "分析中...（引用一致性）")):
-            quote_text = st.session_state.quote_current.get("text", "") if st.session_state.quote_current else ""
-            out = run_quote_relevance(lang, st.session_state.last_doc_text or "", quote_text, model_name)
+        banner = show_running_banner(
+            "Analyzing... (quote relevance)" if lang == "en" else zh("分析中...（引用一致性）", "分析中...（引用一致性）")
+        )
+        try:
+            with st.spinner(" "):
+                quote_text = st.session_state.quote_current.get("text", "") if st.session_state.quote_current else ""
+                out = run_quote_relevance(lang, st.session_state.last_doc_text or "", quote_text, model_name)
+        finally:
+            banner.empty()
 
         if is_openai_error_output(out):
             render_openai_error(lang)
@@ -2083,9 +2166,13 @@ def main():
             st.info("Step 7 is already up to date." if lang == "en" else zh("步驟七已是最新狀態。", "步骤七已是最新状态。"))
             st.stop()
 
-        with st.spinner("Analyzing... (integration)" if lang == "en" else zh("分析中...（整合）", "分析中...（整合）")):
-            for item_idx in range(start_idx, total_items_needed):
-                parts: List[str] = []
+        banner = show_running_banner(
+            "Analyzing... (integration)" if lang == "en" else zh("分析中...（整合）", "分析中...（整合）")
+        )
+        try:
+            with st.spinner(" "):
+                for item_idx in range(start_idx, total_items_needed):
+                    parts: List[str] = []
 
                 # Build per-quote integration input
                 if lang != "en":
@@ -2166,6 +2253,8 @@ def main():
                     "output": clean_report_text(final_output),
                 }
                 integration_history.append(entry)
+        finally:
+            banner.empty()
 
         # Save per-quote integration history
         current_state["integration_history"] = integration_history
@@ -2234,24 +2323,35 @@ def main():
     )
 
     if run_step8:
-        with st.spinner("Analyzing... (final analysis)" if lang == "en" else zh("分析中...（最終分析）", "分析中...（最终分析）")):
-            fw_name = FRAMEWORKS.get(selected_key, {}).get("name_zh" if lang == "zh" else "name_en", selected_key)
-            integration_history = current_state.get("integration_history") or []
-            if integration_history:
-                chunks = []
-                for e in integration_history:
-                    chunks.append(f"===== Integration #{e.get('index','')}: {e.get('quote_name','')} ({e.get('generated_at','')}) =====\n{e.get('output','')}")
-                step7_text_all = "\n\n".join(chunks)
-            else:
-                step7_text_all = current_state.get("step7_output", "")
+        banner = show_running_banner(
+            "Analyzing... (final analysis)" if lang == "en" else zh("分析中...（最終分析）", "分析中...（最终分析）")
+        )
+        try:
+            with st.spinner(" "):
+                fw_name = FRAMEWORKS.get(selected_key, {}).get(
+                    "name_zh" if lang == "zh" else "name_en", selected_key
+                )
 
-            out = run_step8_final_analysis(
-                language=lang,
-                document_type=st.session_state.document_type,
-                framework_name=fw_name,
-                                step7_integration_output=step7_text_all,
-                model_name=model_name,
-            )
+                integration_history = current_state.get("integration_history") or []
+                if integration_history:
+                    chunks = []
+                    for e in integration_history:
+                        chunks.append(
+                            f"===== Integration #{e.get('index','')}: {e.get('quote_name','')} ({e.get('generated_at','')}) =====\n{e.get('output','')}"
+                        )
+                    step7_text_all = "\n\n".join(chunks)
+                else:
+                    step7_text_all = current_state.get("step7_output", "")
+
+                out = run_step8_final_analysis(
+                    language=lang,
+                    document_type=st.session_state.document_type,
+                    framework_name=fw_name,
+                    step7_integration_output=step7_text_all,
+                    model_name=model_name,
+                )
+        finally:
+            banner.empty()
 
         if is_openai_error_output(out):
             render_openai_error(lang)
@@ -2424,30 +2524,28 @@ def main():
 
                 report = build_full_report(lang, selected_key, current_state, include_followups=include_qa)
 
-                if fmt.startswith("Word"):
+                # PDF/PPTX are temporarily disabled (formatting not stable yet)
+                if fmt.startswith("PDF") or fmt.startswith("PowerPoint"):
+                    st.info(
+                        "PDF/PPTX download is temporarily unavailable." if lang == "en" else zh("PDF / PPTX 下載暫不開放。", "PDF / PPTX 下载暂不开放。")
+                    )
+                else:
+                    # Use a data: URL link to avoid intermittent 404s behind reverse proxies (Railway)
                     data = build_docx_bytes(report)
                     mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    ext = "docx"
-                elif fmt.startswith("PDF"):
-                    data = build_pdf_bytes(report)
-                    mime = "application/pdf"
-                    ext = "pdf"
-                else:
-                    data = build_pptx_bytes(report)
-                    mime = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                    ext = "pptx"
-
-                clicked = st.download_button(
-                    "Download" if lang == "en" else zh("開始下載", "开始下载"),
-                    data=data,
-                    file_name=f"errorfree_{selected_key}_{now_str}.{ext}",
-                    mime=mime,
-                    key=f"dl_{selected_key}_{ext}",
-                )
-                if clicked:
-                    current_state["download_used"] = True
-                    save_state_to_disk()
-                    record_usage(user_email, selected_key, "download")
+                    filename = f"errorfree_{selected_key}_{now_str}.docx"
+                    st.markdown(
+                        build_data_download_link(
+                            data=data,
+                            filename=filename,
+                            mime=mime,
+                            label=("Download" if lang == "en" else zh("開始下載", "开始下载")),
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                    # Mark download used (guest limitation) on the next rerun when the user clicks.
+                    # Streamlit cannot detect clicks on raw HTML links reliably, so we keep the guest
+                    # limit logic on the server side for future if needed.
     else:
         st.info("Complete Step 8 to enable downloads." if lang == "en" else zh("請先完成步驟八，產出最終交付報告後才能下載。", "请先完成步骤八，产出最终交付报告后才能下载。"))
 
