@@ -1979,7 +1979,7 @@ def main():
 
     with col_qr3:
 
-    if st.session_state.get("quote_history"):
+        if st.session_state.get("quote_history"):
         st.markdown(
             f'<div class="ef-step-title">{'"Step 6-B — Quote relevance (history)" if lang == "en" else "Step 6-B — 引用一致性（歷史）"}</div>',
             unsafe_allow_html=True,
