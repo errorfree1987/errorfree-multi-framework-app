@@ -2214,21 +2214,21 @@ def main():
                 st.markdown(f"**{i}. {h.get('name','(unknown)')}** — {h.get('analyzed_at','')}")
                 st.markdown(h.get("output", ""))
                 st.markdown("---")
-# Step 7 (Integration analysis) — single section, history nested inside
-st.markdown('<div class="ef-step-title">Step 7 — Integration analysis</div>', unsafe_allow_html=True)
-with st.expander("Show / Hide", expanded=False):
-    if current_state.get("step7_done", False) and current_state.get("step7_output", ""):
-        st.markdown(current_state.get("step7_output", ""))
-    else:
-        st.markdown("_No Step 7 output yet._")
+    # Step 7 (Integration analysis) — single section, history nested inside
+    st.markdown('<div class="ef-step-title">Step 7 — Integration analysis</div>', unsafe_allow_html=True)
+    with st.expander("Show / Hide", expanded=False):
+        if current_state.get("step7_done", False) and current_state.get("step7_output", ""):
+            st.markdown(current_state.get("step7_output", ""))
+        else:
+            st.markdown("_No Step 7 output yet._")
 
-    # History (nested)
-    if current_state.get("step7_history"):
-        st.markdown("**Integration analysis history:**")
-        for i, h in enumerate(current_state.get("step7_history", []), start=1):
-            label = f"{i}. {h.get('timestamp', '')}".strip()
-            with st.expander(label if label else f"{i}. (no timestamp)", expanded=False):
-                st.markdown(h.get("output", ""))
+        # History (nested)
+        if current_state.get("step7_history"):
+            st.markdown("**Integration analysis history:**")
+            for i, h in enumerate(current_state.get("step7_history", []), start=1):
+                label = f"{i}. {h.get('timestamp', '')}".strip()
+                with st.expander(label if label else f"{i}. (no timestamp)", expanded=False):
+                    st.markdown(h.get("output", ""))
 
 # Step 8 (NEW)
 
