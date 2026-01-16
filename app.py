@@ -1792,23 +1792,8 @@ def main():
             st.rerun()
 
     with col_qr2:
-        finalize_disabled = False
-        # If a quote file is uploaded but not yet analyzed in Step 6, we still allow finalization,
-        # but we guide users to finish Step 6 first.
-        if st.button(
-            "Confirm no more quote references" if lang == "en" else zh("確認已無其他參考文件要上傳", "確認已無其他參考文件要上傳"),
-            key="finalize_quote_upload_btn",
-            disabled=finalize_disabled or quote_finalized,
-        ):
-            st.session_state.quote_upload_finalized = True
-            save_state_to_disk()
-            st.rerun()
+        pass
 
-        if quote_finalized:
-            st.info(
-                "Quote reference uploads are finalized. Upload/Reset is now locked." if lang == "en"
-                else zh("已確認不再上傳次要參考文件；上傳與 Reset 已鎖定。", "已确认不再上传次要参考文件；上传与 Reset 已锁定。")
-            )
 
     with col_qr3:
         if st.session_state.get("quote_history"):
@@ -1980,7 +1965,7 @@ def main():
 
     # Step 7 can be re-run whenever Step 6 quote relevance adds new history entries.
     # Keep old Step 7 outputs in history, and always use the latest as the current Step 7 result.
-    step7_can_run = step5_done and (not current_state.get("step8_done", False)) and ((not step7_done) or step7_needs_refresh)
+    step7_can_run = step5_done and (not current_state.get("step8_done", False)) and (not quote_finalized) and ((not step7_done) or step7_needs_refresh)
 
     run_step7 = st.button(
         "Run integration analysis" if lang == "en" else "Run analysis（整合分析）",
@@ -2223,30 +2208,25 @@ def main():
                 st.markdown(f"**{i}. {h.get('name','(unknown)')}** — {h.get('analyzed_at','')}")
                 st.markdown(h.get("output", ""))
                 st.markdown("---")
-
-    # Step 7 (renamed)
-    if current_state.get("step7_done"):
-        render_step_block(
-            "Step 7 — Integration analysis" if lang == "en" else "Step 7 — 整合分析",
-            current_state.get("step7_output", ""),
-            expanded=False,
-        )
-        # Keep old Step 7 outputs in Results (history must be preserved).
-        if current_state.get("step7_history"):
-            st.markdown(f'<div class="ef-step-title">{"Step 7 — Integration analysis (history)" if lang == "en" else "Step 7 — 整合分析（歷史）"}</div>', unsafe_allow_html=True)
-            with st.expander("Show / Hide" if lang == "en" else zh("展開 / 收起", "展开 / 收起"), expanded=False):
-                for i, h in enumerate(current_state.get("step7_history", []), start=1):
-                    st.markdown(f"**{i}.** — {h.get('generated_at','')} (quote refs: {h.get('quote_count','')})")
-                    st.markdown(h.get("output", ""))
-                    st.markdown("---")
+# Step 7 (Integration analysis) — single section, history nested inside
+st.markdown('<div class="ef-step-title">Step 7 — Integration analysis</div>', unsafe_allow_html=True)
+with st.expander("Show / Hide", expanded=False):
+    if current_state.get("step7_done", False) and current_state.get("step7_output", ""):
+        st.markdown(current_state.get("step7_output", ""))
     else:
-        render_step_block(
-            "Step 7 — Integration analysis" if lang == "en" else "Step 7 — 整合分析",
-            "",
-            expanded=False,
-        )
+        st.markdown("_No Step 7 output yet._")
 
-    # Step 8 (NEW)
+    # History (nested)
+    if current_state.get("step7_history"):
+        st.markdown("**Integration analysis history:**")
+        for i, h in enumerate(current_state.get("step7_history", []), start=1):
+            label = f"{i}. {h.get('timestamp', '')}".strip()
+            with st.expander(label if label else f"{i}. (no timestamp)", expanded=False):
+                st.markdown(h.get("output", ""))
+
+# Step 8 (NEW)
+
+
     if current_state.get("step8_done"):
         render_step_block(
             "Step 8 — Final Analysis (Final deliverable)" if lang == "en" else "Step 8 — 最終分析（最終交付）",
