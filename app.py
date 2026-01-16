@@ -1272,7 +1272,7 @@ def inject_ui_css():
   margin: 12px 0 14px 0;
 }
 .ef-results-banner .title {
-  font-size: 22px;
+  font-size: 26px;
   font-weight: 800;
   letter-spacing: 0.5px;
   margin-bottom: 4px;
@@ -1283,8 +1283,9 @@ def inject_ui_css():
 }
 
 /* Normalize our Step headers (we render as markdown h3 inside a wrapper) */
+section.main h2 { font-size: 22px !important; font-weight: 800; }
 .ef-step-title {
-  font-size: 18px;
+  font-size: 22px;
   font-weight: 800;
   margin: 4px 0 6px 0;
 }
@@ -2516,36 +2517,33 @@ def main():
                     value=True,
                     key=f"include_qa_{selected_key}",
                 )
-                fmt = st.radio(
-                    "Select format" if lang == "en" else zh("選擇格式", "选择格式"),
-                    ["Word (DOCX)", "PDF", "PowerPoint (PPTX)"],
-                    key=f"fmt_{selected_key}",
-                )
+
+                # Format selection (only DOCX enabled for now)
+                st.markdown("**Select format**" if lang == "en" else zh("選擇格式", "选择格式"))
+                st.markdown("- ✅ Word (DOCX)")
+                st.markdown("- <span style='color:#9aa0a6'>⛔ PDF (temporarily unavailable / 暫不開放)</span>", unsafe_allow_html=True)
+                st.markdown("- <span style='color:#9aa0a6'>⛔ PowerPoint (PPTX) (temporarily unavailable / 暫不開放)</span>", unsafe_allow_html=True)
 
                 report = build_full_report(lang, selected_key, current_state, include_followups=include_qa)
 
-                # PDF/PPTX are temporarily disabled (formatting not stable yet)
-                if fmt.startswith("PDF") or fmt.startswith("PowerPoint"):
-                    st.info(
-                        "PDF/PPTX download is temporarily unavailable." if lang == "en" else zh("PDF / PPTX 下載暫不開放。", "PDF / PPTX 下载暂不开放。")
-                    )
-                else:
-                    # Use a data: URL link to avoid intermittent 404s behind reverse proxies (Railway)
-                    data = build_docx_bytes(report)
-                    mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    filename = f"errorfree_{selected_key}_{now_str}.docx"
-                    st.markdown(
-                        build_data_download_link(
-                            data=data,
-                            filename=filename,
-                            mime=mime,
-                            label=("Download" if lang == "en" else zh("開始下載", "开始下载")),
-                        ),
-                        unsafe_allow_html=True,
-                    )
-                    # Mark download used (guest limitation) on the next rerun when the user clicks.
-                    # Streamlit cannot detect clicks on raw HTML links reliably, so we keep the guest
-                    # limit logic on the server side for future if needed.
+                # Download (DOCX only) - use Streamlit download_button to avoid 404 and avoid navigating away
+                data = build_docx_bytes(report)
+                mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                filename = f"errorfree_{selected_key}_{now_str}.docx"
+
+                def _mark_download_used():
+                    if is_guest:
+                        current_state['download_used'] = True
+                        save_state_to_disk()
+
+                st.download_button(
+                    label=("Download" if lang == "en" else zh("開始下載", "开始下载")),
+                    data=data,
+                    file_name=filename,
+                    mime=mime,
+                    key=f"download_btn_{selected_key}",
+                    on_click=_mark_download_used,
+                )
     else:
         st.info("Complete Step 8 to enable downloads." if lang == "en" else zh("請先完成步驟八，產出最終交付報告後才能下載。", "请先完成步骤八，产出最终交付报告后才能下载。"))
 
