@@ -393,6 +393,10 @@ def read_file_to_text(uploaded_file) -> str:
 # =========================
 
 def run_llm_analysis(framework_key: str, language: str, document_text: str, model_name: str) -> str:
+    # Diagnostics (do not leak key)
+    st.session_state["_ef_last_openai_error"] = ""
+    st.session_state["_ef_last_openai_error_type"] = ""
+
     if framework_key not in FRAMEWORKS:
         return f"[Error] Framework '{framework_key}' not found in frameworks.json."
 
@@ -415,10 +419,29 @@ def run_llm_analysis(framework_key: str, language: str, document_text: str, mode
         )
         return response.output_text
     except Exception as e:
-        return f"[呼叫 OpenAI API 時發生錯誤: {e}]"
+        msg = str(e)
+        low = msg.lower()
+        err_type = "unknown"
+        if ("insufficient_quota" in msg) or ("error code: 429" in low) or ("quota" in low):
+            err_type = "quota_or_429"
+        elif ("rate_limit" in low) or ("too many requests" in low):
+            err_type = "rate_limit"
+        elif ("invalid_api_key" in low) or ("api key" in low and "invalid" in low):
+            err_type = "invalid_key"
+        elif ("timed out" in low) or ("timeout" in low) or ("connection" in low):
+            err_type = "network"
+        st.session_state["_ef_last_openai_error_type"] = err_type
+        st.session_state["_ef_last_openai_error"] = (msg[:240] + ("..." if len(msg) > 240 else ""))
+        if err_type == "quota_or_429":
+            return "[OpenAI API quota/billing issue. Please check your plan, billing, or API key settings.]"
+        return "[OpenAI API call failed. Please verify your API key and network, then try again.]"
 
 
 def _openai_simple(system_prompt: str, user_prompt: str, model_name: str, max_output_tokens: int) -> str:
+    # Diagnostics (do not leak key)
+    st.session_state["_ef_last_openai_error"] = ""
+    st.session_state["_ef_last_openai_error_type"] = ""
+
     if client is None:
         return "[Error] OPENAI_API_KEY 尚未設定，無法連線至 OpenAI。"
     try:
@@ -432,7 +455,22 @@ def _openai_simple(system_prompt: str, user_prompt: str, model_name: str, max_ou
         )
         return (response.output_text or "").strip()
     except Exception as e:
-        return f"[呼叫 OpenAI API 時發生錯誤: {e}]"
+        msg = str(e)
+        low = msg.lower()
+        err_type = "unknown"
+        if ("insufficient_quota" in msg) or ("error code: 429" in low) or ("quota" in low):
+            err_type = "quota_or_429"
+        elif ("rate_limit" in low) or ("too many requests" in low):
+            err_type = "rate_limit"
+        elif ("invalid_api_key" in low) or ("api key" in low and "invalid" in low):
+            err_type = "invalid_key"
+        elif ("timed out" in low) or ("timeout" in low) or ("connection" in low):
+            err_type = "network"
+        st.session_state["_ef_last_openai_error_type"] = err_type
+        st.session_state["_ef_last_openai_error"] = (msg[:240] + ("..." if len(msg) > 240 else ""))
+        if err_type == "quota_or_429":
+            return "[OpenAI API quota/billing issue. Please check your plan, billing, or API key settings.]"
+        return "[OpenAI API call failed. Please verify your API key and network, then try again.]"
 
 
 def _chunk_text(text: str, chunk_size: int = 12000, overlap: int = 600) -> List[str]:
@@ -771,7 +809,22 @@ def run_followup_qa(
         )
         return response.output_text
     except Exception as e:
-        return f"[呼叫 OpenAI API 時發生錯誤: {e}]"
+        msg = str(e)
+        low = msg.lower()
+        err_type = "unknown"
+        if ("insufficient_quota" in msg) or ("error code: 429" in low) or ("quota" in low):
+            err_type = "quota_or_429"
+        elif ("rate_limit" in low) or ("too many requests" in low):
+            err_type = "rate_limit"
+        elif ("invalid_api_key" in low) or ("api key" in low and "invalid" in low):
+            err_type = "invalid_key"
+        elif ("timed out" in low) or ("timeout" in low) or ("connection" in low):
+            err_type = "network"
+        st.session_state["_ef_last_openai_error_type"] = err_type
+        st.session_state["_ef_last_openai_error"] = (msg[:240] + ("..." if len(msg) > 240 else ""))
+        if err_type == "quota_or_429":
+            return "[OpenAI API quota/billing issue. Please check your plan, billing, or API key settings.]"
+        return "[OpenAI API call failed. Please verify your API key and network, then try again.]"
 
 
 
@@ -2075,7 +2128,7 @@ def main():
 
     if not quote_finalized:
         st.info(
-            "To enable Step 8, please click 'Confirm no more quote references' in Step 3-2 after you finish uploading quote references." if lang == "en"
+            "To enable Step 8, click **Confirm no more quote reference** in Step 8 after Step 7 is up to date." if lang == "en"
             else zh("要啟用步驟八，請在步驟三-2上傳完所有次要參考文件後，按下『確認已無其他參考文件要上傳』。", "要启用步骤八，请在步骤三-2上传完所有次要参考文件后，按下『确认已无其他参考文件要上传』。")
         )
     elif step7_quote_count != current_quote_count:
@@ -2169,7 +2222,6 @@ def main():
     # =========================
     # Ensure current_state exists even before a framework is selected
     try:
-        current_state
     except NameError:
         current_state = {}
 
