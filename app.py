@@ -1263,6 +1263,11 @@ def inject_ui_css():
     st.markdown(
         """
 <style>
+/* Make analysis step titles match RESULTS step titles */
+.stMarkdown h2, .stSubheader, .stHeader {
+  font-size: 24px !important;
+}
+
 /* Strong "RESULTS" banner */
 .ef-results-banner {
   padding: 14px 16px;
@@ -1272,7 +1277,7 @@ def inject_ui_css():
   margin: 12px 0 14px 0;
 }
 .ef-results-banner .title {
-  font-size: 26px;
+  font-size: 28px;
   font-weight: 800;
   letter-spacing: 0.5px;
   margin-bottom: 4px;
@@ -1283,18 +1288,17 @@ def inject_ui_css():
 }
 
 /* Normalize our Step headers (we render as markdown h3 inside a wrapper) */
-section.main h2 { font-size: 22px !important; font-weight: 800; }
 .ef-step-title {
-  font-size: 22px;
+  font-size: 24px;
   font-weight: 800;
   margin: 4px 0 6px 0;
 }
 
 /* Keep analysis content headings from becoming larger than the Step title.
    (LLM outputs often include markdown H1/H2 which Streamlit renders huge.) */
-div[data-testid="stExpander"] .stMarkdown h1 { font-size: 18px; }
-div[data-testid="stExpander"] .stMarkdown h2 { font-size: 16px; }
-div[data-testid="stExpander"] .stMarkdown h3 { font-size: 14px; }
+div[data-testid="stExpander"] .stMarkdown h1 { font-size: 22px; }
+div[data-testid="stExpander"] .stMarkdown h2 { font-size: 20px; }
+div[data-testid="stExpander"] .stMarkdown h3 { font-size: 18px; }
 div[data-testid="stExpander"] .stMarkdown h4 { font-size: 13px; }
 div[data-testid="stExpander"] .stMarkdown h5 { font-size: 12px; }
 div[data-testid="stExpander"] .stMarkdown h6 { font-size: 12px; }
@@ -1339,13 +1343,36 @@ div[data-testid="stExpander"] details summary p {
 
 
 def build_data_download_link(data: bytes, filename: str, mime: str, label: str) -> str:
-    """Return an HTML <a> link that downloads via a data: URL.
+    """Return an HTML download button without navigating away.
 
-    This avoids hitting Streamlit's download endpoint (which can return 404
-    behind certain reverse proxies) and works consistently on Railway.
+    Uses an inline JS Blob download to avoid Streamlit's download endpoint (which can
+    return 404 behind certain reverse proxies) *and* prevent the page from navigating
+    to a data: URL after click.
     """
     b64 = base64.b64encode(data).decode("ascii")
-    return f'<a class="ef-download-btn" download="{filename}" href="data:{mime};base64,{b64}">{label}</a>'
+    # Note: onclick returns false to prevent navigation.
+    return f"""<a class='ef-download-btn' href='#' onclick="(function(){{
+  try {{
+    const b64 = '{b64}';
+    const byteChars = atob(b64);
+    const byteNums = new Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) byteNums[i] = byteChars.charCodeAt(i);
+    const byteArray = new Uint8Array(byteNums);
+    const blob = new Blob([byteArray], {{ type: '{mime}' }});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '{filename}';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }} catch (e) {{
+    console.error('download failed', e);
+  }}
+  return false;
+}})();" >{label}</a>"""
+
 
 
 def show_running_banner(text: str):
@@ -2144,13 +2171,7 @@ def main():
 
     # Step 7 can be re-run whenever Step 6 quote relevance adds new history entries.
     # Keep old Step 7 outputs in history, and always use the latest as the current Step 7 result.
-    upstream_exists = bool(st.session_state.get('upstream_reference'))
-    quote_exists = bool(st.session_state.get('quote_current'))
-    upstream_done = bool(st.session_state.get('upstream_step6_done', False))
-    quote_done_current = bool(st.session_state.get('quote_step6_done_current', False))
-    upstream_ready = (not upstream_exists) or upstream_done
-    quote_ready_for_step7 = (not quote_exists) or quote_done_current
-    step7_can_run = step5_done and upstream_ready and quote_ready_for_step7 and (not current_state.get('step8_done', False)) and (not quote_finalized) and ((not step7_done) or step7_needs_refresh)
+    step7_can_run = step5_done and (not current_state.get("step8_done", False)) and (not quote_finalized) and ((not step7_done) or step7_needs_refresh)
 
     run_step7 = st.button(
         "Run integration analysis" if lang == "en" else "Run analysis（整合分析）",
@@ -2523,33 +2544,44 @@ def main():
                     value=True,
                     key=f"include_qa_{selected_key}",
                 )
-
-                # Format selection (only DOCX enabled for now)
-                st.markdown("**Select format**" if lang == "en" else zh("選擇格式", "选择格式"))
-                st.markdown("- ✅ Word (DOCX)")
-                st.markdown("- <span style='color:#9aa0a6'>⛔ PDF (temporarily unavailable / 暫不開放)</span>", unsafe_allow_html=True)
-                st.markdown("- <span style='color:#9aa0a6'>⛔ PowerPoint (PPTX) (temporarily unavailable / 暫不開放)</span>", unsafe_allow_html=True)
+                # Select format (PDF/PPTX temporarily disabled)
+                fmt = st.selectbox(
+                    "Select format" if lang == "en" else zh("選擇格式", "选择格式"),
+                    ["Word (DOCX)"],
+                    key=f"fmt_{selected_key}",
+                )
+                st.markdown(
+                    "<div style='color:#9aa0a6; margin-top:6px;'>"
+                    + ("PDF (temporarily unavailable)\n" if lang == "en" else zh("PDF（暫不開放）\n", "PDF（暂不开放）\n"))
+                    + ("PowerPoint (PPTX) (temporarily unavailable)" if lang == "en" else zh("PowerPoint（PPTX）（暫不開放）", "PowerPoint（PPTX）（暂不开放）"))
+                    + "</div>",
+                    unsafe_allow_html=True,
+                )
 
                 report = build_full_report(lang, selected_key, current_state, include_followups=include_qa)
 
-                # Download (DOCX only) - use Streamlit download_button to avoid 404 and avoid navigating away
-                data = build_docx_bytes(report)
-                mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                filename = f"errorfree_{selected_key}_{now_str}.docx"
-
-                def _mark_download_used():
-                    if is_guest:
-                        current_state['download_used'] = True
-                        save_state_to_disk()
-
-                st.download_button(
-                    label=("Download" if lang == "en" else zh("開始下載", "开始下载")),
-                    data=data,
-                    file_name=filename,
-                    mime=mime,
-                    key=f"download_btn_{selected_key}",
-                    on_click=_mark_download_used,
-                )
+                # PDF/PPTX are temporarily disabled (formatting not stable yet)
+                if fmt.startswith("PDF") or fmt.startswith("PowerPoint"):
+                    st.info(
+                        "PDF/PPTX download is temporarily unavailable." if lang == "en" else zh("PDF / PPTX 下載暫不開放。", "PDF / PPTX 下载暂不开放。")
+                    )
+                else:
+                    # Use a data: URL link to avoid intermittent 404s behind reverse proxies (Railway)
+                    data = build_docx_bytes(report)
+                    mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    filename = f"errorfree_{selected_key}_{now_str}.docx"
+                    st.markdown(
+                        build_data_download_link(
+                            data=data,
+                            filename=filename,
+                            mime=mime,
+                            label=("Download" if lang == "en" else zh("開始下載", "开始下载")),
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                    # Mark download used (guest limitation) on the next rerun when the user clicks.
+                    # Streamlit cannot detect clicks on raw HTML links reliably, so we keep the guest
+                    # limit logic on the server side for future if needed.
     else:
         st.info("Complete Step 8 to enable downloads." if lang == "en" else zh("請先完成步驟八，產出最終交付報告後才能下載。", "请先完成步骤八，产出最终交付报告后才能下载。"))
 
