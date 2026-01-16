@@ -1978,21 +1978,23 @@ def main():
 
 
     with col_qr3:
-
-        if st.session_state.get("quote_history"):
+        title_text = "Step 6-B — Quote relevance (history)" if lang == "en" else "Step 6-B — 引用一致性（歷史）"
         st.markdown(
-            f'<div class="ef-step-title">{'"Step 6-B — Quote relevance (history)" if lang == "en" else "Step 6-B — 引用一致性（歷史）"}</div>',
+            f'<div class="ef-step-title">{title_text}</div>',
             unsafe_allow_html=True,
         )
         with st.expander("Show / Hide" if lang == "en" else zh("展開 / 收起", "展开 / 收起"), expanded=False):
-            for i, h in enumerate(st.session_state.quote_history, start=1):
-                name = h.get("name", "(unknown)")
-                ts = h.get("analyzed_at", "")
-                label = f"{i}. {name} — {ts}".strip(" —")
-                with st.expander(label, expanded=False):
-                    st.markdown(h.get("output", ""))
+            if st.session_state.get("quote_history"):
+                for i, h in enumerate(st.session_state.quote_history, start=1):
+                    name = h.get("name", "(unknown)")
+                    ts = h.get("analyzed_at", "")
+                    label = f"{i}. {name} — {ts}".strip(" —")
+                    with st.expander(label, expanded=False):
+                        st.markdown(h.get("output", ""))
+            else:
+                st.info("No content yet." if lang == "en" else zh("尚無內容。", "暂无内容。"))
 
-    # Step 7 (Integration analysis) — single section, history nested inside
+# Step 7 (Integration analysis) — single section, history nested inside
     st.markdown('<div class="ef-step-title">Step 7 — Integration analysis</div>', unsafe_allow_html=True)
     with st.expander("Show / Hide", expanded=False):
         integration_history = current_state.get("integration_history") or []
