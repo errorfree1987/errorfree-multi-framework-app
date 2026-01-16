@@ -2167,6 +2167,12 @@ def main():
         st.rerun()
 
     # =========================
+    # Ensure current_state exists even before a framework is selected
+    try:
+        current_state
+    except NameError:
+        current_state = {}
+
     # RESULTS area (clean + collapsible)
     # =========================
     st.markdown("---")
