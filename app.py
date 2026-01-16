@@ -1,3 +1,13 @@
+# === Environment Diagnostics (non-invasive) ===
+import os
+import streamlit as st
+
+if "OPENAI_API_KEY" not in os.environ:
+    st.error("OPENAI_API_KEY is NOT loaded from environment")
+else:
+    st.success("OPENAI_API_KEY loaded successfully")
+# === End Diagnostics ===
+
 import os, json, datetime, secrets
 
 from pathlib import Path
