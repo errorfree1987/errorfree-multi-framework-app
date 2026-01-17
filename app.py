@@ -2603,7 +2603,7 @@ def main():
                     data = build_docx_bytes(report)
                     mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
-                    now_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    now_ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                     framework_key = (selected_key or "unknown").replace("/", "-")
                     filename = f"Error-Free® IER {framework_key} {now_ts}" + (" +Q&A" if include_qa else "") + ".docx"
 
