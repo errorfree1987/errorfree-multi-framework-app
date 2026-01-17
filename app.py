@@ -1403,33 +1403,40 @@ def render_step_block(title: str, body_markdown: str, expanded: bool = False):
 
 
 def render_followup_history_chat(followup_history: List, lang: str):
-    """Render follow-up Q&A history in a compact, per-question expandable list."""
+    """Render follow-up Q&A history in a compact, click-to-view format.
+    Supports both legacy tuple items: (question, answer) and dict items.
+    """
     if not followup_history:
-        st.info("No follow-up history yet." if lang == "en" else zh("尚無追問紀錄。", "尚无追问记录。"))
+        st.info("No follow-up yet." if lang == "en" else zh("尚無追問。", "暂无追问。"))
         return
 
-    title = ("Follow-up history (click to view)" if lang == "en" else zh("追問歷史（點擊查看）", "追问历史（点击查看）"))
-    with st.expander(title, expanded=False):
-        for i, item in enumerate(followup_history, start=1):
-            q = (item.get('question') or item.get('q') or '').strip()
-            a = (item.get('answer') or item.get('a') or '').strip()
-            if not q and not a:
-                continue
+    with st.expander("Follow-up history (click to view)" if lang == "en" else zh("追問歷史（點擊查看）", "追问历史（点击查看）"), expanded=False):
+        for idx, item in enumerate(followup_history, start=1):
+            q = ""
+            a = ""
+            if isinstance(item, dict):
+                q = (item.get("question") or item.get("q") or "").strip()
+                a = (item.get("answer") or item.get("a") or "").strip()
+            elif isinstance(item, (list, tuple)):
+                if len(item) >= 1:
+                    q = str(item[0]).strip() if item[0] is not None else ""
+                if len(item) >= 2:
+                    a = str(item[1]).strip() if item[1] is not None else ""
+            else:
+                # Fallback: render as string
+                q = str(item).strip()
 
-            preview = q.replace('\n', ' ')[:120] if q else (a.replace('\n', ' ')[:120] if a else '')
-            label = f"{i}. {preview}{'…' if len(preview) == 120 else ''}"
-            with st.expander(label, expanded=False):
+            title = q if q else (f"Q{idx}")
+            if len(title) > 120:
+                title = title[:117] + "..."
+
+            with st.expander(f"{idx}. {title}", expanded=False):
                 if q:
-                    st.markdown("**Q:**")
-                    st.markdown(q)
+                    st.chat_message("user").markdown(q)
                 if a:
-                    st.markdown("**A:**")
-                    st.markdown(a)
-
-# =========================
-# Main app
-# =========================
-
+                    st.chat_message("assistant").markdown(a)
+                if (not q) and (not a):
+                    st.info("No content." if lang == "en" else zh("尚無內容。", "暂无内容。"))
 def _reset_whole_document():
     st.session_state.framework_states = {}
     st.session_state.last_doc_text = ""
@@ -2512,11 +2519,15 @@ def main():
         st.markdown(f'<div class="ef-step-title">{"Step 6-B — Quote relevance (history)" if lang == "en" else "Step 6-B — 引用一致性（歷史）"}</div>', unsafe_allow_html=True)
         with st.expander("Show / Hide" if lang == "en" else zh("展開 / 收起", "展开 / 收起"), expanded=False):
             for i, h in enumerate(st.session_state.quote_history, start=1):
-                name = h.get("name", "(unknown)")
-                analyzed_at = h.get("analyzed_at", "")
-                label = f"{i}. {name} — {analyzed_at}".strip()
-                with st.expander(label if label else f"{i}.", expanded=False):
-                    st.markdown(h.get("output", ""))
+                qname = (h.get("quote_name") or h.get("name") or f"Quote reference #{i}") if isinstance(h, dict) else (getattr(h, "quote_name", None) or getattr(h, "name", None) or f"Quote reference #{i}")
+                analyzed_at = (h.get("analyzed_at") or "") if isinstance(h, dict) else (getattr(h, "analyzed_at", "") or "")
+                out = (h.get("output") or h.get("text") or "") if isinstance(h, dict) else (getattr(h, "output", "") or getattr(h, "text", "") or "")
+                label = f"{i}. {qname}" + (f" — {analyzed_at}" if analyzed_at else "")
+                with st.expander(label, expanded=False):
+                    if out:
+                        st.markdown(out)
+                    else:
+                        st.info("No content yet." if lang == "en" else zh("尚無內容。", "暂无内容。"))
     # Step 7 (Integration analysis) — single section, history nested inside
     st.markdown('<div class="ef-step-title">Step 7 — Integration analysis</div>', unsafe_allow_html=True)
     with st.expander("Show / Hide", expanded=False):
@@ -2592,11 +2603,10 @@ def main():
                     data = build_docx_bytes(report)
                     mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
-                    # Build download filename: Error-Free® IER + framework + timestamp
-                    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                    framework = (selected_key or "").strip() or "framework"
-                    base_name = f"Error-Free® IER {framework} {ts}"
-                    filename = f"{base_name}.docx"
+                    now_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    framework_key = (selected_key or "unknown").replace("/", "-")
+                    filename = f"Error-Free® IER {framework_key} {now_ts}" + (" +Q&A" if include_qa else "") + ".docx"
+
 
                     st.download_button(
                         label=("Download" if lang == "en" else zh("開始下載", "开始下载")),
