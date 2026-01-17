@@ -1403,21 +1403,28 @@ def render_step_block(title: str, body_markdown: str, expanded: bool = False):
 
 
 def render_followup_history_chat(followup_history: List, lang: str):
-    """ChatGPT-like history display (Q then A)."""
+    """Render follow-up Q&A history in a compact, per-question expandable list."""
     if not followup_history:
-        st.caption("No follow-up history yet." if lang == "en" else zh("目前尚無追問紀錄。", "目前尚无追问记录。"))
+        st.info("No follow-up history yet." if lang == "en" else zh("尚無追問紀錄。", "尚无追问记录。"))
         return
 
-    with st.expander("Follow-up history (Chat view)" if lang == "en" else zh("追問歷史（對話排列）", "追问历史（对话排列）"), expanded=False):
-        for i, (q, a) in enumerate(followup_history, start=1):
-            with st.chat_message("user"):
-                st.markdown(q)
-            with st.chat_message("assistant"):
-                st.markdown(a)
+    title = ("Follow-up history (click to view)" if lang == "en" else zh("追問歷史（點擊查看）", "追问历史（点击查看）"))
+    with st.expander(title, expanded=False):
+        for i, item in enumerate(followup_history, start=1):
+            q = (item.get('question') or item.get('q') or '').strip()
+            a = (item.get('answer') or item.get('a') or '').strip()
+            if not q and not a:
+                continue
 
-
-
-
+            preview = q.replace('\n', ' ')[:120] if q else (a.replace('\n', ' ')[:120] if a else '')
+            label = f"{i}. {preview}{'…' if len(preview) == 120 else ''}"
+            with st.expander(label, expanded=False):
+                if q:
+                    st.markdown("**Q:**")
+                    st.markdown(q)
+                if a:
+                    st.markdown("**A:**")
+                    st.markdown(a)
 
 # =========================
 # Main app
@@ -2505,9 +2512,11 @@ def main():
         st.markdown(f'<div class="ef-step-title">{"Step 6-B — Quote relevance (history)" if lang == "en" else "Step 6-B — 引用一致性（歷史）"}</div>', unsafe_allow_html=True)
         with st.expander("Show / Hide" if lang == "en" else zh("展開 / 收起", "展开 / 收起"), expanded=False):
             for i, h in enumerate(st.session_state.quote_history, start=1):
-                st.markdown(f"**{i}. {h.get('name','(unknown)')}** — {h.get('analyzed_at','')}")
-                st.markdown(h.get("output", ""))
-                st.markdown("---")
+                name = h.get("name", "(unknown)")
+                analyzed_at = h.get("analyzed_at", "")
+                label = f"{i}. {name} — {analyzed_at}".strip()
+                with st.expander(label if label else f"{i}.", expanded=False):
+                    st.markdown(h.get("output", ""))
     # Step 7 (Integration analysis) — single section, history nested inside
     st.markdown('<div class="ef-step-title">Step 7 — Integration analysis</div>', unsafe_allow_html=True)
     with st.expander("Show / Hide", expanded=False):
@@ -2583,9 +2592,10 @@ def main():
                     data = build_docx_bytes(report)
                     mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
-                    base_name = "Error-Free® Intelligence Engine Report"
-                    if include_qa:
-                        base_name += " (Analysis + Q&A)"
+                    # Build download filename: Error-Free® IER + framework + timestamp
+                    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                    framework = (selected_key or "").strip() or "framework"
+                    base_name = f"Error-Free® IER {framework} {ts}"
                     filename = f"{base_name}.docx"
 
                     st.download_button(
