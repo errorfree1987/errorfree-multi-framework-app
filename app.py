@@ -243,6 +243,8 @@ def save_state_to_disk():
         "quote_current": st.session_state.get("quote_current"),
         "quote_history": st.session_state.get("quote_history", []),
         "quote_upload_nonce": st.session_state.get("quote_upload_nonce", 0),
+            "review_upload_nonce": st.session_state.get("review_upload_nonce", 0),
+            "upstream_upload_nonce": st.session_state.get("upstream_upload_nonce", 0),
         "quote_upload_finalized": st.session_state.get("quote_upload_finalized", False),
         "upstream_step6_done": st.session_state.get("upstream_step6_done", False),
         "upstream_step6_output": st.session_state.get("upstream_step6_output", ""),
@@ -1456,11 +1458,17 @@ def _reset_whole_document():
     for _k in list(st.session_state.keys()):
         if _k.startswith("quote_uploader_"):
             del st.session_state[_k]
-    for _k in ("review_doc_uploader", "upstream_uploader"):
-        if _k in st.session_state:
+        if _k.startswith("review_doc_uploader_"):
             del st.session_state[_k]
-    # Bump nonce to force a fresh quote uploader key after reset
+        if _k.startswith("upstream_uploader_"):
+            del st.session_state[_k]
+    # also clear legacy single-key uploaders (older deployments)
+    for _legacy in ["review_doc_uploader", "upstream_uploader"]:
+        if _legacy in st.session_state:
+            del st.session_state[_legacy]
     st.session_state["quote_upload_nonce"] = int(st.session_state.get("quote_upload_nonce", 0)) + 1
+    st.session_state["review_upload_nonce"] = int(st.session_state.get("review_upload_nonce", 0)) + 1
+    st.session_state["upstream_upload_nonce"] = int(st.session_state.get("upstream_upload_nonce", 0)) + 1
     st.session_state.quote_upload_finalized = False
     st.session_state.upstream_step6_done = False
     st.session_state.upstream_step6_output = ""
@@ -1800,7 +1808,7 @@ def main():
         uploaded = st.file_uploader(
             "Upload PDF / DOCX / TXT / Image" if lang == "en" else zh("請上傳 PDF / DOCX / TXT / 圖片", "请上传 PDF / DOCX / TXT / 图片"),
             type=["pdf", "docx", "txt", "jpg", "jpeg", "png"],
-            key="review_doc_uploader",
+            key=f"review_doc_uploader_{st.session_state.get('review_upload_nonce', 0)}",
         )
 
         if uploaded is not None:
@@ -1918,7 +1926,7 @@ def main():
     upstream_file = st.file_uploader(
         "Upload upstream reference (PDF / DOCX / TXT / Image)" if lang == "en" else "上傳主要參考文件（PDF / DOCX / TXT / 圖片）",
         type=["pdf", "docx", "txt", "jpg", "jpeg", "png"],
-        key="upstream_uploader",
+        key=f"upstream_uploader_{st.session_state.get('upstream_upload_nonce', 0)}",
         disabled=upstream_locked,
     )
 
