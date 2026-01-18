@@ -1451,6 +1451,16 @@ def _reset_whole_document():
     st.session_state.quote_current = None
     st.session_state.quote_history = []
     st.session_state.quote_upload_nonce = 0
+
+    # Clear Streamlit uploader widget states so UI is truly reset
+    for _k in list(st.session_state.keys()):
+        if _k.startswith("quote_uploader_"):
+            del st.session_state[_k]
+    for _k in ("review_doc_uploader", "upstream_uploader"):
+        if _k in st.session_state:
+            del st.session_state[_k]
+    # Bump nonce to force a fresh quote uploader key after reset
+    st.session_state["quote_upload_nonce"] = int(st.session_state.get("quote_upload_nonce", 0)) + 1
     st.session_state.quote_upload_finalized = False
     st.session_state.upstream_step6_done = False
     st.session_state.upstream_step6_output = ""
@@ -1460,11 +1470,6 @@ def _reset_whole_document():
 
     # Follow-up clear flag (fix)
     st.session_state._pending_clear_followup_key = None
-
-    # Ensure file upload widgets are cleared (so uploaded files do not remain after reset)
-    for _k in list(st.session_state.keys()):
-        if _k.startswith("quote_uploader_") or _k in ("upstream_uploader", "review_doc_uploader", "main_doc_uploader"):
-            st.session_state[_k] = None
 
     save_state_to_disk()
 
@@ -2638,15 +2643,15 @@ def main():
     # =========================
     st.markdown("---")
     st.subheader("Ask a follow-up question" if lang == "en" else zh("提出追問", "提出追问"))
-    # Blue hover tooltip: remind where follow-up results appear
-    _followup_tip = (
-        "Your submitted follow-up question and reply will appear in the Follow-up (Q&A) section above."
-        if lang == "en"
-        else zh("你送出的追問與回覆，將顯示在上方的 Follow-up（Q&A）區塊中。", "你送出的追问与回复，将显示在上方的 Follow-up（Q&A）区块中。")
+    # Hint: follow-up results will appear in the Follow-up (Q&A) section above
+    _followup_hint = (
+        "Your follow-up question and replies will appear in the Follow-up (Q&A) section above."
+        if lang == "en" else
+        "你送出的追問與回覆，將顯示在上方的 Follow-up（Q&A）區塊中。"
     )
-    _followup_label = "Ask a follow-up question" if lang == "en" else zh("提出追問", "提出追问")
+    _followup_hint_safe = _followup_hint.replace('"', "&quot;")
     st.markdown(
-        f"<span style='color:#1a73e8; font-weight:600; cursor:help;' title="{_followup_tip.replace(chr(34), "’")}">{_followup_label}</span>",
+        f"<span style='color:#1a73e8; font-weight:600; cursor:help;' title=\"{_followup_hint_safe}\">{_followup_hint}</span>",
         unsafe_allow_html=True,
     )
 
