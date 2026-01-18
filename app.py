@@ -1438,13 +1438,45 @@ def render_followup_history_chat(followup_history: List, lang: str):
                 if (not q) and (not a):
                     st.info("No content." if lang == "en" else zh("尚無內容。", "暂无内容。"))
 def _reset_whole_document():
-    st.session_state.framework_states = {}
+    """Reset the whole review session WITHOUT logging the user out."""
+
+    # Preserve login + language + usage counters
+    keep = {
+        "user_email": st.session_state.get("user_email"),
+        "user_role": st.session_state.get("user_role"),
+        "is_authenticated": st.session_state.get("is_authenticated", False),
+        "lang": st.session_state.get("lang", "zh"),
+        "zh_variant": st.session_state.get("zh_variant", "tw"),
+        "usage_date": st.session_state.get("usage_date"),
+        "usage_count": st.session_state.get("usage_count", 0),
+    }
+
+    # Hard-clear EVERYTHING else to ensure a clean new round
+    for k in list(st.session_state.keys()):
+        if k not in keep:
+            del st.session_state[k]
+
+    # Restore preserved keys
+    for k, v in keep.items():
+        st.session_state[k] = v
+
+    # Remove persisted state (so reload won't bring anything back)
+    try:
+        if STATE_FILE.exists():
+            STATE_FILE.unlink()
+    except Exception:
+        # If filesystem disallows unlink, we still overwrite via save_state_to_disk() below.
+        pass
+
+    # Re-apply the minimal defaults needed by the app (same names; values are the "blank" baseline)
     st.session_state.last_doc_text = ""
     st.session_state.last_doc_name = ""
     st.session_state.document_type = None
+    st.session_state.framework_states = {}
+    st.session_state.selected_framework_key = st.session_state.get("selected_framework_key")
     st.session_state.current_doc_id = None
 
-    # Step 3 references (更正2)
+    # Step 3 references
     st.session_state.upstream_reference = None
     st.session_state.quote_current = None
     st.session_state.quote_history = []
@@ -1454,12 +1486,14 @@ def _reset_whole_document():
     st.session_state.upstream_step6_output = ""
     st.session_state.quote_step6_done_current = False
 
+    # Results history
     st.session_state.step7_history = []
-
-    # Follow-up clear flag (fix)
     st.session_state._pending_clear_followup_key = None
 
     save_state_to_disk()
+
+    # Immediately refresh UI
+    st.rerun()
 
 
 def main():
@@ -2608,12 +2642,15 @@ def main():
                     filename = f"Error-Free® IER {framework_key} {now_ts}" + (" +Q&A" if include_qa else "") + ".docx"
 
 
-                    st.download_button(
-                        label=("Download" if lang == "en" else zh("開始下載", "开始下载")),
-                        data=data,
-                        file_name=filename,
-                        mime=mime,
-                        key=f"download_docx_{selected_key}_{now_str}",
+                    # IMPORTANT: Avoid Streamlit's internal download endpoint (can 404 behind some reverse proxies).
+                    # Use an in-page JS download link instead, so the page never navigates away.
+                    st.markdown(
+                        build_data_download_link(
+                            data=data,
+                            filename=filename,
+                            label=("Download" if lang == "en" else zh("開始下載", "开始下载")),
+                        ),
+                        unsafe_allow_html=True,
                     )
 
                     st.caption(
