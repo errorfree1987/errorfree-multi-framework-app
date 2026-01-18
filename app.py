@@ -2610,15 +2610,15 @@ def main():
                     filename = f"Error-Free® IER {framework_key} {now_ts}" + (" +Q&A" if include_qa else "") + ".docx"
 
 
-                    # NOTE: Use a client-side Blob download to avoid routing/404 issues
-                    # that can happen behind some reverse proxies.
-                    html = build_data_download_link(
-                        data=data,
-                        filename=filename,
-                        mime=mime,
+                    # Download (DOCX) — use Streamlit native download_button (supports browser save-location prompt).
+                    st.download_button(
                         label=("Download" if lang == "en" else zh("開始下載", "开始下载")),
+                        data=data,
+                        file_name=filename,
+                        mime=mime,
+                        key=f"download_{framework_key}_{now_ts}",
                     )
-                    components.html(html, height=64)
+                    
 
                     st.caption(
                         "Tip: If you want a 'Save As' location prompt, enable 'Ask where to save each file' in your browser settings."
