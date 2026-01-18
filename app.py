@@ -1461,6 +1461,11 @@ def _reset_whole_document():
     # Follow-up clear flag (fix)
     st.session_state._pending_clear_followup_key = None
 
+    # Ensure file upload widgets are cleared (so uploaded files do not remain after reset)
+    for _k in list(st.session_state.keys()):
+        if _k.startswith("quote_uploader_") or _k in ("upstream_uploader", "review_doc_uploader", "main_doc_uploader"):
+            st.session_state[_k] = None
+
     save_state_to_disk()
 
 
@@ -2633,6 +2638,18 @@ def main():
     # =========================
     st.markdown("---")
     st.subheader("Ask a follow-up question" if lang == "en" else zh("提出追問", "提出追问"))
+    # Blue hover tooltip: remind where follow-up results appear
+    _followup_tip = (
+        "Your submitted follow-up question and reply will appear in the Follow-up (Q&A) section above."
+        if lang == "en"
+        else zh("你送出的追問與回覆，將顯示在上方的 Follow-up（Q&A）區塊中。", "你送出的追问与回复，将显示在上方的 Follow-up（Q&A）区块中。")
+    )
+    _followup_label = "Ask a follow-up question" if lang == "en" else zh("提出追問", "提出追问")
+    st.markdown(
+        f"<span style='color:#1a73e8; font-weight:600; cursor:help;' title="{_followup_tip.replace(chr(34), "’")}">{_followup_label}</span>",
+        unsafe_allow_html=True,
+    )
+
 
     if not current_state.get("analysis_output"):
         st.info("Please complete Step 8 before asking follow-up questions." if lang == "en" else zh("請先完成步驟八，產出最終交付成品後再進行追問。", "请先完成步骤八，产出最终交付成品后再进行追问。"))
