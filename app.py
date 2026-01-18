@@ -12,6 +12,8 @@ import base64
 
 import streamlit as st
 
+import streamlit.components.v1 as components
+
 import pdfplumber
 
 from docx import Document
@@ -1459,27 +1461,7 @@ def _reset_whole_document():
     # Follow-up clear flag (fix)
     st.session_state._pending_clear_followup_key = None
 
-    
-    # Clear Streamlit uploader widgets and dynamic keys so UI truly resets
-    keys_to_del = []
-    for k in list(st.session_state.keys()):
-        if k in ("review_doc_uploader", "upstream_uploader", "reset_confirm"):
-            keys_to_del.append(k)
-        if isinstance(k, str) and (k.startswith("quote_uploader_") or k.startswith("extra_")):
-            keys_to_del.append(k)
-    for k in keys_to_del:
-        try:
-            del st.session_state[k]
-        except Exception:
-            pass
-
-    # Bump nonce to force new quote uploader key
-    st.session_state["quote_upload_nonce"] = int(st.session_state.get("quote_upload_nonce", 0)) + 1
     save_state_to_disk()
-    try:
-        st.rerun()
-    except Exception:
-        pass
 
 
 def main():
@@ -2626,16 +2608,17 @@ def main():
                     now_ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                     framework_key = (selected_key or "unknown").replace("/", "-")
                     filename = f"Error-Free® IER {framework_key} {now_ts}" + (" +Q&A" if include_qa else "") + ".docx"
-                    st.markdown(
-                        build_data_download_link(
-                            data=data,
-                            filename=filename,
-                            mime=mime,
-                            label=("Download" if lang == "en" else zh("開始下載", "开始下载")),
-                            button=True,
-                        ),
-                        unsafe_allow_html=True,
+
+
+                    # NOTE: Use a client-side Blob download to avoid routing/404 issues
+                    # that can happen behind some reverse proxies.
+                    html = build_data_download_link(
+                        data=data,
+                        filename=filename,
+                        mime=mime,
+                        label=("Download" if lang == "en" else zh("開始下載", "开始下载")),
                     )
+                    components.html(html, height=64)
 
                     st.caption(
                         "Tip: If you want a 'Save As' location prompt, enable 'Ask where to save each file' in your browser settings."
