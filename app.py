@@ -889,7 +889,7 @@ def build_full_report(lang: str, framework_key: str, state: Dict, include_follow
             header += [
                 "",
                 "==============================",
-                "二、後續問答（Q&A）",
+                "附錄：後續問答（Q&A）",
                 "==============================",
             ]
             for i, (q, a) in enumerate(followups, start=1):
@@ -913,7 +913,7 @@ def build_full_report(lang: str, framework_key: str, state: Dict, include_follow
             header += [
                 "",
                 "==============================",
-                "2. Follow-up Q&A",
+                "Appendix: Follow-up Q&A",
                 "==============================",
             ]
             for i, (q, a) in enumerate(followups, start=1):
@@ -924,9 +924,81 @@ def build_full_report(lang: str, framework_key: str, state: Dict, include_follow
 
 
 def build_docx_bytes(text: str) -> bytes:
+    """Build a reasonably-formatted DOCX from plain/markdown-like text.
+
+    Goal: make the downloaded report closely resemble the Step 8 deliverable
+    rendering (headings, bullets, numbered lists), without changing any
+    analysis content.
+    """
+
+    import re
+
+    def _add_runs_with_bold(paragraph, s: str):
+        # Minimal **bold** support (does not try to fully implement Markdown).
+        parts = re.split(r"(\*\*[^*]+\*\*)", s)
+        for part in parts:
+            if part.startswith("**") and part.endswith("**") and len(part) >= 4:
+                paragraph.add_run(part[2:-2]).bold = True
+            else:
+                paragraph.add_run(part)
+
     doc = Document()
-    for line in text.split("\n"):
-        doc.add_paragraph(line)
+
+    lines = text.split("\n")
+    first_nonempty = next((i for i, l in enumerate(lines) if l.strip()), None)
+
+    for i, raw in enumerate(lines):
+        line = raw.rstrip("\r")
+
+        if not line.strip():
+            doc.add_paragraph("")
+            continue
+
+        # Title line: first non-empty line only
+        if first_nonempty is not None and i == first_nonempty:
+            p = doc.add_paragraph(line.strip())
+            p.style = "Title"
+            continue
+
+        s = line.lstrip()
+
+        # Headings (markdown-like)
+        if s.startswith("### "):
+            p = doc.add_paragraph(s[4:].strip())
+            p.style = "Heading 3"
+            continue
+        if s.startswith("## "):
+            p = doc.add_paragraph(s[3:].strip())
+            p.style = "Heading 2"
+            continue
+        if s.startswith("# "):
+            p = doc.add_paragraph(s[2:].strip())
+            p.style = "Heading 1"
+            continue
+
+        # Underline-style headings (e.g., ======)
+        if set(s) <= {"=", "-"} and len(s) >= 5:
+            # Skip separator lines; the surrounding text will remain.
+            continue
+
+        # Bullet list
+        m_bullet = re.match(r"^[-*\u2022]\s+(.*)$", s)
+        if m_bullet:
+            p = doc.add_paragraph(style="List Bullet")
+            _add_runs_with_bold(p, m_bullet.group(1).strip())
+            continue
+
+        # Numbered list
+        m_num = re.match(r"^(\d+)[\.)]\s+(.*)$", s)
+        if m_num:
+            p = doc.add_paragraph(style="List Number")
+            _add_runs_with_bold(p, m_num.group(2).strip())
+            continue
+
+        # Default paragraph
+        p = doc.add_paragraph()
+        _add_runs_with_bold(p, s)
+
     buf = BytesIO()
     doc.save(buf)
     buf.seek(0)
