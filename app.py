@@ -1,3 +1,36 @@
+import streamlit as st
+
+# ===== Error-Free® Portal SSO (DEMO) =====
+# 目的：從 Portal 進來且帶 portal_token，就直接放行，不顯示 Analyzer 內建登入。
+# 注意：這是「假 token」流程驗證；下一步會換成真正一次性 / 可驗證 token。
+DEMO_EXPECTED_TOKEN = "demo-from-portal"
+
+# 讀取網址參數（相容新舊 Streamlit）
+try:
+    qp = st.query_params
+    portal_token = qp.get("portal_token", "")
+    email = qp.get("email", "")
+except Exception:
+    qp = st.experimental_get_query_params()
+    portal_token = qp.get("portal_token", [""])[0]
+    email = qp.get("email", [""])[0]
+
+# session_state：避免每次互動都重跑驗證
+if "portal_authed" not in st.session_state:
+    st.session_state["portal_authed"] = False
+
+if not st.session_state["portal_authed"]:
+    if portal_token == DEMO_EXPECTED_TOKEN:
+        st.session_state["portal_authed"] = True
+        st.session_state["portal_email"] = email or "unknown"
+    else:
+        st.error("請從 Error-Free® Portal 進入此分析框架。")
+        st.stop()
+
+with st.sidebar:
+    st.caption("Portal SSO (DEMO)")
+    st.write(f"Email: {st.session_state.get('portal_email', 'unknown')}")
+# ===== End Portal SSO (DEMO) =====
 import os, json, datetime, secrets
 
 from pathlib import Path
