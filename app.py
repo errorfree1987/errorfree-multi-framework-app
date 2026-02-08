@@ -29,7 +29,96 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+# =========================
+# Portal SSO (Auto-login)
+# =========================
+import urllib.request
+import urllib.error
 
+PORTAL_SSO_VERIFY_URL = os.getenv(
+    "PORTAL_SSO_VERIFY_URL",
+    "https://errorfree-portal-production.up.railway.app/sso/verify",
+)
+
+DEMO_PORTAL_TOKEN = os.getenv("DEMO_PORTAL_TOKEN", "demo-from-portal")
+
+
+def _get_query_param(name: str) -> str:
+    try:
+        v = st.query_params.get(name, "")
+        if isinstance(v, (list, tuple)):
+            return v[0] if v else ""
+        return v or ""
+    except Exception:
+        try:
+            qp = st.experimental_get_query_params()
+            v = qp.get(name, [""])
+            return v[0] if v else ""
+        except Exception:
+            return ""
+
+
+def _clear_query_params():
+    try:
+        st.query_params.clear()
+    except Exception:
+        try:
+            st.experimental_set_query_params()
+        except Exception:
+            pass
+
+
+def portal_verify_token(token: str) -> dict:
+    if token == DEMO_PORTAL_TOKEN:
+        return {
+            "status": "ok",
+            "email": _get_query_param("email") or "",
+            "role": "user",
+            "message": "demo token accepted",
+        }
+
+    body = json.dumps({"token": token}).encode("utf-8")
+    req = urllib.request.Request(
+        PORTAL_SSO_VERIFY_URL,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+def try_portal_sso_login():
+    if st.session_state.get("_portal_sso_checked"):
+        return
+    st.session_state["_portal_sso_checked"] = True
+
+    token = _get_query_param("portal_token")
+    email = _get_query_param("email")
+
+    if not token:
+        return
+
+    if st.session_state.get("is_authenticated"):
+        _clear_query_params()
+        return
+
+    result = portal_verify_token(token)
+
+    if result.get("status") != "ok":
+        st.error("SSO token invalid or expired")
+        st.stop()
+
+    st.session_state.is_authenticated = True
+    st.session_state.user_email = result.get("email") or email or ""
+    st.session_state.user_role = result.get("role", "user")
+
+    _clear_query_params()
+    st.rerun()
 
 
 
