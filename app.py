@@ -1583,7 +1583,9 @@ def _reset_whole_document():
 
     # Follow-up clear flag (fix)
     st.session_state._pending_clear_followup_key = None
-
+   
+    # Portal SSO: allow re-check on next entry
+    st.session_state["_portal_sso_checked"] = False
     save_state_to_disk()
 
 
@@ -1634,6 +1636,12 @@ def main():
         st.session_state.selected_framework_key = list(FRAMEWORKS.keys())[0]
 
     doc_tracking = load_doc_tracking()
+        # -------------------------
+    # Portal SSO MUST run early
+    # -------------------------
+    # Critical: run SSO right after session defaults are ready,
+    # and BEFORE any login UI is rendered.
+    try_portal_sso_login()
 
     with st.sidebar:
         language_selector()
@@ -1653,6 +1661,7 @@ def main():
                 st.session_state.user_email = None
                 st.session_state.user_role = None
                 st.session_state.is_authenticated = False
+                    st.session_state["_portal_sso_checked"] = False
                 _reset_whole_document()
                 save_state_to_disk()
                 st.rerun()
