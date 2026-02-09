@@ -1646,6 +1646,10 @@ def _reset_whole_document():
 def main():
     st.set_page_config(page_title=BRAND_TITLE_EN, layout="wide")
     restore_state_from_disk()
+    # =========================
+    # Portal SSO auto-login (MUST be here)
+    # =========================
+    try_portal_sso_login()
 
     inject_ui_css()
 
