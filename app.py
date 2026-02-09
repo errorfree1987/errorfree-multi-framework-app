@@ -1333,31 +1333,145 @@ BRAND_SUBTITLE_ZH = zh("邱博士零錯誤團隊自 1987 年起領先研發並�
 
 LOGO_PATH = "assets/errorfree_logo.png"
 
+# =========================
+# Portal-driven Language Lock + Logout UX
+# =========================
+
+def _get_query_param_any(keys):
+    """Best-effort read query params across Streamlit versions."""
+    # Streamlit newer: st.query_params (dict-like)
+    try:
+        qp = dict(st.query_params)
+        for k in keys:
+            v = qp.get(k)
+            if v is None:
+                continue
+            if isinstance(v, list):
+                if v:
+                    return v[0]
+            else:
+                return v
+    except Exception:
+        pass
+
+    # Streamlit older: st.experimental_get_query_params()
+    try:
+        qp = st.experimental_get_query_params()
+        for k in keys:
+            v = qp.get(k)
+            if not v:
+                continue
+            if isinstance(v, list):
+                return v[0]
+            return v
+    except Exception:
+        pass
+
+    return None
+
+
+def apply_portal_language_lock():
+    """
+    Portal 已經選好語言，Analyzer 端只接受它，並鎖定不讓使用者在 Analyzer 內切換。
+    - 支援 query: ?lang=en|zh|zh-tw|zh-cn / ?language=...
+    """
+    # 只要 Portal SSO 有跑過（你前面已完成 try_portal_sso_login 流程），就鎖語言
+    if st.session_state.get("_portal_sso_checked"):
+        st.session_state["_lang_locked"] = True
+
+    # 若已經鎖了，優先用 querystring 來設定一次
+    if st.session_state.get("_lang_locked"):
+        raw = (_get_query_param_any(["lang", "language", "ui_lang", "locale"]) or "").strip().lower()
+
+        # 常見映射
+        if raw in ["en", "eng", "english"]:
+            st.session_state["lang"] = "en"
+        elif raw in ["zh", "zh-tw", "zh_tw", "tw", "traditional", "zh-hant"]:
+            st.session_state["lang"] = "zh"
+            st.session_state["zh_variant"] = "tw"
+        elif raw in ["zh-cn", "zh_cn", "cn", "simplified", "zh-hans"]:
+            st.session_state["lang"] = "zh"
+            st.session_state["zh_variant"] = "cn"
+        # raw 空或未知：不覆蓋既有 lang（保留你原本預設）
+
+
+def render_logged_out_page():
+    """
+    登出後顯示一個乾淨的頁面，不回到舊登入/舊介面，避免混淆。
+    """
+    portal_base = (os.getenv("PORTAL_BASE_URL", "") or "").rstrip("/")
+    lang = st.session_state.get("lang", "en")
+    zhv = st.session_state.get("zh_variant", "tw")
+
+    is_zh = (lang == "zh")
+    if is_zh:
+        lang_q = "zh" if zhv == "tw" else "zh"  # Portal 端若只吃 zh/en，就給 zh
+        title = "已登出"
+        msg = "你已成功登出 Analyzer。請回到 Portal 重新進入（Portal 會重新產生短效 token）。"
+        btn1 = "回到 Portal"
+        btn2 = "重新登入（回 Portal）"
+    else:
+        lang_q = "en"
+        title = "Signed out"
+        msg = "You have signed out from Analyzer. Please return to Portal to sign in again (Portal will issue a new short-lived token)."
+        btn1 = "Back to Portal"
+        btn2 = "Sign in again (via Portal)"
+
+    st.title(title)
+    st.info(msg)
+
+    if portal_base:
+        # 建議回到 Portal 的 catalog（如果你的 Portal 有 /catalog 就用它；沒有也沒關係，回首頁也可）
+        portal_url_candidates = [
+            f"{portal_base}/catalog?lang={lang_q}",
+            f"{portal_base}/?lang={lang_q}",
+            f"{portal_base}",
+        ]
+        # 先放最可能的
+        st.link_button(btn1, portal_url_candidates[0])
+        st.link_button(btn2, portal_url_candidates[1])
+        st.caption(f"Portal: {portal_base}")
+    else:
+        st.warning("PORTAL_BASE_URL is not set. Please set it in Railway Variables so the logout page can link back to Portal.")
+
+    st.markdown("---")
+    st.caption("You can close this tab/window after returning to Portal." if not is_zh else "回到 Portal 後可直接關閉此分頁/視窗。")
 
 def language_selector():
-    """更正2：英文模式不顯示中文選項文字（但仍可切換到中文）。"""
-    current_lang = st.session_state.get("lang", "zh")
-    current_variant = st.session_state.get("zh_variant", "tw")
+    """
+    Analyzer 端語言：若 Portal SSO 流程已啟用，則鎖定語言，不提供切換，避免混淆。
+    """
+    # 先套用 Portal lock
+    apply_portal_language_lock()
 
-    if current_lang == "en":
-        index = 0
-        options = ("English", "Chinese (Simplified)", "Chinese (Traditional)")
-    else:
-        index = 0 if current_lang == "en" else (1 if current_variant == "cn" else 2)
-        options = ("English", "中文简体", "中文繁體")
+    lang = st.session_state.get("lang", "zh")
+    zhv = st.session_state.get("zh_variant", "tw")
 
-    choice = st.radio("Language" if current_lang == "en" else "Language / 語言", options, index=index)
-
-    if choice == "English":
-        st.session_state.lang = "en"
-        if "zh_variant" not in st.session_state:
-            st.session_state.zh_variant = "tw"
-    else:
-        st.session_state.lang = "zh"
-        if choice in ["Chinese (Simplified)", "中文简体"]:
-            st.session_state.zh_variant = "cn"
+    if st.session_state.get("_lang_locked"):
+        # 只顯示，不允許更改
+        if lang == "en":
+            st.sidebar.caption("Language: English (locked by Portal)")
         else:
-            st.session_state.zh_variant = "tw"
+            label = "語言：中文繁體（由 Portal 鎖定）" if zhv == "tw" else "语言：中文简体（由 Portal 锁定）"
+            st.sidebar.caption(label)
+        return
+
+    # fallback：如果未走 Portal SSO（例如未來你要保留純 Analyzer 登入），才允許切換
+    st.sidebar.markdown("### Language / 語言")
+    choice = st.sidebar.radio(
+        "Language",
+        options=["English", "中文简体", "中文繁體"],
+        label_visibility="collapsed",
+        index=0 if lang == "en" else (1 if (lang == "zh" and zhv == "cn") else 2),
+    )
+    if choice == "English":
+        st.session_state["lang"] = "en"
+    elif choice == "中文简体":
+        st.session_state["lang"] = "zh"
+        st.session_state["zh_variant"] = "cn"
+    else:
+        st.session_state["lang"] = "zh"
+        st.session_state["zh_variant"] = "tw"
 
 
 
@@ -1657,7 +1771,40 @@ def main():
         if st.session_state.is_authenticated:
             st.subheader("Account" if lang == "en" else zh("帳號資訊", "账号信息"))
             st.write(f"Email: {st.session_state.user_email}" if lang == "en" else f"Email：{st.session_state.user_email}")
-            if st.button("Logout" if lang == "en" else zh("登出", "退出登录")):
+            if st.button("Logout" if st.session_state.get("lang", "zh") == "en" else "登出"):
+    # 清掉登入狀態
+    st.session_state["is_authenticated"] = False
+
+    # 建議：清掉 user 資訊，避免回到舊介面殘留
+    for k in ["user_email", "user_role", "company_code", "selected_framework_key", "show_admin"]:
+        if k in st.session_state:
+            st.session_state[k] = None
+
+    # 清掉 portal cookie（如果你先前有做 cookie 寫入）
+    # ※ 如果你原本有 clear cookie 的函式，保留呼叫即可
+    try:
+        clear_portal_cookie()  # 若你有這個函式
+    except Exception:
+        pass
+
+    # 清掉 querystring（避免殘留造成誤會）
+    try:
+        st.query_params.clear()
+    except Exception:
+        try:
+            st.experimental_set_query_params()
+        except Exception:
+            pass
+
+    # 存檔（若你原本就有）
+    try:
+        save_state_to_disk()
+    except Exception:
+        pass
+
+    # 直接顯示「登出完成頁」，不要回舊登入介面
+    render_logged_out_page()
+    st.stop()
                 st.session_state.user_email = None
                 st.session_state.user_role = None
                 st.session_state.is_authenticated = False
