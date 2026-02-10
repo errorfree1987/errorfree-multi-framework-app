@@ -1,5 +1,5 @@
 import streamlit as st
-
+import os
 # ===== Error-Free® Portal-only SSO (Portal is the ONLY entry) =====
 # Analyzer MUST NOT show any internal login UI when Portal SSO is enforced.
 # Portal should open Analyzer with query params:
@@ -14,7 +14,6 @@ import streamlit as st
 #   PORTAL_BASE_URL
 #   PORTAL_SSO_SECRET
 #
-import os
 import hmac
 import hashlib
 import time
@@ -1540,57 +1539,47 @@ def apply_portal_language_lock():
         # raw 空或未知：不覆蓋既有 lang（保留你原本預設）
 
 
-
 def render_logged_out_page():
-    """Pretty logout screen (Portal-only)."""
-    lang = st.session_state.get("lang", "zh")
+    """
+    登出後顯示一個乾淨的頁面，不回到舊登入/舊介面，避免混淆。
+    """
+    portal_base = (os.getenv("PORTAL_BASE_URL", "") or "").rstrip("/")
+    lang = st.session_state.get("lang", "en")
     zhv = st.session_state.get("zh_variant", "tw")
 
-    is_en = (lang == "en")
-    is_zh_cn = (lang == "zh" and zhv == "cn")
-
-    title = "Signed out" if is_en else ("已登出")
-    sub = (
-        "Thanks for using Error‑Free® Analyzer. For security, your session has ended."
-        if is_en else
-        ("感谢使用 Error‑Free® Analyzer。为确保安全，本次会话已结束。" if is_zh_cn else
-         "感謝使用 Error‑Free® Analyzer。為確保安全，本次會話已結束。")
-    )
-    hint = (
-        "Please return to the Portal to sign in again."
-        if is_en else
-        ("请回到 Portal 重新进入。" if is_zh_cn else "請回到 Portal 重新進入。")
-    )
-    btn = "Back to Portal" if is_en else ("回到 Portal")
-
-    st.markdown(
-        """
-        <style>
-        .ef-card{max-width:760px;margin:48px auto 0 auto;padding:28px 28px 22px 28px;
-                 border-radius:18px;border:1px solid rgba(49,51,63,.15);background:rgba(255,255,255,.88);}
-        .ef-title{font-size:34px;font-weight:800;margin:0 0 6px 0;}
-        .ef-sub{font-size:16px;opacity:.85;margin:0 0 10px 0;line-height:1.6;}
-        .ef-hint{font-size:14px;opacity:.75;margin:0 0 18px 0;}
-        .ef-footer{margin-top:14px;font-size:12px;opacity:.6;}
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        f"<div class='ef-card'><div class='ef-title'>{title}</div><div class='ef-sub'>{sub}</div><div class='ef-hint'>{hint}</div>",
-        unsafe_allow_html=True,
-    )
-
-    # Single, non-redundant action
-    if PORTAL_BASE_URL:
-        st.link_button(btn, PORTAL_BASE_URL, use_container_width=True)
-        st.markdown(f"<div class='ef-footer'>Portal: {PORTAL_BASE_URL}</div></div>", unsafe_allow_html=True)
+    is_zh = (lang == "zh")
+    if is_zh:
+        lang_q = "zh" if zhv == "tw" else "zh"  # Portal 端若只吃 zh/en，就給 zh
+        title = "已登出"
+        msg = "你已成功登出 Analyzer。請回到 Portal 重新進入（Portal 會重新產生短效 token）。"
+        btn1 = "回到 Portal"
+        btn2 = "重新登入（回 Portal）"
     else:
-        msg = "Portal URL is not configured (PORTAL_BASE_URL)." if is_en else ("Portal URL 尚未設定（PORTAL_BASE_URL）。" if not is_zh_cn else "Portal URL 尚未设置（PORTAL_BASE_URL）。")
-        st.warning(msg)
-        st.markdown("</div>", unsafe_allow_html=True)
+        lang_q = "en"
+        title = "Signed out"
+        msg = "You have signed out from Analyzer. Please return to Portal to sign in again (Portal will issue a new short-lived token)."
+        btn1 = "Back to Portal"
+        btn2 = "Sign in again (via Portal)"
 
+    st.title(title)
+    st.info(msg)
+
+    if portal_base:
+        # 建議回到 Portal 的 catalog（如果你的 Portal 有 /catalog 就用它；沒有也沒關係，回首頁也可）
+        portal_url_candidates = [
+            f"{portal_base}/catalog?lang={lang_q}",
+            f"{portal_base}/?lang={lang_q}",
+            f"{portal_base}",
+        ]
+        # 先放最可能的
+        st.link_button(btn1, portal_url_candidates[0])
+        st.link_button(btn2, portal_url_candidates[1])
+        st.caption(f"Portal: {portal_base}")
+    else:
+        st.warning("PORTAL_BASE_URL is not set. Please set it in Railway Variables so the logout page can link back to Portal.")
+
+    st.markdown("---")
+    st.caption("You can close this tab/window after returning to Portal." if not is_zh else "回到 Portal 後可直接關閉此分頁/視窗。")
 
 def do_logout():
     """
@@ -1948,54 +1937,27 @@ def main():
     # Critical: run SSO right after session defaults are ready,
     # and BEFORE any login UI is rendered.
     try_portal_sso_login()
-
+    # Sidebar (keep Logout in sidebar; Portal language is locked)
     with st.sidebar:
         st.header("🧭 Error-Free® Analyzer")
-        st.caption("Portal-only SSO / 单一入口（Portal）")
-        st.markdown("---")
 
-        # Language is locked by Portal (do not offer a 2nd language switch here)
-        _lang = (st.session_state.get("lang")
-                 or st.session_state.get("ui_lang")
-                 or st.session_state.get("language")
-                 or "en")
-        _lang_label = {"en": "EN", "zh-tw": "繁體", "zh-cn": "简体"}.get(_lang, _lang)
-        st.markdown(f"**语言 / Language：** {_lang_label}（由 Portal 锁定）")
-
-        _email = (st.session_state.get("user_email")
-                  or st.session_state.get("email")
-                  or st.session_state.get("user")
-                  or "")
+        lang_display = st.session_state.get("lang_display") or st.session_state.get("lang") or "en"
+        st.caption(f"Portal-only SSO / 單一入口（Portal）")
 
         st.markdown("---")
+        st.markdown(f"**語言 / Language**：`{lang_display}`（由 Portal 鎖定）")
 
+        # Account section (only when authenticated)
         if st.session_state.get("is_authenticated"):
-            st.subheader("账号信息 / Account")
-            if _email:
-                st.markdown(f"Email：[{_email}](mailto:{_email})")
+            st.markdown("---")
+            st.subheader("賬號信息 / Account")
+            email = st.session_state.get("email", "")
+            if email:
+                st.markdown(f"Email：[{email}](mailto:{email})")
+            # Logout button (single place)
+            if st.button("登出 / Logout"):
+                do_logout()  # will render page + stop()
 
-            # Optional: admin entry (keep if you already have this flag)
-            if st.session_state.get("is_admin"):
-                st.button("Admin Dashboard", key="admin_dashboard_btn")
-
-            # IMPORTANT: do NOT place a second Logout button here.
-            st.caption("使用 Analyzer 右上角的 Logout 即可登出。")
-
-        else:
-            st.success("✅ 已登出 / Signed out")
-
-            tip = (
-                "谢谢使用 Error-Free® Analyzer。\n\n"
-                "为避免错误与权限异常，请从 **Error-Free® Portal** 重新进入分析框架，"
-                "Portal 会重新产生短效 token 并带你进入对应 Analyzer。"
-            )
-            st.info(tip)
-
-            _portal_url = (PORTAL_BASE_URL or "").strip()
-            if not _portal_url:
-                _portal_url = "https://errorfree-portal-production.up.railway.app"
-
-            st.markdown(f"➡️ [回到 Portal / Back to Portal]({_portal_url})")
     # ======= Login screen =======
     if not st.session_state.is_authenticated:
         lang = st.session_state.lang
