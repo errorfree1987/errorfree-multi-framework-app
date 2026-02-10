@@ -14,6 +14,7 @@ import streamlit as st
 #   PORTAL_BASE_URL
 #   PORTAL_SSO_SECRET
 #
+import os
 import hmac
 import hashlib
 import time
