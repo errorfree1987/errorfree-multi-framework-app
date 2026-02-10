@@ -1949,53 +1949,53 @@ def main():
     try_portal_sso_login()
 
     with st.sidebar:
-    st.header("🧭 Error‑Free® Analyzer")
-
-    # Show language status (locked by Portal when Portal-only SSO is enabled)
-    lang = st.session_state.get("lang", "zh")
-    zhv = st.session_state.get("zh_variant", "tw")
-    is_en = (lang == "en")
-    is_zh_cn = (lang == "zh" and zhv == "cn")
-
-    # When Portal-only SSO is enabled, we should NOT duplicate a Logout button in the sidebar.
-    # Logout should happen via the main UI, or by returning to Portal.
-    if st.session_state.get("is_authenticated"):
+        st.header("🧭 Error-Free® Analyzer")
+        st.caption("Portal-only SSO / 单一入口（Portal）")
         st.markdown("---")
-        st.subheader("账号信息" if (lang == "zh" and is_zh_cn) else ("帳號資訊" if lang == "zh" else "Account"))
-        st.write(("Email：" if lang == "zh" else "Email: ") + (st.session_state.get("user_email") or ""))
 
-        if PORTAL_SSO_SECRET:
-            note = (
-                "语言：中文简体（由 Portal 锁定）" if is_zh_cn else
-                ("語言：繁體中文（由 Portal 鎖定）" if lang == "zh" else
-                 ("Language: English (locked by Portal)" if is_en else "Language: (locked by Portal)"))
-            )
-            st.caption(note)
+        # Language is locked by Portal (do not offer a 2nd language switch here)
+        _lang = (st.session_state.get("lang")
+                 or st.session_state.get("ui_lang")
+                 or st.session_state.get("language")
+                 or "en")
+        _lang_label = {"en": "EN", "zh-tw": "繁體", "zh-cn": "简体"}.get(_lang, _lang)
+        st.markdown(f"**语言 / Language：** {_lang_label}（由 Portal 锁定）")
+
+        _email = (st.session_state.get("user_email")
+                  or st.session_state.get("email")
+                  or st.session_state.get("user")
+                  or "")
+
+        st.markdown("---")
+
+        if st.session_state.get("is_authenticated"):
+            st.subheader("账号信息 / Account")
+            if _email:
+                st.markdown(f"Email：[{_email}](mailto:{_email})")
+
+            # Optional: admin entry (keep if you already have this flag)
+            if st.session_state.get("is_admin"):
+                st.button("Admin Dashboard", key="admin_dashboard_btn")
+
+            # IMPORTANT: do NOT place a second Logout button here.
+            st.caption("使用 Analyzer 右上角的 Logout 即可登出。")
+
+        else:
+            st.success("✅ 已登出 / Signed out")
 
             tip = (
-                "登出请使用页面上的 Logout，或点下方按钮回到 Portal。"
-                if is_zh_cn else
-                ("登出請使用頁面上的 Logout，或點下方按鈕回到 Portal。" if lang == "zh" else
-                 "To sign out, use the Logout in the main page, or return to the Portal.")
+                "谢谢使用 Error-Free® Analyzer。\n\n"
+                "为避免错误与权限异常，请从 **Error-Free® Portal** 重新进入分析框架，"
+                "Portal 会重新产生短效 token 并带你进入对应 Analyzer。"
             )
-            st.caption(tip)
+            st.info(tip)
 
-            if PORTAL_BASE_URL:
-                st.link_button("回到 Portal" if not is_en else "Back to Portal", PORTAL_BASE_URL, use_container_width=True)
-        else:
-            # Fallback for non-Portal SSO environments
-            if st.button("Logout"):
-                do_logout()
-    else:
-        st.markdown("---")
-        st.info(
-            "You are signed out. Please return to Portal."
-            if is_en
-            else ("你已登出，请回到 Portal。" if is_zh_cn else "你已登出，請回到 Portal。")
-        )
+            _portal_url = (PORTAL_BASE_URL or "").strip()
+            if not _portal_url:
+                _portal_url = "https://errorfree-portal-production.up.railway.app"
 
-# ======= Login screen
- =======
+            st.markdown(f"➡️ [回到 Portal / Back to Portal]({_portal_url})")
+    # ======= Login screen =======
     if not st.session_state.is_authenticated:
         lang = st.session_state.lang
 
