@@ -1,36 +1,180 @@
 import streamlit as st
 
-# ===== Error-Free® Portal SSO (DEMO) =====
-# 目的：從 Portal 進來且帶 portal_token，就直接放行，不顯示 Analyzer 內建登入。
-# 注意：這是「假 token」流程驗證；下一步會換成真正一次性 / 可驗證 token。
-DEMO_EXPECTED_TOKEN = "demo-from-portal"
+# ===== Error-Free® Portal-only SSO (Portal is the ONLY entry) =====
+# Analyzer MUST NOT show any internal login UI when Portal SSO is enforced.
+# Portal should open Analyzer with query params:
+#   email=<user email>&lang=<en|zh-tw|zh-cn>&ts=<unix seconds>&token=<hmac sha256 hex>
+# token = HMAC_SHA256(PORTAL_SSO_SECRET, f"{email}|{normalized_lang}|{ts}")
+#
+# Transitional support (staging only):
+#   You may also pass: portal_token=demo-from-portal&email=...
+#   Controlled by env: ALLOW_DEMO_PORTAL_TOKEN (default: false for safety)
+#
+# Railway Variables (minimum):
+#   PORTAL_BASE_URL
+#   PORTAL_SSO_SECRET
+#
+import hmac
+import hashlib
+import time
 
-# 讀取網址參數（相容新舊 Streamlit）
-try:
-    qp = st.query_params
-    portal_token = qp.get("portal_token", "")
-    email = qp.get("email", "")
-except Exception:
-    qp = st.experimental_get_query_params()
-    portal_token = qp.get("portal_token", [""])[0]
-    email = qp.get("email", [""])[0]
+PORTAL_BASE_URL = (os.getenv("PORTAL_BASE_URL", "") or "").strip()
+PORTAL_SSO_SECRET = (os.getenv("PORTAL_SSO_SECRET", "") or "").strip()
+SSO_MAX_AGE_SECONDS = int(os.getenv("SSO_MAX_AGE_SECONDS", "300") or "300")  # 5 minutes default
 
-# session_state：避免每次互動都重跑驗證
-if "portal_authed" not in st.session_state:
-    st.session_state["portal_authed"] = False
+ALLOW_DEMO_PORTAL_TOKEN = (os.getenv("ALLOW_DEMO_PORTAL_TOKEN", "") or "").lower() in ("1","true","yes","y","on")
+DEMO_EXPECTED_TOKEN = "demo-from-portal"  # only used when ALLOW_DEMO_PORTAL_TOKEN=true
 
-if not st.session_state["portal_authed"]:
-    if portal_token == DEMO_EXPECTED_TOKEN:
-        st.session_state["portal_authed"] = True
-        st.session_state["portal_email"] = email or "unknown"
+
+def _qp_get(key: str) -> str:
+    # Streamlit newer API
+    try:
+        v = st.query_params.get(key)
+        if v is None:
+            return ""
+        if isinstance(v, list):
+            return v[0] if v else ""
+        return str(v)
+    except Exception:
+        pass
+    # Streamlit older API
+    try:
+        qp = st.experimental_get_query_params()
+        arr = qp.get(key, [""])
+        return arr[0] if arr else ""
+    except Exception:
+        return ""
+
+
+def _qp_clear_all():
+    try:
+        st.query_params.clear()
+        return
+    except Exception:
+        pass
+    try:
+        st.experimental_set_query_params()
+    except Exception:
+        pass
+
+
+def _normalize_lang(raw: str) -> str:
+    s = (raw or "").strip().lower()
+    if s in ("zh", "zh-tw", "zh_tw", "zh-hant", "zh_hant", "tw", "traditional"):
+        return "zh-tw"
+    if s in ("zh-cn", "zh_cn", "zh-hans", "zh_hans", "cn", "simplified"):
+        return "zh-cn"
+    if s in ("en", "en-us", "en-gb", "english"):
+        return "en"
+    return "en"
+
+
+def _apply_portal_lang(lang_raw: str):
+    lang_norm = _normalize_lang(lang_raw)
+    if lang_norm == "en":
+        st.session_state["lang"] = "en"
+    elif lang_norm == "zh-cn":
+        st.session_state["lang"] = "zh"
+        st.session_state["zh_variant"] = "cn"
     else:
-        st.error("請從 Error-Free® Portal 進入此分析框架。")
-        st.stop()
+        st.session_state["lang"] = "zh"
+        st.session_state["zh_variant"] = "tw"
+    st.session_state["_lang_locked"] = True
 
-with st.sidebar:
-    st.caption("Portal SSO (DEMO)")
-    st.write(f"Email: {st.session_state.get('portal_email', 'unknown')}")
-# ===== End Portal SSO (DEMO) =====
+
+def _compute_sig(email: str, lang_norm: str, ts: str, secret: str) -> str:
+    msg = f"{email}|{lang_norm}|{ts}".encode("utf-8")
+    return hmac.new(secret.encode("utf-8"), msg, hashlib.sha256).hexdigest()
+
+
+def _verify_portal_sso(email: str, lang_raw: str, ts: str, token: str) -> (bool, str):
+    if not email:
+        return False, "Missing email"
+    if not ts:
+        return False, "Missing ts"
+    if not token:
+        return False, "Missing token"
+
+    try:
+        ts_int = int(ts)
+    except Exception:
+        return False, "Invalid ts"
+
+    now = int(time.time())
+    age = abs(now - ts_int)
+    if age > SSO_MAX_AGE_SECONDS:
+        return False, f"Expired token (age {age}s)"
+
+    if not PORTAL_SSO_SECRET:
+        return False, "Missing PORTAL_SSO_SECRET"
+
+    lang_norm = _normalize_lang(lang_raw)
+    expected = _compute_sig(email=email, lang_norm=lang_norm, ts=str(ts_int), secret=PORTAL_SSO_SECRET)
+    if not hmac.compare_digest(expected, token):
+        return False, "Invalid token signature"
+
+    return True, "OK"
+
+
+def _render_portal_only_block(reason: str = ""):
+    st.error("請從 Error-Free® Portal 進入此分析框架（Portal-only）。")
+    if reason:
+        st.caption(f"Reason: {reason}")
+    if PORTAL_BASE_URL:
+        st.link_button("回到 Portal / Back to Portal", PORTAL_BASE_URL)
+    else:
+        st.info("（管理員）請在 Railway Variables 設定 PORTAL_BASE_URL。")
+    st.stop()
+
+
+def try_portal_sso_login():
+    # Only check once per session
+    if st.session_state.get("_portal_sso_checked", False):
+        return
+
+    # 1) Preferred: HMAC-based SSO
+    email = _qp_get("email")
+    lang = _qp_get("lang")
+    ts = _qp_get("ts")
+    token = _qp_get("token")
+
+    if email and token and ts:
+        ok, why = _verify_portal_sso(email=email, lang_raw=lang, ts=ts, token=token)
+        if not ok:
+            st.session_state["_portal_sso_checked"] = True
+            st.session_state["is_authenticated"] = False
+            _render_portal_only_block(why)
+
+        # success
+        st.session_state["_portal_sso_checked"] = True
+        st.session_state["is_authenticated"] = True
+        st.session_state["user_email"] = email
+        # Keep your existing role logic; Portal can optionally pass role
+        role = _qp_get("role") or st.session_state.get("user_role") or "pro"
+        st.session_state["user_role"] = role
+
+        _apply_portal_lang(lang)
+        # Hygiene: clear query params so token isn't left in the URL
+        _qp_clear_all()
+        st.rerun()
+
+    # 2) Transitional DEMO token (staging only)
+    portal_token = _qp_get("portal_token")
+    if portal_token and ALLOW_DEMO_PORTAL_TOKEN and portal_token == DEMO_EXPECTED_TOKEN:
+        st.session_state["_portal_sso_checked"] = True
+        st.session_state["is_authenticated"] = True
+        st.session_state["user_email"] = email or st.session_state.get("user_email") or "unknown"
+        st.session_state["user_role"] = st.session_state.get("user_role") or "pro"
+        _apply_portal_lang(lang)
+        _qp_clear_all()
+        st.rerun()
+
+    # 3) No valid SSO -> block (Portal-only)
+    st.session_state["_portal_sso_checked"] = True
+    st.session_state["is_authenticated"] = False
+    _render_portal_only_block("No valid Portal SSO parameters")
+
+# ===== End Portal-only SSO =====
 import os, json, datetime, secrets
 
 from pathlib import Path
@@ -1437,6 +1581,43 @@ def render_logged_out_page():
     st.markdown("---")
     st.caption("You can close this tab/window after returning to Portal." if not is_zh else "回到 Portal 後可直接關閉此分頁/視窗。")
 
+def do_logout():
+    """
+    Portal-only logout:
+    - Clear local session state
+    - Show a clean logged-out page (with link back to Portal)
+    - MUST NOT fall back to internal login screens
+    """
+    # Clear auth
+    st.session_state["is_authenticated"] = False
+
+    # Clear user fields
+    for k in ["user_email", "user_role", "company_code", "selected_framework_key", "show_admin"]:
+        if k in st.session_state:
+            st.session_state[k] = None
+
+    # Allow re-check on next entry (fresh Portal token)
+    st.session_state["_portal_sso_checked"] = False
+    st.session_state["_lang_locked"] = True  # keep current language display consistent
+
+    # Clear query params
+    try:
+        st.query_params.clear()
+    except Exception:
+        try:
+            st.experimental_set_query_params()
+        except Exception:
+            pass
+
+    # Persist and show logout page
+    try:
+        save_state_to_disk()
+    except Exception:
+        pass
+
+    render_logged_out_page()
+    st.stop()
+
 def language_selector():
     """
     Analyzer 端語言：若 Portal SSO 流程已啟用，則鎖定語言，不提供切換，避免混淆。
@@ -1772,39 +1953,8 @@ def main():
             st.subheader("Account" if lang == "en" else zh("帳號資訊", "账号信息"))
             st.write(f"Email: {st.session_state.user_email}" if lang == "en" else f"Email：{st.session_state.user_email}")
             if st.button("Logout" if st.session_state.get("lang", "zh") == "en" else "登出"):
-    # 清掉登入狀態
-    st.session_state["is_authenticated"] = False
+                do_logout()
 
-    # 建議：清掉 user 資訊，避免回到舊介面殘留
-    for k in ["user_email", "user_role", "company_code", "selected_framework_key", "show_admin"]:
-        if k in st.session_state:
-            st.session_state[k] = None
-
-    # 清掉 portal cookie（如果你先前有做 cookie 寫入）
-    # ※ 如果你原本有 clear cookie 的函式，保留呼叫即可
-    try:
-        clear_portal_cookie()  # 若你有這個函式
-    except Exception:
-        pass
-
-    # 清掉 querystring（避免殘留造成誤會）
-    try:
-        st.query_params.clear()
-    except Exception:
-        try:
-            st.experimental_set_query_params()
-        except Exception:
-            pass
-
-    # 存檔（若你原本就有）
-    try:
-        save_state_to_disk()
-    except Exception:
-        pass
-
-    # 直接顯示「登出完成頁」，不要回舊登入介面
-    render_logged_out_page()
-    st.stop()
                 st.session_state.user_email = None
                 st.session_state.user_role = None
                 st.session_state.is_authenticated = False
