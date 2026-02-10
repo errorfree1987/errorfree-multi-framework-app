@@ -1953,15 +1953,16 @@ def main():
             st.subheader("Account" if lang == "en" else zh("帳號資訊", "账号信息"))
             st.write(f"Email: {st.session_state.user_email}" if lang == "en" else f"Email：{st.session_state.user_email}")
             if st.button("Logout" if st.session_state.get("lang", "zh") == "en" else "登出"):
-                do_logout()
+    do_logout()
 
-                st.session_state.user_email = None
-                st.session_state.user_role = None
-                st.session_state.is_authenticated = False
-                    st.session_state["_portal_sso_checked"] = False
-                _reset_whole_document()
-                save_state_to_disk()
-                st.rerun()
+    st.session_state.user_email = None
+    st.session_state.user_role = None
+    st.session_state.is_authenticated = False
+    st.session_state["_portal_sso_checked"] = False
+
+    _reset_whole_document()
+    save_state_to_disk()
+    st.rerun()
         else:
             st.subheader("Not Logged In" if lang == "en" else zh("尚未登入", "尚未登录"))
             if lang == "zh":
