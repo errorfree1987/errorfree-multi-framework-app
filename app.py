@@ -2152,8 +2152,7 @@ def main():
 
     lang = st.session_state.lang
 
-    if Path(LOGO_PATH).exists():
-        st.image(LOGO_PATH, width=260)
+    render_logo(260)
 
     st.title(BRAND_TITLE_ZH if lang == "zh" else BRAND_TITLE_EN)
     st.write(BRAND_TAGLINE_ZH if lang == "zh" else BRAND_TAGLINE_EN)
