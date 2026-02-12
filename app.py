@@ -1541,59 +1541,55 @@ def apply_portal_language_lock():
 
 def render_logged_out_page():
     """
-    Logout landing page:
-    - Keep it CLEAN (no sidebar Account/Logout leftovers)
-    - Only ONE button back to Portal
-    - No mixed-language UI: follow current session language
+    Logout landing page (Portal-only):
+    - IMMEDIATELY redirect to Portal
+    - Do NOT show any logout UI (no sidebar, no buttons, no messages)
     """
     portal_base = (os.getenv("PORTAL_BASE_URL", "") or "").rstrip("/")
     lang = st.session_state.get("lang", "en")
     zhv = st.session_state.get("zh_variant", "tw")
     is_zh = (lang == "zh")
 
-    # Hide sidebar completely on logout page (so no Account/Logout/Language leftovers)
-    st.markdown(
-        """
-        <style>
-          div[data-testid="stSidebar"] { display: none !important; }
-          button[kind="header"] { display: none !important; }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
+    # Build portal target URL
+    # (keep it simple & stable; Portal can decide the final landing page)
     if is_zh:
-        title = "已登出" if zhv == "tw" else "已登出"
-        msg = "你已成功登出 Analyzer。請回到 Portal 重新進入（Portal 會重新產生短效 token）。"
-        btn = "回到 Portal"
-        lang_q = "zh"
+        lang_q = "zh-tw" if zhv == "tw" else "zh-cn"
     else:
-        title = "Signed out"
-        msg = "You have signed out from Analyzer. Please return to Portal to sign in again (Portal will issue a new short-lived token)."
-        btn = "Back to Portal"
         lang_q = "en"
 
-    st.title(title)
-    st.info(msg)
+    if not portal_base:
+        # Only if missing env var: we must show something (cannot redirect)
+        st.error("PORTAL_BASE_URL is not set. Please set it in Railway Variables.")
+        st.stop()
 
-    if portal_base:
-        # Prefer going back to Catalog; if Portal doesn't have /catalog it will still land safely
-        portal_url = f"{portal_base}/catalog?lang={lang_q}"
-        st.link_button(btn, portal_url)
-        st.caption(f"Portal: {portal_base}")
-    else:
-        st.warning("PORTAL_BASE_URL is not set. Please set it in Railway Variables so the logout page can link back to Portal.")
+    portal_url = f"{portal_base}/catalog?lang={lang_q}"
 
-    st.markdown("---")
-    st.caption("You can close this tab/window after returning to Portal." if not is_zh else "回到 Portal 後可直接關閉此分頁/視窗。")
+    # HARD redirect (top-level) with multiple fallbacks
+    import streamlit.components.v1 as components
+    components.html(
+        f"""
+        <script>
+          (function() {{
+            try {{
+              window.top.location.replace("{portal_url}");
+            }} catch(e) {{
+              window.location.href = "{portal_url}";
+            }}
+          }})();
+        </script>
+        <meta http-equiv="refresh" content="0; url={portal_url}" />
+        """,
+        height=0,
+    )
+    st.stop()
 
 
 def do_logout():
     """
     Portal-only logout:
     - Clear local session state
-    - Show a clean logged-out page (with link back to Portal)
-    - MUST NOT fall back to internal login screens
+    - IMMEDIATELY redirect to Portal
+    - MUST NOT show any signed-out page or internal login UI
     """
     # Clear auth
     st.session_state["is_authenticated"] = False
@@ -1616,14 +1612,14 @@ def do_logout():
         except Exception:
             pass
 
-    # Persist and show logout page
+    # Persist
     try:
         save_state_to_disk()
     except Exception:
         pass
 
+    # Redirect immediately (no UI)
     render_logged_out_page()
-    st.stop()
 
 def language_selector():
     """
