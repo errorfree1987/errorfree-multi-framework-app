@@ -1475,7 +1475,9 @@ BRAND_TITLE_ZH = zh("零錯誤智能引擎", "零错误智能引擎")
 BRAND_TAGLINE_ZH = zh("一套 AI 強化的智能引擎，協助公司或組織進行風險分析、預防錯誤，並提升決策品質。", "一套 AI 强化的智能引擎，协助公司或组织进行风险分析、预防错误，并提升决策品质。")
 BRAND_SUBTITLE_ZH = zh("邱博士零錯誤團隊自 1987 年起領先研發並持續深化至今。", "邱博士零错误团队自 1987 年起领先研发并持续深化至今。")
 
-LOGO_PATH = "assets/errorfree_logo.png"
+# Always resolve logo path relative to this app.py file (robust in Railway/Streamlit reruns)
+APP_DIR = Path(__file__).parent if "__file__" in globals() else Path.cwd()
+LOGO_PATH = str(APP_DIR / "assets" / "errorfree_logo.png")
 
 # =========================
 # Portal-driven Language Lock + Logout UX
