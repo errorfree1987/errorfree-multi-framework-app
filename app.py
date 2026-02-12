@@ -1944,41 +1944,39 @@ def main():
     # Critical: run SSO right after session defaults are ready,
     # and BEFORE any login UI is rendered.
     try_portal_sso_login()
-    # Sidebar (Portal language is locked; do not show mixed-language UI)
-with st.sidebar:
-    st.header("🧭 Error-Free® Analyzer")
+        # Sidebar (Portal language is locked; do not show mixed-language UI)
+    with st.sidebar:
+        st.header("🧭 Error-Free® Analyzer")
 
-    ui_lang = st.session_state.get("lang", "en")
-    ui_zhv = st.session_state.get("zh_variant", "tw")
-    is_zh = (ui_lang == "zh")
+        ui_lang = st.session_state.get("lang", "en")
+        ui_zhv = st.session_state.get("zh_variant", "tw")
+        is_zh = (ui_lang == "zh")
 
-    # Caption: no mixed language
-    st.caption("Portal-only SSO (single entry via Portal)" if not is_zh else "Portal-only SSO（單一入口：Portal）")
+        # Caption (no mixed language)
+        st.caption("Portal-only SSO (single entry via Portal)" if not is_zh else "Portal-only SSO（單一入口：Portal）")
 
-    st.markdown("---")
-
-    # Language display: no mixed language
-    if not is_zh:
-        st.markdown(f"**Language:** `{ui_lang}` (locked by Portal)")
-    else:
-        if ui_zhv == "cn":
-            st.markdown("**語言：** `zh-cn`（由 Portal 鎖定）")
-        else:
-            st.markdown("**語言：** `zh-tw`（由 Portal 鎖定）")
-
-    # Account section: only when authenticated
-    if st.session_state.get("is_authenticated"):
         st.markdown("---")
-        st.subheader("Account" if not is_zh else ("帳號資訊" if ui_zhv == "tw" else "账号信息"))
 
-        # NOTE: keep existing login logic untouched; just display the correct session key
-        email = st.session_state.get("user_email", "") or ""
-        if email:
-            st.markdown(f"Email: [{email}](mailto:{email})" if not is_zh else f"Email：[{email}](mailto:{email})")
+        # Language display
+        if not is_zh:
+            st.markdown(f"**Language:** `{ui_lang}` (locked by Portal)")
+        else:
+            if ui_zhv == "cn":
+                st.markdown("**語言：** `zh-cn`（由 Portal 鎖定）")
+            else:
+                st.markdown("**語言：** `zh-tw`（由 Portal 鎖定）")
 
-        # Single logout button
-        if st.button("Logout" if not is_zh else ("登出" if ui_zhv == "tw" else "登出")):
-            do_logout()  # renders clean logout page + stop
+        # Account section (only if authenticated)
+        if st.session_state.get("is_authenticated"):
+            st.markdown("---")
+            st.subheader("Account" if not is_zh else ("帳號資訊" if ui_zhv == "tw" else "账号信息"))
+
+            email = st.session_state.get("user_email", "")
+            if email:
+                st.markdown(f"Email: [{email}](mailto:{email})" if not is_zh else f"Email：[{email}](mailto:{email})")
+
+            if st.button("Logout" if not is_zh else "登出"):
+                do_logout()
 
 
     # ======= Login screen =======
