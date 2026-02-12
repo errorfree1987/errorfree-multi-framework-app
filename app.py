@@ -1993,8 +1993,7 @@ def main():
     if not st.session_state.is_authenticated:
         lang = st.session_state.lang
 
-        if Path(LOGO_PATH).exists():
-            st.image(LOGO_PATH, width=260)
+        render_logo(260)
 
         title = BRAND_TITLE_ZH if lang == "zh" else BRAND_TITLE_EN
         tagline = BRAND_TAGLINE_ZH if lang == "zh" else BRAND_TAGLINE_EN
