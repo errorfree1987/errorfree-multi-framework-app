@@ -1539,82 +1539,75 @@ def apply_portal_language_lock():
         # raw 空或未知：不覆蓋既有 lang（保留你原本預設）
 
 
-def _redirect_to_portal():
+def render_logged_out_page():
     """
-    Portal-only behavior:
-    Logout should immediately return to Portal (NO logout landing UI).
+    Logout landing page:
+    - Keep it CLEAN (no sidebar Account/Logout leftovers)
+    - Only ONE button back to Portal
+    - No mixed-language UI: follow current session language
     """
-    portal_base = (os.getenv("PORTAL_BASE_URL", "") or "").strip().rstrip("/")
-    if not portal_base:
-        st.error("PORTAL_BASE_URL is not set. Please set it in Railway Variables.")
-        st.stop()
+    portal_base = (os.getenv("PORTAL_BASE_URL", "") or "").rstrip("/")
+    lang = st.session_state.get("lang", "en")
+    zhv = st.session_state.get("zh_variant", "tw")
+    is_zh = (lang == "zh")
 
-    # 你可以改成 portal_base + "/"（只回首頁）
-    target = f"{portal_base}/catalog"
-
-    # Top-level redirect (works even if Streamlit is in an iframe)
-    components.html(
-        f"""
-<script>
-  (function() {{
-    try {{
-      window.top.location.href = "{target}";
-    }} catch (e) {{
-      window.location.href = "{target}";
-    }}
-  }})();
-</script>
+    # Hide sidebar completely on logout page (so no Account/Logout/Language leftovers)
+    st.markdown(
+        """
+        <style>
+          div[data-testid="stSidebar"] { display: none !important; }
+          button[kind="header"] { display: none !important; }
+        </style>
         """,
-        height=0,
+        unsafe_allow_html=True,
     )
-    st.stop()
+
+    if is_zh:
+        title = "已登出" if zhv == "tw" else "已登出"
+        msg = "你已成功登出 Analyzer。請回到 Portal 重新進入（Portal 會重新產生短效 token）。"
+        btn = "回到 Portal"
+        lang_q = "zh"
+    else:
+        title = "Signed out"
+        msg = "You have signed out from Analyzer. Please return to Portal to sign in again (Portal will issue a new short-lived token)."
+        btn = "Back to Portal"
+        lang_q = "en"
+
+    st.title(title)
+    st.info(msg)
+
+    if portal_base:
+        # Prefer going back to Catalog; if Portal doesn't have /catalog it will still land safely
+        portal_url = f"{portal_base}/catalog?lang={lang_q}"
+        st.link_button(btn, portal_url)
+        st.caption(f"Portal: {portal_base}")
+    else:
+        st.warning("PORTAL_BASE_URL is not set. Please set it in Railway Variables so the logout page can link back to Portal.")
+
+    st.markdown("---")
+    st.caption("You can close this tab/window after returning to Portal." if not is_zh else "回到 Portal 後可直接關閉此分頁/視窗。")
 
 
 def do_logout():
     """
     Portal-only logout:
-    - Clear session auth/state
-    - Immediately redirect back to Portal
-    - NO logout page
+    - Clear local session state
+    - Show a clean logged-out page (with link back to Portal)
+    - MUST NOT fall back to internal login screens
     """
-    # Mark unauthenticated
+    # Clear auth
     st.session_state["is_authenticated"] = False
 
-    # Clear user-related fields
-    for k in [
-        "user_email",
-        "user_role",
-        "company_code",
-        "selected_framework_key",
-        "show_admin",
-        "framework_states",
-        "last_doc_text",
-        "last_doc_name",
-        "document_type",
-        "current_doc_id",
-        "upstream_reference",
-        "quote_current",
-        "quote_history",
-        "quote_upload_finalized",
-        "upstream_step6_done",
-        "upstream_step6_output",
-        "quote_step6_done_current",
-        "step7_history",
-        "integration_history",
-        "_pending_clear_followup_key",
-    ]:
+    # Clear user fields
+    for k in ["user_email", "user_role", "company_code", "selected_framework_key", "show_admin"]:
         if k in st.session_state:
             st.session_state[k] = None
 
-    # Reset a few counters safely
-    st.session_state["quote_upload_nonce"] = int(st.session_state.get("quote_upload_nonce", 0) or 0) + 1
-    st.session_state["review_upload_nonce"] = int(st.session_state.get("review_upload_nonce", 0) or 0) + 1
-    st.session_state["upstream_upload_nonce"] = int(st.session_state.get("upstream_upload_nonce", 0) or 0) + 1
-
-    # Force Portal SSO to be required again
+    # Allow re-check on next entry (fresh Portal token)
     st.session_state["_portal_sso_checked"] = False
+    st.session_state["_lang_locked"] = True  # keep current language display consistent
 
-    # Clear query params (so we don't keep any token in URL)
+    # Clear query params
     try:
         st.query_params.clear()
     except Exception:
@@ -1622,15 +1615,6 @@ def do_logout():
             st.experimental_set_query_params()
         except Exception:
             pass
-
-    # Persist best-effort (optional; failure shouldn't block redirect)
-    try:
-        save_state_to_disk()
-    except Exception:
-        pass
-
-    # Redirect immediately (NO logout UI)
-    _redirect_to_portal()
 
     # Persist and show logout page
     try:
