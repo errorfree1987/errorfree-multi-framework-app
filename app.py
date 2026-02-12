@@ -1539,139 +1539,105 @@ def apply_portal_language_lock():
         # raw 空或未知：不覆蓋既有 lang（保留你原本預設）
 
 
-def render_logged_out_page():
+def _redirect_to_portal():
     """
-    Branded logout page:
-    - No sidebar
-    - Logo + thank-you + slogan
-    - One single button back to Portal
+    Portal-only behavior:
+    Logout should immediately return to Portal (NO logout landing UI).
     """
-    import os
+    portal_base = (os.getenv("PORTAL_BASE_URL", "") or "").strip().rstrip("/")
+    if not portal_base:
+        st.error("PORTAL_BASE_URL is not set. Please set it in Railway Variables.")
+        st.stop()
 
-    portal_base = (os.getenv("PORTAL_BASE_URL", "") or "").rstrip("/")
-    lang = st.session_state.get("lang", "en")
-    zhv = st.session_state.get("zh_variant", "tw")
-    is_zh = (lang == "zh")
+    # 你可以改成 portal_base + "/"（只回首頁）
+    target = f"{portal_base}/catalog"
 
-    # Hide sidebar completely on logout page
-    st.markdown(
-        """
-        <style>
-          div[data-testid="stSidebar"] { display: none !important; }
-          button[kind="header"] { display: none !important; }
-          .ef-card {
-            max-width: 760px;
-            margin: 40px auto 0 auto;
-            padding: 28px 28px;
-            border: 1px solid rgba(49,51,63,0.12);
-            border-radius: 18px;
-            box-shadow: 0 6px 24px rgba(49,51,63,0.06);
-            background: rgba(255,255,255,0.70);
-          }
-          .ef-title {
-            font-size: 34px;
-            font-weight: 800;
-            margin: 8px 0 4px 0;
-          }
-          .ef-sub {
-            font-size: 16px;
-            opacity: 0.85;
-            margin: 0 0 14px 0;
-          }
-        </style>
+    # Top-level redirect (works even if Streamlit is in an iframe)
+    components.html(
+        f"""
+<script>
+  (function() {{
+    try {{
+      window.top.location.href = "{target}";
+    }} catch (e) {{
+      window.location.href = "{target}";
+    }}
+  }})();
+</script>
         """,
-        unsafe_allow_html=True,
+        height=0,
     )
-
-    # Copywriting (no mixed language)
-    if is_zh:
-        if zhv == "cn":
-            title = "已登出"
-            thanks = "感谢你的使用。"
-            slogan = "Error-Free®：让组织在关键决策与执行中，系统性降低错误与风险。"
-            msg = "如需继续使用，请回到 Portal 重新进入（Portal 会重新产生短效 token）。"
-            btn = "回到 Portal"
-            close_tip = "回到 Portal 后可直接关闭此分頁/视窗。"
-            lang_q = "zh"
-        else:
-            title = "已登出"
-            thanks = "感謝你的使用。"
-            slogan = "Error-Free®：讓組織在關鍵決策與執行中，系統性降低錯誤與風險。"
-            msg = "如需繼續使用，請回到 Portal 重新進入（Portal 會重新產生短效 token）。"
-            btn = "回到 Portal"
-            close_tip = "回到 Portal 後可直接關閉此分頁/視窗。"
-            lang_q = "zh"
-    else:
-        title = "Signed out"
-        thanks = "Thanks for using Error-Free® Analyzer."
-        slogan = "Error-Free® helps organizations reduce risks and prevent costly errors—systematically."
-        msg = "To continue, please return to Portal and open Analyzer again (Portal will issue a new short-lived token)."
-        btn = "Back to Portal"
-        close_tip = "You can close this tab/window after returning to Portal."
-        lang_q = "en"
-
-    # Try load logo from repo (recommended path)
-    # Put your logo file here: assets/errorfree_logo.png (or .jpg)
-    logo_path_candidates = [
-        os.path.join("assets", "errorfree_logo.png"),
-        os.path.join("assets", "errorfree_logo.jpg"),
-        os.path.join("assets", "errorfree_logo.jpeg"),
-    ]
-    logo_path = next((p for p in logo_path_candidates if os.path.exists(p)), None)
-
-    st.markdown('<div class="ef-card">', unsafe_allow_html=True)
-
-    if logo_path:
-        st.image(logo_path, width=140)
-
-    st.markdown(f'<div class="ef-title">{title}</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="ef-sub">{thanks}</div>', unsafe_allow_html=True)
-
-    st.info(msg)
-    st.markdown(f"**{slogan}**")
-
-    st.markdown("---")
-
-    if portal_base:
-        portal_url = f"{portal_base}/catalog?lang={lang_q}"
-        st.link_button(btn, portal_url)
-        st.caption(f"Portal: {portal_base}")
-    else:
-        st.warning("PORTAL_BASE_URL is not set.")
-
-    st.caption(close_tip)
-
-    st.markdown("</div>", unsafe_allow_html=True)
+    st.stop()
 
 
 def do_logout():
-    # Preserve language lock from Portal
-    lang = st.session_state.get("lang", "en")
-    zh_variant = st.session_state.get("zh_variant", "tw")
-
-    # Clear auth + user data
+    """
+    Portal-only logout:
+    - Clear session auth/state
+    - Immediately redirect back to Portal
+    - NO logout page
+    """
+    # Mark unauthenticated
     st.session_state["is_authenticated"] = False
-    st.session_state["user_email"] = ""
-    st.session_state["signed_out"] = True
 
-    # Optional: clear any uploaded docs / analysis state if you have these keys
+    # Clear user-related fields
     for k in [
-        "review_doc_uploaded",
-        "review_doc_path",
-        "review_doc_name",
-        "upstream_doc_uploaded",
-        "upstream_doc_path",
-        "upstream_doc_name",
-        "analysis_result",
+        "user_email",
+        "user_role",
+        "company_code",
+        "selected_framework_key",
+        "show_admin",
+        "framework_states",
+        "last_doc_text",
+        "last_doc_name",
+        "document_type",
+        "current_doc_id",
+        "upstream_reference",
+        "quote_current",
+        "quote_history",
+        "quote_upload_finalized",
+        "upstream_step6_done",
+        "upstream_step6_output",
+        "quote_step6_done_current",
+        "step7_history",
+        "integration_history",
+        "_pending_clear_followup_key",
     ]:
         if k in st.session_state:
-            del st.session_state[k]
+            st.session_state[k] = None
 
-    # Restore language
-    st.session_state["lang"] = lang
-    st.session_state["zh_variant"] = zh_variant
+    # Reset a few counters safely
+    st.session_state["quote_upload_nonce"] = int(st.session_state.get("quote_upload_nonce", 0) or 0) + 1
+    st.session_state["review_upload_nonce"] = int(st.session_state.get("review_upload_nonce", 0) or 0) + 1
+    st.session_state["upstream_upload_nonce"] = int(st.session_state.get("upstream_upload_nonce", 0) or 0) + 1
 
-    # Render logout page immediately
+    # Force Portal SSO to be required again
+    st.session_state["_portal_sso_checked"] = False
+
+    # Clear query params (so we don't keep any token in URL)
+    try:
+        st.query_params.clear()
+    except Exception:
+        try:
+            st.experimental_set_query_params()
+        except Exception:
+            pass
+
+    # Persist best-effort (optional; failure shouldn't block redirect)
+    try:
+        save_state_to_disk()
+    except Exception:
+        pass
+
+    # Redirect immediately (NO logout UI)
+    _redirect_to_portal()
+
+    # Persist and show logout page
+    try:
+        save_state_to_disk()
+    except Exception:
+        pass
+
     render_logged_out_page()
     st.stop()
 
@@ -1994,11 +1960,6 @@ def main():
     # Critical: run SSO right after session defaults are ready,
     # and BEFORE any login UI is rendered.
     try_portal_sso_login()
-    # If user just logged out, render logout page first (no sidebar / no gate)
-    if st.session_state.get("signed_out"):
-        render_logged_out_page()
-        st.stop()
-
         # Sidebar (Portal language is locked; do not show mixed-language UI)
     with st.sidebar:
         st.header("🧭 Error-Free® Analyzer")
