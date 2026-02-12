@@ -1478,13 +1478,18 @@ BRAND_SUBTITLE_ZH = zh("邱博士零錯誤團隊自 1987 年起領先研發並�
 # Always resolve logo path relative to this app.py file (robust in Railway/Streamlit reruns)
 APP_DIR = Path(__file__).parent if "__file__" in globals() else Path.cwd()
 LOGO_PATH = str(APP_DIR / "assets" / "errorfree_logo.png")
+
+def render_logo(width: int = 260):
+    """Render logo robustly by loading bytes."""
+    try:
+        p = Path(LOGO_PATH)
+        if p.exists():
+            st.image(p.read_bytes(), width=width)
+    except Exception:
+        pass
+
 # --- TEMP DEBUG: check logo file exists on server ---
-st.write("CWD =", str(Path.cwd()))
-st.write("APP_DIR =", str(APP_DIR))
-st.write("LOGO_PATH =", str(LOGO_PATH))
-st.write("LOGO exists? =", Path(LOGO_PATH).exists())
-st.write("Found logo files =", [str(p) for p in APP_DIR.rglob("*.png") if "logo" in p.name.lower()])
-# --- END TEMP DEBUG ---
+...
 
 # =========================
 # Portal-driven Language Lock + Logout UX
