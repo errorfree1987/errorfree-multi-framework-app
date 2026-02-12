@@ -1589,39 +1589,33 @@ def render_logged_out_page():
 
 
 def do_logout():
-    """
-    Portal-only logout:
-    - Clear local session state
-    - Show a clean logged-out page (with link back to Portal)
-    - MUST NOT fall back to internal login screens
-    """
-    # Clear auth
+    # Preserve language lock from Portal
+    lang = st.session_state.get("lang", "en")
+    zh_variant = st.session_state.get("zh_variant", "tw")
+
+    # Clear auth + user data
     st.session_state["is_authenticated"] = False
+    st.session_state["user_email"] = ""
+    st.session_state["signed_out"] = True
 
-    # Clear user fields
-    for k in ["user_email", "user_role", "company_code", "selected_framework_key", "show_admin"]:
+    # Optional: clear any uploaded docs / analysis state if you have these keys
+    for k in [
+        "review_doc_uploaded",
+        "review_doc_path",
+        "review_doc_name",
+        "upstream_doc_uploaded",
+        "upstream_doc_path",
+        "upstream_doc_name",
+        "analysis_result",
+    ]:
         if k in st.session_state:
-            st.session_state[k] = None
+            del st.session_state[k]
 
-    # Allow re-check on next entry (fresh Portal token)
-    st.session_state["_portal_sso_checked"] = False
-    st.session_state["_lang_locked"] = True  # keep current language display consistent
+    # Restore language
+    st.session_state["lang"] = lang
+    st.session_state["zh_variant"] = zh_variant
 
-    # Clear query params
-    try:
-        st.query_params.clear()
-    except Exception:
-        try:
-            st.experimental_set_query_params()
-        except Exception:
-            pass
-
-    # Persist and show logout page
-    try:
-        save_state_to_disk()
-    except Exception:
-        pass
-
+    # Render logout page immediately
     render_logged_out_page()
     st.stop()
 
@@ -1944,6 +1938,11 @@ def main():
     # Critical: run SSO right after session defaults are ready,
     # and BEFORE any login UI is rendered.
     try_portal_sso_login()
+    # If user just logged out, render logout page first (no sidebar / no gate)
+    if st.session_state.get("signed_out"):
+        render_logged_out_page()
+        st.stop()
+
         # Sidebar (Portal language is locked; do not show mixed-language UI)
     with st.sidebar:
         st.header("🧭 Error-Free® Analyzer")
