@@ -1,3 +1,180 @@
+import streamlit as st
+import os
+# ===== Error-Free® Portal-only SSO (Portal is the ONLY entry) =====
+# Analyzer MUST NOT show any internal login UI when Portal SSO is enforced.
+# Portal should open Analyzer with query params:
+#   email=<user email>&lang=<en|zh-tw|zh-cn>&ts=<unix seconds>&token=<hmac sha256 hex>
+# token = HMAC_SHA256(PORTAL_SSO_SECRET, f"{email}|{normalized_lang}|{ts}")
+#
+# Transitional support (staging only):
+#   You may also pass: portal_token=demo-from-portal&email=...
+#   Controlled by env: ALLOW_DEMO_PORTAL_TOKEN (default: false for safety)
+#
+# Railway Variables (minimum):
+#   PORTAL_BASE_URL
+#   PORTAL_SSO_SECRET
+#
+import hmac
+import hashlib
+import time
+
+PORTAL_BASE_URL = (os.getenv("PORTAL_BASE_URL", "") or "").strip()
+PORTAL_SSO_SECRET = (os.getenv("PORTAL_SSO_SECRET", "") or "").strip()
+SSO_MAX_AGE_SECONDS = int(os.getenv("SSO_MAX_AGE_SECONDS", "300") or "300")  # 5 minutes default
+
+ALLOW_DEMO_PORTAL_TOKEN = (os.getenv("ALLOW_DEMO_PORTAL_TOKEN", "") or "").lower() in ("1","true","yes","y","on")
+DEMO_EXPECTED_TOKEN = "demo-from-portal"  # only used when ALLOW_DEMO_PORTAL_TOKEN=true
+
+
+def _qp_get(key: str) -> str:
+    # Streamlit newer API
+    try:
+        v = st.query_params.get(key)
+        if v is None:
+            return ""
+        if isinstance(v, list):
+            return v[0] if v else ""
+        return str(v)
+    except Exception:
+        pass
+    # Streamlit older API
+    try:
+        qp = st.experimental_get_query_params()
+        arr = qp.get(key, [""])
+        return arr[0] if arr else ""
+    except Exception:
+        return ""
+
+
+def _qp_clear_all():
+    try:
+        st.query_params.clear()
+        return
+    except Exception:
+        pass
+    try:
+        st.experimental_set_query_params()
+    except Exception:
+        pass
+
+
+def _normalize_lang(raw: str) -> str:
+    s = (raw or "").strip().lower()
+    if s in ("zh", "zh-tw", "zh_tw", "zh-hant", "zh_hant", "tw", "traditional"):
+        return "zh-tw"
+    if s in ("zh-cn", "zh_cn", "zh-hans", "zh_hans", "cn", "simplified"):
+        return "zh-cn"
+    if s in ("en", "en-us", "en-gb", "english"):
+        return "en"
+    return "en"
+
+
+def _apply_portal_lang(lang_raw: str):
+    lang_norm = _normalize_lang(lang_raw)
+    if lang_norm == "en":
+        st.session_state["lang"] = "en"
+    elif lang_norm == "zh-cn":
+        st.session_state["lang"] = "zh"
+        st.session_state["zh_variant"] = "cn"
+    else:
+        st.session_state["lang"] = "zh"
+        st.session_state["zh_variant"] = "tw"
+    st.session_state["_lang_locked"] = True
+
+
+def _compute_sig(email: str, lang_norm: str, ts: str, secret: str) -> str:
+    msg = f"{email}|{lang_norm}|{ts}".encode("utf-8")
+    return hmac.new(secret.encode("utf-8"), msg, hashlib.sha256).hexdigest()
+
+
+def _verify_portal_sso(email: str, lang_raw: str, ts: str, token: str) -> (bool, str):
+    if not email:
+        return False, "Missing email"
+    if not ts:
+        return False, "Missing ts"
+    if not token:
+        return False, "Missing token"
+
+    try:
+        ts_int = int(ts)
+    except Exception:
+        return False, "Invalid ts"
+
+    now = int(time.time())
+    age = abs(now - ts_int)
+    if age > SSO_MAX_AGE_SECONDS:
+        return False, f"Expired token (age {age}s)"
+
+    if not PORTAL_SSO_SECRET:
+        return False, "Missing PORTAL_SSO_SECRET"
+
+    lang_norm = _normalize_lang(lang_raw)
+    expected = _compute_sig(email=email, lang_norm=lang_norm, ts=str(ts_int), secret=PORTAL_SSO_SECRET)
+    if not hmac.compare_digest(expected, token):
+        return False, "Invalid token signature"
+
+    return True, "OK"
+
+
+def _render_portal_only_block(reason: str = ""):
+    st.error("請從 Error-Free® Portal 進入此分析框架（Portal-only）。")
+    if reason:
+        st.caption(f"Reason: {reason}")
+    if PORTAL_BASE_URL:
+        st.link_button("回到 Portal / Back to Portal", PORTAL_BASE_URL)
+    else:
+        st.info("（管理員）請在 Railway Variables 設定 PORTAL_BASE_URL。")
+    st.stop()
+
+
+def try_portal_sso_login():
+    # Only check once per session
+    if st.session_state.get("_portal_sso_checked", False):
+        return
+
+    # 1) Preferred: HMAC-based SSO
+    email = _qp_get("email")
+    lang = _qp_get("lang")
+    ts = _qp_get("ts")
+    token = _qp_get("token")
+
+    if email and token and ts:
+        ok, why = _verify_portal_sso(email=email, lang_raw=lang, ts=ts, token=token)
+        if not ok:
+            st.session_state["_portal_sso_checked"] = True
+            st.session_state["is_authenticated"] = False
+            _render_portal_only_block(why)
+
+        # success
+        st.session_state["_portal_sso_checked"] = True
+        st.session_state["is_authenticated"] = True
+        st.session_state["user_email"] = email
+        # Keep your existing role logic; Portal can optionally pass role
+        role = _qp_get("role") or st.session_state.get("user_role") or "pro"
+        st.session_state["user_role"] = role
+
+        _apply_portal_lang(lang)
+        # Hygiene: clear query params so token isn't left in the URL
+        _qp_clear_all()
+        st.rerun()
+
+    # 2) Transitional DEMO token (staging only)
+    portal_token = _qp_get("portal_token")
+    if portal_token and ALLOW_DEMO_PORTAL_TOKEN and portal_token == DEMO_EXPECTED_TOKEN:
+        st.session_state["_portal_sso_checked"] = True
+        st.session_state["is_authenticated"] = True
+        st.session_state["user_email"] = email or st.session_state.get("user_email") or "unknown"
+        st.session_state["user_role"] = st.session_state.get("user_role") or "pro"
+        _apply_portal_lang(lang)
+        _qp_clear_all()
+        st.rerun()
+
+    # 3) No valid SSO -> block (Portal-only)
+    st.session_state["_portal_sso_checked"] = True
+    st.session_state["is_authenticated"] = False
+    _render_portal_only_block("No valid Portal SSO parameters")
+
+# ===== End Portal-only SSO =====
 import os, json, datetime, secrets
 
 from pathlib import Path
@@ -29,96 +206,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-# =========================
-# Portal SSO (Auto-login)
-# =========================
-import urllib.request
-import urllib.error
 
-PORTAL_SSO_VERIFY_URL = os.getenv(
-    "PORTAL_SSO_VERIFY_URL",
-    "https://errorfree-portal-production.up.railway.app/sso/verify",
-)
-
-DEMO_PORTAL_TOKEN = os.getenv("DEMO_PORTAL_TOKEN", "demo-from-portal")
-
-
-def _get_query_param(name: str) -> str:
-    try:
-        v = st.query_params.get(name, "")
-        if isinstance(v, (list, tuple)):
-            return v[0] if v else ""
-        return v or ""
-    except Exception:
-        try:
-            qp = st.experimental_get_query_params()
-            v = qp.get(name, [""])
-            return v[0] if v else ""
-        except Exception:
-            return ""
-
-
-def _clear_query_params():
-    try:
-        st.query_params.clear()
-    except Exception:
-        try:
-            st.experimental_set_query_params()
-        except Exception:
-            pass
-
-
-def portal_verify_token(token: str) -> dict:
-    if token == DEMO_PORTAL_TOKEN:
-        return {
-            "status": "ok",
-            "email": _get_query_param("email") or "",
-            "role": "user",
-            "message": "demo token accepted",
-        }
-
-    body = json.dumps({"token": token}).encode("utf-8")
-    req = urllib.request.Request(
-        PORTAL_SSO_VERIFY_URL,
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-
-def try_portal_sso_login():
-    if st.session_state.get("_portal_sso_checked"):
-        return
-    st.session_state["_portal_sso_checked"] = True
-
-    token = _get_query_param("portal_token")
-    email = _get_query_param("email")
-
-    if not token:
-        return
-
-    if st.session_state.get("is_authenticated"):
-        _clear_query_params()
-        return
-
-    result = portal_verify_token(token)
-
-    if result.get("status") != "ok":
-        st.error("SSO token invalid or expired")
-        st.stop()
-
-    st.session_state.is_authenticated = True
-    st.session_state.user_email = result.get("email") or email or ""
-    st.session_state.user_role = result.get("role", "user")
-
-    _clear_query_params()
-    st.rerun()
 
 
 
@@ -1389,31 +1477,189 @@ BRAND_SUBTITLE_ZH = zh("邱博士零錯誤團隊自 1987 年起領先研發並�
 
 LOGO_PATH = "assets/errorfree_logo.png"
 
+# =========================
+# Portal-driven Language Lock + Logout UX
+# =========================
+
+def _get_query_param_any(keys):
+    """Best-effort read query params across Streamlit versions."""
+    # Streamlit newer: st.query_params (dict-like)
+    try:
+        qp = dict(st.query_params)
+        for k in keys:
+            v = qp.get(k)
+            if v is None:
+                continue
+            if isinstance(v, list):
+                if v:
+                    return v[0]
+            else:
+                return v
+    except Exception:
+        pass
+
+    # Streamlit older: st.experimental_get_query_params()
+    try:
+        qp = st.experimental_get_query_params()
+        for k in keys:
+            v = qp.get(k)
+            if not v:
+                continue
+            if isinstance(v, list):
+                return v[0]
+            return v
+    except Exception:
+        pass
+
+    return None
+
+
+def apply_portal_language_lock():
+    """
+    Portal 已經選好語言，Analyzer 端只接受它，並鎖定不讓使用者在 Analyzer 內切換。
+    - 支援 query: ?lang=en|zh|zh-tw|zh-cn / ?language=...
+    """
+    # 只要 Portal SSO 有跑過（你前面已完成 try_portal_sso_login 流程），就鎖語言
+    if st.session_state.get("_portal_sso_checked"):
+        st.session_state["_lang_locked"] = True
+
+    # 若已經鎖了，優先用 querystring 來設定一次
+    if st.session_state.get("_lang_locked"):
+        raw = (_get_query_param_any(["lang", "language", "ui_lang", "locale"]) or "").strip().lower()
+
+        # 常見映射
+        if raw in ["en", "eng", "english"]:
+            st.session_state["lang"] = "en"
+        elif raw in ["zh", "zh-tw", "zh_tw", "tw", "traditional", "zh-hant"]:
+            st.session_state["lang"] = "zh"
+            st.session_state["zh_variant"] = "tw"
+        elif raw in ["zh-cn", "zh_cn", "cn", "simplified", "zh-hans"]:
+            st.session_state["lang"] = "zh"
+            st.session_state["zh_variant"] = "cn"
+        # raw 空或未知：不覆蓋既有 lang（保留你原本預設）
+
+
+def render_logged_out_page():
+    """
+    Logout landing page:
+    - Keep it CLEAN (no sidebar Account/Logout leftovers)
+    - Only ONE button back to Portal
+    - No mixed-language UI: follow current session language
+    """
+    portal_base = (os.getenv("PORTAL_BASE_URL", "") or "").rstrip("/")
+    lang = st.session_state.get("lang", "en")
+    zhv = st.session_state.get("zh_variant", "tw")
+    is_zh = (lang == "zh")
+
+    # Hide sidebar completely on logout page (so no Account/Logout/Language leftovers)
+    st.markdown(
+        """
+        <style>
+          div[data-testid="stSidebar"] { display: none !important; }
+          button[kind="header"] { display: none !important; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if is_zh:
+        title = "已登出" if zhv == "tw" else "已登出"
+        msg = "你已成功登出 Analyzer。請回到 Portal 重新進入（Portal 會重新產生短效 token）。"
+        btn = "回到 Portal"
+        lang_q = "zh"
+    else:
+        title = "Signed out"
+        msg = "You have signed out from Analyzer. Please return to Portal to sign in again (Portal will issue a new short-lived token)."
+        btn = "Back to Portal"
+        lang_q = "en"
+
+    st.title(title)
+    st.info(msg)
+
+    if portal_base:
+        # Prefer going back to Catalog; if Portal doesn't have /catalog it will still land safely
+        portal_url = f"{portal_base}/catalog?lang={lang_q}"
+        st.link_button(btn, portal_url)
+        st.caption(f"Portal: {portal_base}")
+    else:
+        st.warning("PORTAL_BASE_URL is not set. Please set it in Railway Variables so the logout page can link back to Portal.")
+
+    st.markdown("---")
+    st.caption("You can close this tab/window after returning to Portal." if not is_zh else "回到 Portal 後可直接關閉此分頁/視窗。")
+
+
+def do_logout():
+    """
+    Portal-only logout:
+    - Clear local session state
+    - Show a clean logged-out page (with link back to Portal)
+    - MUST NOT fall back to internal login screens
+    """
+    # Clear auth
+    st.session_state["is_authenticated"] = False
+
+    # Clear user fields
+    for k in ["user_email", "user_role", "company_code", "selected_framework_key", "show_admin"]:
+        if k in st.session_state:
+            st.session_state[k] = None
+
+    # Allow re-check on next entry (fresh Portal token)
+    st.session_state["_portal_sso_checked"] = False
+    st.session_state["_lang_locked"] = True  # keep current language display consistent
+
+    # Clear query params
+    try:
+        st.query_params.clear()
+    except Exception:
+        try:
+            st.experimental_set_query_params()
+        except Exception:
+            pass
+
+    # Persist and show logout page
+    try:
+        save_state_to_disk()
+    except Exception:
+        pass
+
+    render_logged_out_page()
+    st.stop()
 
 def language_selector():
-    """更正2：英文模式不顯示中文選項文字（但仍可切換到中文）。"""
-    current_lang = st.session_state.get("lang", "zh")
-    current_variant = st.session_state.get("zh_variant", "tw")
+    """
+    Analyzer 端語言：若 Portal SSO 流程已啟用，則鎖定語言，不提供切換，避免混淆。
+    """
+    # 先套用 Portal lock
+    apply_portal_language_lock()
 
-    if current_lang == "en":
-        index = 0
-        options = ("English", "Chinese (Simplified)", "Chinese (Traditional)")
-    else:
-        index = 0 if current_lang == "en" else (1 if current_variant == "cn" else 2)
-        options = ("English", "中文简体", "中文繁體")
+    lang = st.session_state.get("lang", "zh")
+    zhv = st.session_state.get("zh_variant", "tw")
 
-    choice = st.radio("Language" if current_lang == "en" else "Language / 語言", options, index=index)
-
-    if choice == "English":
-        st.session_state.lang = "en"
-        if "zh_variant" not in st.session_state:
-            st.session_state.zh_variant = "tw"
-    else:
-        st.session_state.lang = "zh"
-        if choice in ["Chinese (Simplified)", "中文简体"]:
-            st.session_state.zh_variant = "cn"
+    if st.session_state.get("_lang_locked"):
+        # 只顯示，不允許更改
+        if lang == "en":
+            st.sidebar.caption("Language: English (locked by Portal)")
         else:
-            st.session_state.zh_variant = "tw"
+            label = "語言：中文繁體（由 Portal 鎖定）" if zhv == "tw" else "语言：中文简体（由 Portal 锁定）"
+            st.sidebar.caption(label)
+        return
+
+    # fallback：如果未走 Portal SSO（例如未來你要保留純 Analyzer 登入），才允許切換
+    st.sidebar.markdown("### Language / 語言")
+    choice = st.sidebar.radio(
+        "Language",
+        options=["English", "中文简体", "中文繁體"],
+        label_visibility="collapsed",
+        index=0 if lang == "en" else (1 if (lang == "zh" and zhv == "cn") else 2),
+    )
+    if choice == "English":
+        st.session_state["lang"] = "en"
+    elif choice == "中文简体":
+        st.session_state["lang"] = "zh"
+        st.session_state["zh_variant"] = "cn"
+    else:
+        st.session_state["lang"] = "zh"
+        st.session_state["zh_variant"] = "tw"
 
 
 
@@ -1639,17 +1885,15 @@ def _reset_whole_document():
 
     # Follow-up clear flag (fix)
     st.session_state._pending_clear_followup_key = None
-
+   
+    # Portal SSO: allow re-check on next entry
+    st.session_state["_portal_sso_checked"] = False
     save_state_to_disk()
 
 
 def main():
     st.set_page_config(page_title=BRAND_TITLE_EN, layout="wide")
     restore_state_from_disk()
-    # =========================
-    # Portal SSO auto-login (MUST be here)
-    # =========================
-    try_portal_sso_login()
 
     inject_ui_css()
 
@@ -1694,42 +1938,46 @@ def main():
         st.session_state.selected_framework_key = list(FRAMEWORKS.keys())[0]
 
     doc_tracking = load_doc_tracking()
-
+        # -------------------------
+    # Portal SSO MUST run early
+    # -------------------------
+    # Critical: run SSO right after session defaults are ready,
+    # and BEFORE any login UI is rendered.
+    try_portal_sso_login()
+        # Sidebar (Portal language is locked; do not show mixed-language UI)
     with st.sidebar:
-        language_selector()
-        lang = st.session_state.lang
+        st.header("🧭 Error-Free® Analyzer")
 
-        if st.session_state.is_authenticated and st.session_state.user_role in ["admin", "pro", "company_admin"]:
-            if st.button("Admin Dashboard"):
-                st.session_state.show_admin = True
-                save_state_to_disk()
-                st.rerun()
+        ui_lang = st.session_state.get("lang", "en")
+        ui_zhv = st.session_state.get("zh_variant", "tw")
+        is_zh = (ui_lang == "zh")
+
+        # Caption (no mixed language)
+        st.caption("Portal-only SSO (single entry via Portal)" if not is_zh else "Portal-only SSO（單一入口：Portal）")
 
         st.markdown("---")
-        if st.session_state.is_authenticated:
-            st.subheader("Account" if lang == "en" else zh("帳號資訊", "账号信息"))
-            st.write(f"Email: {st.session_state.user_email}" if lang == "en" else f"Email：{st.session_state.user_email}")
-            if st.button("Logout" if lang == "en" else zh("登出", "退出登录")):
-                st.session_state.user_email = None
-                st.session_state.user_role = None
-                st.session_state.is_authenticated = False
-                _reset_whole_document()
-                save_state_to_disk()
-                st.rerun()
+
+        # Language display
+        if not is_zh:
+            st.markdown(f"**Language:** `{ui_lang}` (locked by Portal)")
         else:
-            st.subheader("Not Logged In" if lang == "en" else zh("尚未登入", "尚未登录"))
-            if lang == "zh":
-                st.markdown(
-                    "- " + zh("上方：內部員工 / 會員登入。", "上方：内部员工 / 会员登录。") + "\n"
-                    "- " + zh("中間：公司管理者（企業端窗口）登入 / 註冊。", "中间：公司管理者（企业端窗口）登录 / 注册。") + "\n"
-                    "- " + zh("下方：學生 / 客戶的 Guest 試用登入 / 註冊。", "下方：学员 / 客户的 Guest 试用登录 / 注册。")
-                )
+            if ui_zhv == "cn":
+                st.markdown("**語言：** `zh-cn`（由 Portal 鎖定）")
             else:
-                st.markdown(
-                    "- Top: internal Error-Free employees / members.\n"
-                    "- Middle: Company Admins for each client company.\n"
-                    "- Bottom: students / end-users using Guest trial accounts."
-                )
+                st.markdown("**語言：** `zh-tw`（由 Portal 鎖定）")
+
+        # Account section (only if authenticated)
+        if st.session_state.get("is_authenticated"):
+            st.markdown("---")
+            st.subheader("Account" if not is_zh else ("帳號資訊" if ui_zhv == "tw" else "账号信息"))
+
+            email = st.session_state.get("user_email", "")
+            if email:
+                st.markdown(f"Email: [{email}](mailto:{email})" if not is_zh else f"Email：[{email}](mailto:{email})")
+
+            if st.button("Logout" if not is_zh else "登出"):
+                do_logout()
+
 
     # ======= Login screen =======
     if not st.session_state.is_authenticated:
