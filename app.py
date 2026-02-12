@@ -1541,45 +1541,52 @@ def apply_portal_language_lock():
 
 def render_logged_out_page():
     """
-    登出後顯示一個乾淨的頁面，不回到舊登入/舊介面，避免混淆。
+    Logout landing page:
+    - Keep it CLEAN (no sidebar Account/Logout leftovers)
+    - Only ONE button back to Portal
+    - No mixed-language UI: follow current session language
     """
     portal_base = (os.getenv("PORTAL_BASE_URL", "") or "").rstrip("/")
     lang = st.session_state.get("lang", "en")
     zhv = st.session_state.get("zh_variant", "tw")
-
     is_zh = (lang == "zh")
+
+    # Hide sidebar completely on logout page (so no Account/Logout/Language leftovers)
+    st.markdown(
+        """
+        <style>
+          div[data-testid="stSidebar"] { display: none !important; }
+          button[kind="header"] { display: none !important; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     if is_zh:
-        lang_q = "zh" if zhv == "tw" else "zh"  # Portal 端若只吃 zh/en，就給 zh
-        title = "已登出"
+        title = "已登出" if zhv == "tw" else "已登出"
         msg = "你已成功登出 Analyzer。請回到 Portal 重新進入（Portal 會重新產生短效 token）。"
-        btn1 = "回到 Portal"
-        btn2 = "重新登入（回 Portal）"
+        btn = "回到 Portal"
+        lang_q = "zh"
     else:
-        lang_q = "en"
         title = "Signed out"
         msg = "You have signed out from Analyzer. Please return to Portal to sign in again (Portal will issue a new short-lived token)."
-        btn1 = "Back to Portal"
-        btn2 = "Sign in again (via Portal)"
+        btn = "Back to Portal"
+        lang_q = "en"
 
     st.title(title)
     st.info(msg)
 
     if portal_base:
-        # 建議回到 Portal 的 catalog（如果你的 Portal 有 /catalog 就用它；沒有也沒關係，回首頁也可）
-        portal_url_candidates = [
-            f"{portal_base}/catalog?lang={lang_q}",
-            f"{portal_base}/?lang={lang_q}",
-            f"{portal_base}",
-        ]
-        # 先放最可能的
-        st.link_button(btn1, portal_url_candidates[0])
-        st.link_button(btn2, portal_url_candidates[1])
+        # Prefer going back to Catalog; if Portal doesn't have /catalog it will still land safely
+        portal_url = f"{portal_base}/catalog?lang={lang_q}"
+        st.link_button(btn, portal_url)
         st.caption(f"Portal: {portal_base}")
     else:
         st.warning("PORTAL_BASE_URL is not set. Please set it in Railway Variables so the logout page can link back to Portal.")
 
     st.markdown("---")
     st.caption("You can close this tab/window after returning to Portal." if not is_zh else "回到 Portal 後可直接關閉此分頁/視窗。")
+
 
 def do_logout():
     """
@@ -1937,26 +1944,42 @@ def main():
     # Critical: run SSO right after session defaults are ready,
     # and BEFORE any login UI is rendered.
     try_portal_sso_login()
-    # Sidebar (keep Logout in sidebar; Portal language is locked)
-    with st.sidebar:
-        st.header("🧭 Error-Free® Analyzer")
+    # Sidebar (Portal language is locked; do not show mixed-language UI)
+with st.sidebar:
+    st.header("🧭 Error-Free® Analyzer")
 
-        lang_display = st.session_state.get("lang_display") or st.session_state.get("lang") or "en"
-        st.caption(f"Portal-only SSO / 單一入口（Portal）")
+    ui_lang = st.session_state.get("lang", "en")
+    ui_zhv = st.session_state.get("zh_variant", "tw")
+    is_zh = (ui_lang == "zh")
 
+    # Caption: no mixed language
+    st.caption("Portal-only SSO (single entry via Portal)" if not is_zh else "Portal-only SSO（單一入口：Portal）")
+
+    st.markdown("---")
+
+    # Language display: no mixed language
+    if not is_zh:
+        st.markdown(f"**Language:** `{ui_lang}` (locked by Portal)")
+    else:
+        if ui_zhv == "cn":
+            st.markdown("**語言：** `zh-cn`（由 Portal 鎖定）")
+        else:
+            st.markdown("**語言：** `zh-tw`（由 Portal 鎖定）")
+
+    # Account section: only when authenticated
+    if st.session_state.get("is_authenticated"):
         st.markdown("---")
-        st.markdown(f"**語言 / Language**：`{lang_display}`（由 Portal 鎖定）")
+        st.subheader("Account" if not is_zh else ("帳號資訊" if ui_zhv == "tw" else "账号信息"))
 
-        # Account section (only when authenticated)
-        if st.session_state.get("is_authenticated"):
-            st.markdown("---")
-            st.subheader("賬號信息 / Account")
-            email = st.session_state.get("email", "")
-            if email:
-                st.markdown(f"Email：[{email}](mailto:{email})")
-            # Logout button (single place)
-            if st.button("登出 / Logout"):
-                do_logout()  # will render page + stop()
+        # NOTE: keep existing login logic untouched; just display the correct session key
+        email = st.session_state.get("user_email", "") or ""
+        if email:
+            st.markdown(f"Email: [{email}](mailto:{email})" if not is_zh else f"Email：[{email}](mailto:{email})")
+
+        # Single logout button
+        if st.button("Logout" if not is_zh else ("登出" if ui_zhv == "tw" else "登出")):
+            do_logout()  # renders clean logout page + stop
+
 
     # ======= Login screen =======
     if not st.session_state.is_authenticated:
