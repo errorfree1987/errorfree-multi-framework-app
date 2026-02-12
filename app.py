@@ -1541,51 +1541,107 @@ def apply_portal_language_lock():
 
 def render_logged_out_page():
     """
-    Logout landing page:
-    - Keep it CLEAN (no sidebar Account/Logout leftovers)
-    - Only ONE button back to Portal
-    - No mixed-language UI: follow current session language
+    Branded logout page:
+    - No sidebar
+    - Logo + thank-you + slogan
+    - One single button back to Portal
     """
+    import os
+
     portal_base = (os.getenv("PORTAL_BASE_URL", "") or "").rstrip("/")
     lang = st.session_state.get("lang", "en")
     zhv = st.session_state.get("zh_variant", "tw")
     is_zh = (lang == "zh")
 
-    # Hide sidebar completely on logout page (so no Account/Logout/Language leftovers)
+    # Hide sidebar completely on logout page
     st.markdown(
         """
         <style>
           div[data-testid="stSidebar"] { display: none !important; }
           button[kind="header"] { display: none !important; }
+          .ef-card {
+            max-width: 760px;
+            margin: 40px auto 0 auto;
+            padding: 28px 28px;
+            border: 1px solid rgba(49,51,63,0.12);
+            border-radius: 18px;
+            box-shadow: 0 6px 24px rgba(49,51,63,0.06);
+            background: rgba(255,255,255,0.70);
+          }
+          .ef-title {
+            font-size: 34px;
+            font-weight: 800;
+            margin: 8px 0 4px 0;
+          }
+          .ef-sub {
+            font-size: 16px;
+            opacity: 0.85;
+            margin: 0 0 14px 0;
+          }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
+    # Copywriting (no mixed language)
     if is_zh:
-        title = "已登出" if zhv == "tw" else "已登出"
-        msg = "你已成功登出 Analyzer。請回到 Portal 重新進入（Portal 會重新產生短效 token）。"
-        btn = "回到 Portal"
-        lang_q = "zh"
+        if zhv == "cn":
+            title = "已登出"
+            thanks = "感谢你的使用。"
+            slogan = "Error-Free®：让组织在关键决策与执行中，系统性降低错误与风险。"
+            msg = "如需继续使用，请回到 Portal 重新进入（Portal 会重新产生短效 token）。"
+            btn = "回到 Portal"
+            close_tip = "回到 Portal 后可直接关闭此分頁/视窗。"
+            lang_q = "zh"
+        else:
+            title = "已登出"
+            thanks = "感謝你的使用。"
+            slogan = "Error-Free®：讓組織在關鍵決策與執行中，系統性降低錯誤與風險。"
+            msg = "如需繼續使用，請回到 Portal 重新進入（Portal 會重新產生短效 token）。"
+            btn = "回到 Portal"
+            close_tip = "回到 Portal 後可直接關閉此分頁/視窗。"
+            lang_q = "zh"
     else:
         title = "Signed out"
-        msg = "You have signed out from Analyzer. Please return to Portal to sign in again (Portal will issue a new short-lived token)."
+        thanks = "Thanks for using Error-Free® Analyzer."
+        slogan = "Error-Free® helps organizations reduce risks and prevent costly errors—systematically."
+        msg = "To continue, please return to Portal and open Analyzer again (Portal will issue a new short-lived token)."
         btn = "Back to Portal"
+        close_tip = "You can close this tab/window after returning to Portal."
         lang_q = "en"
 
-    st.title(title)
+    # Try load logo from repo (recommended path)
+    # Put your logo file here: assets/errorfree_logo.png (or .jpg)
+    logo_path_candidates = [
+        os.path.join("assets", "errorfree_logo.png"),
+        os.path.join("assets", "errorfree_logo.jpg"),
+        os.path.join("assets", "errorfree_logo.jpeg"),
+    ]
+    logo_path = next((p for p in logo_path_candidates if os.path.exists(p)), None)
+
+    st.markdown('<div class="ef-card">', unsafe_allow_html=True)
+
+    if logo_path:
+        st.image(logo_path, width=140)
+
+    st.markdown(f'<div class="ef-title">{title}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="ef-sub">{thanks}</div>', unsafe_allow_html=True)
+
     st.info(msg)
+    st.markdown(f"**{slogan}**")
+
+    st.markdown("---")
 
     if portal_base:
-        # Prefer going back to Catalog; if Portal doesn't have /catalog it will still land safely
         portal_url = f"{portal_base}/catalog?lang={lang_q}"
         st.link_button(btn, portal_url)
         st.caption(f"Portal: {portal_base}")
     else:
-        st.warning("PORTAL_BASE_URL is not set. Please set it in Railway Variables so the logout page can link back to Portal.")
+        st.warning("PORTAL_BASE_URL is not set.")
 
-    st.markdown("---")
-    st.caption("You can close this tab/window after returning to Portal." if not is_zh else "回到 Portal 後可直接關閉此分頁/視窗。")
+    st.caption(close_tip)
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def do_logout():
