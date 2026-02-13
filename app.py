@@ -2083,7 +2083,7 @@ def main():
             else:
                 st.markdown("**語言：** `zh-tw`（由 Portal 鎖定）")
 
-        # Account section (only if authenticated)
+                # Account section (only if authenticated)
         if st.session_state.get("is_authenticated"):
             st.markdown("---")
             st.subheader("Account" if not is_zh else ("帳號資訊" if ui_zhv == "tw" else "账号信息"))
@@ -2092,7 +2092,85 @@ def main():
             if email:
                 st.markdown(f"Email: [{email}](mailto:{email})" if not is_zh else f"Email：[{email}](mailto:{email})")
 
-            if st.button("Logout" if not is_zh else "登出"):
+            # ---- NEW: Quick Reset (same as Reset Whole Document, but does NOT logout) ----
+            st.markdown("---")
+            st.caption("Quick actions" if not is_zh else ("快速功能" if ui_zhv == "tw" else "快速功能"))
+
+            if st.button("Reset (clear this review session)" if not is_zh else ("重置（清空本次審查）" if ui_zhv == "tw" else "重置（清空本次审查）"), key="sidebar_quick_reset_btn"):
+                _reset_whole_document()
+                st.rerun()
+
+            # ---- NEW: Go to Framework Catalog (NO logout) with warning + confirmation ----
+            if "go_catalog_pending" not in st.session_state:
+                st.session_state["go_catalog_pending"] = False
+
+            if st.button("Framework Catalog" if not is_zh else ("Framework Catalog（框架目錄）" if ui_zhv == "tw" else "Framework Catalog（框架目录）"), key="sidebar_framework_catalog_btn"):
+                st.session_state["go_catalog_pending"] = True
+                st.rerun()
+
+            if st.session_state.get("go_catalog_pending", False):
+                st.warning(
+                    "You are about to open Framework Catalog. Your uploaded documents and analysis in this Analyzer will NOT be saved. Please download your report first."
+                    if not is_zh else
+                    ("你即將進入 Framework Catalog。此 Analyzer 內已上傳的文件與分析結果不會被保存。請先下載/存檔你的報告，以免資料遺失。"
+                     if ui_zhv == "tw" else
+                     "你即将进入 Framework Catalog。此 Analyzer 内已上传的文件与分析结果不会被保存。请先下载/存档你的报告，以免资料遗失。")
+                )
+                confirm_go = st.checkbox(
+                    "I understand and want to continue." if not is_zh else ("我已了解並要繼續" if ui_zhv == "tw" else "我已了解并要继续"),
+                    key="confirm_go_catalog",
+                )
+
+                col_go1, col_go2 = st.columns(2)
+                with col_go1:
+                    if st.button("Cancel" if not is_zh else ("取消" if ui_zhv == "tw" else "取消"), key="cancel_go_catalog_btn"):
+                        st.session_state["go_catalog_pending"] = False
+                        if "confirm_go_catalog" in st.session_state:
+                            del st.session_state["confirm_go_catalog"]
+                        st.rerun()
+
+                with col_go2:
+                    if st.button(
+                        "Go to Catalog" if not is_zh else ("前往目錄" if ui_zhv == "tw" else "前往目录"),
+                        key="go_catalog_now_btn",
+                        disabled=not confirm_go,
+                    ):
+                        # Clear current review session (no logout), then redirect to Portal Catalog
+                        _reset_whole_document()
+
+                        portal_base = (os.getenv("PORTAL_BASE_URL", "") or "").rstrip("/")
+                        if is_zh:
+                            lang_q = "zh-tw" if ui_zhv == "tw" else "zh-cn"
+                        else:
+                            lang_q = "en"
+
+                        if not portal_base:
+                            st.error("PORTAL_BASE_URL is not set. Please set it in Railway Variables." if not is_zh else "尚未設定 PORTAL_BASE_URL，請在 Railway Variables 設定。")
+                            st.stop()
+
+                        catalog_url = f"{portal_base}/catalog?lang={lang_q}"
+
+                        import streamlit.components.v1 as components
+                        components.html(
+                            f"""
+                            <script>
+                              (function() {{
+                                try {{
+                                  window.top.location.replace("{catalog_url}");
+                                }} catch(e) {{
+                                  window.location.href = "{catalog_url}";
+                                }}
+                              }})();
+                            </script>
+                            <meta http-equiv="refresh" content="0; url={catalog_url}" />
+                            """,
+                            height=0,
+                        )
+                        st.stop()
+
+            # ---- Logout stays the same ----
+            st.markdown("---")
+            if st.button("Logout" if not is_zh else "登出", key="sidebar_logout_btn"):
                 do_logout()
 
 
