@@ -1497,20 +1497,52 @@ def _find_logo_file() -> Path | None:
             continue
     return None
 
+def _normalize_png_bytes(raw: bytes) -> bytes:
+    """
+    Fix 'broken image' by re-decoding and re-encoding into a standard PNG (RGBA).
+    This avoids browser/Streamlit decode edge cases.
+    """
+    try:
+        from PIL import Image
+        from io import BytesIO
+
+        img = Image.open(BytesIO(raw))
+        img = img.convert("RGBA")  # force standard color mode
+
+        out = BytesIO()
+        img.save(out, format="PNG", optimize=True)
+        return out.getvalue()
+    except Exception:
+        # Fallback: keep original bytes
+        return raw
+
 def render_logo(width: int = 260):
-    """Render logo. If missing on server, show a clear warning (no silent failure)."""
+    """
+    Render logo with a safer pipeline:
+    - find file
+    - read bytes
+    - normalize bytes to standard PNG (RGBA)
+    - st.image(bytes)
+    """
     try:
         p = _find_logo_file()
-        if p:
-            st.image(p.read_bytes(), width=width)
-        else:
-            # Important: show a visible message so you know it's a deployment/package issue
+        if not p:
             st.warning("Logo file not found: assets/errorfree_logo.png (please ensure it's included in Railway deploy)")
+            return
+
+        raw = p.read_bytes()
+
+        # If file is empty/corrupted, show a clear message
+        if not raw or len(raw) < 32:
+            st.warning("Logo file is empty or corrupted on server. Please re-upload assets/errorfree_logo.png and redeploy.")
+            return
+
+        safe_png = _normalize_png_bytes(raw)
+        st.image(safe_png, width=width)
     except Exception as e:
         st.warning(f"Logo render failed: {e}")
 
-# --- TEMP DEBUG: check logo file exists on server ---
-# (keep disabled in production; enable only when debugging)
+# --- TEMP DEBUG (disabled) ---
 # with st.sidebar.expander("Logo debug", expanded=False):
 #     p = _find_logo_file()
 #     st.write("APP_DIR =", str(APP_DIR))
