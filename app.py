@@ -1917,45 +1917,83 @@ def render_followup_history_chat(followup_history: List, lang: str):
                 if (not q) and (not a):
                     st.info("No content." if lang == "en" else zh("尚無內容。", "暂无内容。"))
 def _reset_whole_document():
+    """
+    Reset ONLY the current document/review session.
+    MUST NOT log out.
+    MUST NOT force re-check Portal SSO (because query params were already cleared after login).
+    Keep:
+      - is_authenticated
+      - user_email / user_role / company_code
+      - _portal_sso_checked
+      - language lock
+    Clear:
+      - uploaded docs and all analysis states
+      - framework states
+      - step histories
+      - upload widgets (via nonce and widget keys)
+    """
+
+    # -------------------------
+    # Preserve auth / portal flags (DO NOT TOUCH)
+    # -------------------------
+    # Keep:
+    # st.session_state["is_authenticated"]
+    # st.session_state["user_email"]
+    # st.session_state["user_role"]
+    # st.session_state["_portal_sso_checked"]
+    # st.session_state["_lang_locked"]
+    # NOTE: do NOT clear query params here.
+
+    # -------------------------
+    # Clear document + analysis session state
+    # -------------------------
     st.session_state.framework_states = {}
     st.session_state.last_doc_text = ""
     st.session_state.last_doc_name = ""
     st.session_state.document_type = None
     st.session_state.current_doc_id = None
 
-    # Step 3 references (更正2)
+    # Step 3 references
     st.session_state.upstream_reference = None
     st.session_state.quote_current = None
     st.session_state.quote_history = []
-    st.session_state.quote_upload_nonce = 0
-
-    # Clear Streamlit uploader widget states so UI is truly reset
-    for _k in list(st.session_state.keys()):
-        if _k.startswith("quote_uploader_"):
-            del st.session_state[_k]
-        if _k.startswith("review_doc_uploader_"):
-            del st.session_state[_k]
-        if _k.startswith("upstream_uploader_"):
-            del st.session_state[_k]
-    # also clear legacy single-key uploaders (older deployments)
-    for _legacy in ["review_doc_uploader", "upstream_uploader"]:
-        if _legacy in st.session_state:
-            del st.session_state[_legacy]
-    st.session_state["quote_upload_nonce"] = int(st.session_state.get("quote_upload_nonce", 0)) + 1
-    st.session_state["review_upload_nonce"] = int(st.session_state.get("review_upload_nonce", 0)) + 1
-    st.session_state["upstream_upload_nonce"] = int(st.session_state.get("upstream_upload_nonce", 0)) + 1
     st.session_state.quote_upload_finalized = False
     st.session_state.upstream_step6_done = False
     st.session_state.upstream_step6_output = ""
     st.session_state.quote_step6_done_current = False
 
+    # Step 7 history
     st.session_state.step7_history = []
 
-    # Follow-up clear flag (fix)
+    # Follow-up
     st.session_state._pending_clear_followup_key = None
-   
-    # Portal SSO: allow re-check on next entry
-    st.session_state["_portal_sso_checked"] = False
+
+    # -------------------------
+    # Reset uploaders: clear widget states + bump nonces
+    # -------------------------
+    for _k in list(st.session_state.keys()):
+        if _k.startswith("quote_uploader_"):
+            del st.session_state[_k]
+        elif _k.startswith("review_doc_uploader_"):
+            del st.session_state[_k]
+        elif _k.startswith("upstream_uploader_"):
+            del st.session_state[_k]
+
+    # Legacy keys (older deployments)
+    for _legacy in ["review_doc_uploader", "upstream_uploader"]:
+        if _legacy in st.session_state:
+            del st.session_state[_legacy]
+
+    # Bump nonces so new file_uploader widgets are "fresh"
+    st.session_state["quote_upload_nonce"] = int(st.session_state.get("quote_upload_nonce", 0)) + 1
+    st.session_state["review_upload_nonce"] = int(st.session_state.get("review_upload_nonce", 0)) + 1
+    st.session_state["upstream_upload_nonce"] = int(st.session_state.get("upstream_upload_nonce", 0)) + 1
+
+    # Reset the reset-confirm checkbox too (avoid it staying checked)
+    if "reset_confirm" in st.session_state:
+        st.session_state["reset_confirm"] = False
+
+    # Persist
     save_state_to_disk()
 
 
