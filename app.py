@@ -2063,7 +2063,7 @@ def main():
     try_portal_sso_login()
         # Sidebar (Portal language is locked; do not show mixed-language UI)
     with st.sidebar:
-        st.header("🧭 Error-Free® Analyzer")
+        st.header("🧭 " + ("Error-Free® Intelligence Engine" if st.session_state.get("lang", "en") == "en" else "零錯誤智能引擎"))
 
         ui_lang = st.session_state.get("lang", "en")
         ui_zhv = st.session_state.get("zh_variant", "tw")
@@ -2102,7 +2102,16 @@ def main():
 
         render_logo(260)
 
-        title = BRAND_TITLE_ZH if lang == "zh" else BRAND_TITLE_EN
+             # Homepage title (match Catalog)
+        if lang == "zh":
+            title = (
+                "AI化零錯誤多輪文件審查/零錯誤文件隱患排查（預防文件審查錯誤）"
+                if st.session_state.get("zh_variant", "tw") == "tw"
+                else "AI化零错误多轮文件审查/零错误文件隐患排查（预防文件审查错误）"
+            )
+        else:
+            title = "AI-Enhanced Error-Free® Multi-Pass Technical Reviews"
+
         tagline = BRAND_TAGLINE_ZH if lang == "zh" else BRAND_TAGLINE_EN
         subtitle = BRAND_SUBTITLE_ZH if lang == "zh" else BRAND_SUBTITLE_EN
 
@@ -2261,7 +2270,16 @@ def main():
 
     render_logo(260)
 
-    st.title(BRAND_TITLE_ZH if lang == "zh" else BRAND_TITLE_EN)
+        # Homepage title (match Catalog)
+    if lang == "zh":
+        _home_title = (
+            "AI化零錯誤多輪文件審查/零錯誤文件隱患排查（預防文件審查錯誤）"
+            if st.session_state.get("zh_variant", "tw") == "tw"
+            else "AI化零错误多轮文件审查/零错误文件隐患排查（预防文件审查错误）"
+        )
+    else:
+        _home_title = "AI-Enhanced Error-Free® Multi-Pass Technical Reviews"
+    st.title(_home_title)
     st.write(BRAND_TAGLINE_ZH if lang == "zh" else BRAND_TAGLINE_EN)
     st.caption(BRAND_SUBTITLE_ZH if lang == "zh" else BRAND_SUBTITLE_EN)
     st.markdown("---")
