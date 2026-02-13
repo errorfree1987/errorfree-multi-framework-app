@@ -1475,21 +1475,47 @@ BRAND_TITLE_ZH = zh("零錯誤智能引擎", "零错误智能引擎")
 BRAND_TAGLINE_ZH = zh("一套 AI 強化的智能引擎，協助公司或組織進行風險分析、預防錯誤，並提升決策品質。", "一套 AI 强化的智能引擎，协助公司或组织进行风险分析、预防错误，并提升决策品质。")
 BRAND_SUBTITLE_ZH = zh("邱博士零錯誤團隊自 1987 年起領先研發並持續深化至今。", "邱博士零错误团队自 1987 年起领先研发并持续深化至今。")
 
-# Always resolve logo path relative to this app.py file (robust in Railway/Streamlit reruns)
+# Always resolve logo path robustly (Railway/Streamlit working-dir can vary)
 APP_DIR = Path(__file__).parent if "__file__" in globals() else Path.cwd()
-LOGO_PATH = str(APP_DIR / "assets" / "errorfree_logo.png")
+
+def _find_logo_file() -> Path | None:
+    """
+    Try multiple candidate paths to find the logo file.
+    This prevents 'broken image' when Railway working directory differs.
+    """
+    candidates = [
+        APP_DIR / "assets" / "errorfree_logo.png",
+        Path.cwd() / "assets" / "errorfree_logo.png",
+        APP_DIR.parent / "assets" / "errorfree_logo.png",
+        APP_DIR / "static" / "assets" / "errorfree_logo.png",
+    ]
+    for p in candidates:
+        try:
+            if p.exists() and p.is_file():
+                return p
+        except Exception:
+            continue
+    return None
 
 def render_logo(width: int = 260):
-    """Render logo robustly by loading bytes."""
+    """Render logo. If missing on server, show a clear warning (no silent failure)."""
     try:
-        p = Path(LOGO_PATH)
-        if p.exists():
+        p = _find_logo_file()
+        if p:
             st.image(p.read_bytes(), width=width)
-    except Exception:
-        pass
+        else:
+            # Important: show a visible message so you know it's a deployment/package issue
+            st.warning("Logo file not found: assets/errorfree_logo.png (please ensure it's included in Railway deploy)")
+    except Exception as e:
+        st.warning(f"Logo render failed: {e}")
 
 # --- TEMP DEBUG: check logo file exists on server ---
-...
+# (keep disabled in production; enable only when debugging)
+# with st.sidebar.expander("Logo debug", expanded=False):
+#     p = _find_logo_file()
+#     st.write("APP_DIR =", str(APP_DIR))
+#     st.write("CWD =", str(Path.cwd()))
+#     st.write("LOGO =", str(p) if p else "(not found)")
 
 # =========================
 # Portal-driven Language Lock + Logout UX
