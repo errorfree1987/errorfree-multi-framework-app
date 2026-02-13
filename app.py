@@ -1956,6 +1956,9 @@ def _reset_whole_document():
     st.session_state.quote_history = []
     st.session_state.quote_upload_nonce = 0
 
+    # Also reset selection states so Step 2/Step 4 show FIRST option after reset
+    st.session_state.selected_framework_key = None
+
     # Clear Streamlit uploader widget states so UI is truly reset
     for _k in list(st.session_state.keys()):
         if _k.startswith("quote_uploader_"):
@@ -1965,11 +1968,21 @@ def _reset_whole_document():
         if _k.startswith("upstream_uploader_"):
             del st.session_state[_k]
 
+    # Clear selection widget keys to prevent UI from keeping old choices
+    for _k in [
+        "document_type_select",      # EN Step 2 selectbox key
+        "document_type_select_zh",   # ZH Step 2 selectbox key
+        "framework_selectbox",       # Step 4 selectbox key
+    ]:
+        if _k in st.session_state:
+            del st.session_state[_k]
+
     # also clear legacy single-key uploaders (older deployments)
     for _legacy in ["review_doc_uploader", "upstream_uploader"]:
         if _legacy in st.session_state:
             del st.session_state[_legacy]
 
+    # Bump nonces so file_uploader widgets are guaranteed fresh
     st.session_state["quote_upload_nonce"] = int(st.session_state.get("quote_upload_nonce", 0)) + 1
     st.session_state["review_upload_nonce"] = int(st.session_state.get("review_upload_nonce", 0)) + 1
     st.session_state["upstream_upload_nonce"] = int(st.session_state.get("upstream_upload_nonce", 0)) + 1
