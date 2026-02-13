@@ -1543,11 +1543,11 @@ def render_logo(width: int = 260):
         st.warning(f"Logo render failed: {e}")
 
 # --- TEMP DEBUG (disabled) ---
- with st.sidebar.expander("Logo debug", expanded=False):
-     p = _find_logo_file()
-     st.write("APP_DIR =", str(APP_DIR))
-     st.write("CWD =", str(Path.cwd()))
-     st.write("LOGO =", str(p) if p else "(not found)")
+ # with st.sidebar.expander("Logo debug", expanded=False):
+#     p = _find_logo_file()
+#     st.write("APP_DIR =", str(APP_DIR))
+#     st.write("CWD =", str(Path.cwd()))
+#     st.write("LOGO =", str(p) if p else "(not found)")
 
 # =========================
 # Portal-driven Language Lock + Logout UX
@@ -2045,6 +2045,11 @@ def main():
 
             if st.button("Logout" if not is_zh else "登出"):
                 do_logout()
+            with st.expander("Logo debug", expanded=False):
+                p = _find_logo_file()
+                st.write("APP_DIR =", str(APP_DIR))
+                st.write("CWD =", str(Path.cwd()))
+                st.write("LOGO =", str(p) if p else "(not found)")
 
 
     # ======= Login screen =======
