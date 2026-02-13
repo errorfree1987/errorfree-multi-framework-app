@@ -128,6 +128,21 @@ def _render_portal_only_block(reason: str = ""):
 
 
 def try_portal_sso_login():
+    """
+    Portal-only SSO entry guard.
+
+    IMPORTANT BEHAVIOR:
+    - If the session is already authenticated (has user_email + is_authenticated),
+      do NOT force re-check SSO params, because Reset Whole Document is NOT logout.
+      This prevents "No valid Portal SSO parameters" after rerun when query params
+      have already been cleared for hygiene.
+    """
+    # If already authenticated in session, treat as already checked.
+    # This is critical to prevent accidental "logout" on rerun (e.g., after reset).
+    if st.session_state.get("is_authenticated") and st.session_state.get("user_email"):
+        st.session_state["_portal_sso_checked"] = True
+        return
+
     # Only check once per session
     if st.session_state.get("_portal_sso_checked", False):
         return
@@ -1917,6 +1932,18 @@ def render_followup_history_chat(followup_history: List, lang: str):
                 if (not q) and (not a):
                     st.info("No content." if lang == "en" else zh("尚無內容。", "暂无内容。"))
 def _reset_whole_document():
+    """
+    Reset ONLY the current review session (uploaded documents + analysis states).
+
+    DO NOT:
+    - logout
+    - clear authentication
+    - force Portal SSO re-check
+
+    Because Reset Whole Document is for starting the next review round,
+    not for exiting the Analyzer page.
+    """
+    # --------- Clear analysis/session content ONLY ---------
     st.session_state.framework_states = {}
     st.session_state.last_doc_text = ""
     st.session_state.last_doc_name = ""
@@ -1937,13 +1964,16 @@ def _reset_whole_document():
             del st.session_state[_k]
         if _k.startswith("upstream_uploader_"):
             del st.session_state[_k]
+
     # also clear legacy single-key uploaders (older deployments)
     for _legacy in ["review_doc_uploader", "upstream_uploader"]:
         if _legacy in st.session_state:
             del st.session_state[_legacy]
+
     st.session_state["quote_upload_nonce"] = int(st.session_state.get("quote_upload_nonce", 0)) + 1
     st.session_state["review_upload_nonce"] = int(st.session_state.get("review_upload_nonce", 0)) + 1
     st.session_state["upstream_upload_nonce"] = int(st.session_state.get("upstream_upload_nonce", 0)) + 1
+
     st.session_state.quote_upload_finalized = False
     st.session_state.upstream_step6_done = False
     st.session_state.upstream_step6_output = ""
@@ -1953,9 +1983,15 @@ def _reset_whole_document():
 
     # Follow-up clear flag (fix)
     st.session_state._pending_clear_followup_key = None
-   
-    # Portal SSO: allow re-check on next entry
-    st.session_state["_portal_sso_checked"] = False
+
+    # --------- KEEP AUTH (Portal-only SSO session stays logged-in) ---------
+    # Do NOT change:
+    # - st.session_state["is_authenticated"]
+    # - st.session_state["user_email"]
+    # - st.session_state["user_role"]
+    # - st.session_state["_portal_sso_checked"]
+    # Do NOT clear query params here either (Reset is not logout).
+
     save_state_to_disk()
 
 
