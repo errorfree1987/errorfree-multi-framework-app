@@ -1917,44 +1917,45 @@ def render_followup_history_chat(followup_history: List, lang: str):
                 if (not q) and (not a):
                     st.info("No content." if lang == "en" else zh("尚無內容。", "暂无内容。"))
 def _reset_whole_document():
-    # ===== Clear all analysis state =====
     st.session_state.framework_states = {}
     st.session_state.last_doc_text = ""
     st.session_state.last_doc_name = ""
     st.session_state.document_type = None
     st.session_state.current_doc_id = None
 
-    # Step 3 references
+    # Step 3 references (更正2)
     st.session_state.upstream_reference = None
     st.session_state.quote_current = None
     st.session_state.quote_history = []
     st.session_state.quote_upload_nonce = 0
 
+    # Clear Streamlit uploader widget states so UI is truly reset
+    for _k in list(st.session_state.keys()):
+        if _k.startswith("quote_uploader_"):
+            del st.session_state[_k]
+        if _k.startswith("review_doc_uploader_"):
+            del st.session_state[_k]
+        if _k.startswith("upstream_uploader_"):
+            del st.session_state[_k]
+    # also clear legacy single-key uploaders (older deployments)
+    for _legacy in ["review_doc_uploader", "upstream_uploader"]:
+        if _legacy in st.session_state:
+            del st.session_state[_legacy]
+    st.session_state["quote_upload_nonce"] = int(st.session_state.get("quote_upload_nonce", 0)) + 1
+    st.session_state["review_upload_nonce"] = int(st.session_state.get("review_upload_nonce", 0)) + 1
+    st.session_state["upstream_upload_nonce"] = int(st.session_state.get("upstream_upload_nonce", 0)) + 1
     st.session_state.quote_upload_finalized = False
     st.session_state.upstream_step6_done = False
     st.session_state.upstream_step6_output = ""
     st.session_state.quote_step6_done_current = False
+
     st.session_state.step7_history = []
 
-    # Clear uploader widget keys safely
-    for k in list(st.session_state.keys()):
-        if k.startswith("quote_uploader_"):
-            del st.session_state[k]
-        if k.startswith("review_doc_uploader_"):
-            del st.session_state[k]
-        if k.startswith("upstream_uploader_"):
-            del st.session_state[k]
-
-    # Increment uploader nonce to force widget reset
-    st.session_state["quote_upload_nonce"] = int(st.session_state.get("quote_upload_nonce", 0)) + 1
-    st.session_state["review_upload_nonce"] = int(st.session_state.get("review_upload_nonce", 0)) + 1
-    st.session_state["upstream_upload_nonce"] = int(st.session_state.get("upstream_upload_nonce", 0)) + 1
-
-    # ===== CRITICAL FIX =====
-    # Do NOT modify reset_confirm directly (Streamlit forbids it)
-    # Instead, set a flag to clear it on next rerun BEFORE widget instantiation
-    st.session_state["_pending_clear_reset_confirm"] = True
-
+    # Follow-up clear flag (fix)
+    st.session_state._pending_clear_followup_key = None
+   
+    # Portal SSO: allow re-check on next entry
+    st.session_state["_portal_sso_checked"] = False
     save_state_to_disk()
 
 
@@ -1980,7 +1981,6 @@ def main():
         ("current_doc_id", None),
         ("company_code", None),
         ("show_admin", False),
-        ("_pending_clear_reset_confirm", False),
 
         # Step 3 split references (更正2)
         ("upstream_reference", None),         # dict or None
@@ -3206,24 +3206,6 @@ def main():
         "Reminder: Please make sure you have downloaded your report. We do not retain your documents. Reset will remove the current review session." if lang == "en"
         else zh("溫馨提示：請確認您已經下載資料。我們不留存你們的資料；按下重置後，本次審查的文件與分析紀錄將會清空。", "温馨提示：请确认您已经下载资料。我们不留存你们的资料；按下重置后，本次審查的文件与分析纪录将会清空。")
     )
-# ---- FIX: clear reset_confirm BEFORE checkbox is created ----
-if st.session_state.get("_pending_clear_reset_confirm"):
-    st.session_state["reset_confirm"] = False
-    st.session_state["_pending_clear_reset_confirm"] = False
-# ---- END FIX ----
-
-confirm = st.checkbox(
-    "I understand and want to reset." if lang == "en" else zh("我已確認要重置。", "我已确认要重置。"),
-    key="reset_confirm",
-)
-
-if st.button(
-    "Reset Whole Document" if lang == "en" else "Reset Whole Document",
-    key="reset_whole_btn",
-    disabled=not confirm,
-):
-    _reset_whole_document()
-    st.rerun()
     confirm = st.checkbox("I understand and want to reset." if lang == "en" else zh("我已確認要重置。", "我已确认要重置。"), key="reset_confirm")
     if st.button("Reset Whole Document" if lang == "en" else "Reset Whole Document", key="reset_whole_btn", disabled=not confirm):
         _reset_whole_document()
