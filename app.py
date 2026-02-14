@@ -20,7 +20,14 @@ import time
 import streamlit as st
 
 # --- SSO query params: capture once, persist in session ---
-qp = st.query_params()  # Streamlit 1.30+ 建議用這個（舊版是 st.experimental_get_query_params）
+# Streamlit versions differ:
+# - some: st.query_params is a proxy object (NOT callable)
+# - some: st.query_params is a function
+# - old: st.experimental_get_query_params()
+try:
+    qp = st.query_params() if callable(getattr(st, "query_params", None)) else st.query_params
+except Exception:
+    qp = st.experimental_get_query_params()
 
 def _qp_get(key: str, default: str = "") -> str:
     v = qp.get(key, default)
