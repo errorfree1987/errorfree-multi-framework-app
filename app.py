@@ -17,6 +17,24 @@ import os
 import hmac
 import hashlib
 import time
+import streamlit as st
+
+# --- SSO query params: capture once, persist in session ---
+qp = st.query_params()  # Streamlit 1.30+ 建議用這個（舊版是 st.experimental_get_query_params）
+
+def _qp_get(key: str, default: str = "") -> str:
+    v = qp.get(key, default)
+    # qp.get 可能回傳 str 或 list[str]，這裡統一成 str
+    if isinstance(v, list):
+        return v[0] if v else default
+    return v or default
+
+# 把 Portal 帶來的參數存起來（避免後續按鈕跳頁遺失）
+for k in ["portal_token", "email", "tenant", "lang"]:
+    st.write("SSO params:", {k: st.session_state.get(k) for k in ["email","tenant","lang","portal_token"]})
+    val = _qp_get(k, "")
+    if val and k not in st.session_state:
+        st.session_state[k] = val
 
 PORTAL_BASE_URL = (os.getenv("PORTAL_BASE_URL", "") or "").strip()
 PORTAL_SSO_SECRET = (os.getenv("PORTAL_SSO_SECRET", "") or "").strip()
