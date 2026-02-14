@@ -23,9 +23,10 @@ import streamlit as st
 # Streamlit versions differ:
 # - some: st.query_params is a proxy object (NOT callable)
 # - some: st.query_params is a function
-# - old: st.experimental_get_query_params()
+# - old:  st.experimental_get_query_params()
 try:
-    qp = st.query_params() if callable(getattr(st, "query_params", None)) else st.query_params
+    _qp_attr = getattr(st, "query_params", None)
+    qp = _qp_attr() if callable(_qp_attr) else _qp_attr
 except Exception:
     qp = st.experimental_get_query_params()
 
@@ -41,7 +42,6 @@ for k in ["portal_token", "email", "tenant", "lang"]:
     val = _qp_get(k, "")
     if val and k not in st.session_state:
         st.session_state[k] = val
-st.write("SSO params:", {k: st.session_state.get(k) for k in ["email","tenant","lang","portal_token"]})
 
 PORTAL_BASE_URL = (os.getenv("PORTAL_BASE_URL", "") or "").strip()
 PORTAL_SSO_SECRET = (os.getenv("PORTAL_SSO_SECRET", "") or "").strip()
