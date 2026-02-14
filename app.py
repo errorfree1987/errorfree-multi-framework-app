@@ -38,10 +38,10 @@ def _qp_get(key: str, default: str = "") -> str:
 
 # 把 Portal 帶來的參數存起來（避免後續按鈕跳頁遺失）
 for k in ["portal_token", "email", "tenant", "lang"]:
-    st.write("SSO params:", {k: st.session_state.get(k) for k in ["email","tenant","lang","portal_token"]})
     val = _qp_get(k, "")
     if val and k not in st.session_state:
         st.session_state[k] = val
+st.write("SSO params:", {k: st.session_state.get(k) for k in ["email","tenant","lang","portal_token"]})
 
 PORTAL_BASE_URL = (os.getenv("PORTAL_BASE_URL", "") or "").strip()
 PORTAL_SSO_SECRET = (os.getenv("PORTAL_SSO_SECRET", "") or "").strip()
