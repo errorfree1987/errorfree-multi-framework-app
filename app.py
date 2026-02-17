@@ -92,32 +92,39 @@ if not portal_token or not email:
     st.stop()
 
 def _qp_get(key: str, default: str = "") -> str:
-    """
-    Streamlit query params compatibility:
-    - st.experimental_get_query_params() -> dict[str, list[str]]
-    - st.query_params (new) -> proxy-like (may not behave like dict.get)
-    """
+    # 1) First: read from session_state (most reliable after reruns)
     try:
-        # Case 1: dict-like with .get
-        if hasattr(qp, "get"):
-            v = qp.get(key, default)
-        # Case 2: dict / mapping
-        elif isinstance(qp, dict):
-            v = qp.get(key, default)
-        # Case 3: proxy supports __contains__/__getitem__
-        elif hasattr(qp, "__contains__") and key in qp:
-            v = qp[key]
-        else:
-            v = default
+        v = st.session_state.get(key)
+        if v is not None and str(v) != "":
+            return str(v)
     except Exception:
-        v = default
+        pass
 
-    # Normalize to str
-    if isinstance(v, list):
-        return v[0] if v else default
-    if v is None:
-        return default
-    return str(v) if str(v) else default
+    # 2) Second: Streamlit new API st.query_params (dict-like)
+    try:
+        qp_obj = getattr(st, "query_params", None)
+        if qp_obj is not None:
+            v = qp_obj.get(key)
+            if isinstance(v, list):
+                return v[0] if v else default
+            return str(v) if v is not None and str(v) != "" else default
+    except Exception:
+        pass
+
+    # 3) Fallback: old API (if exists)
+    try:
+        fn = getattr(st, "experimental_get_query_params", None)
+        if callable(fn):
+            qp = fn() or {}
+            v = qp.get(key, default)
+            if isinstance(v, list):
+                return v[0] if v else default
+            return str(v) if v is not None and str(v) != "" else default
+    except Exception:
+        pass
+
+    return default
+
 
 # 把 Portal 帶來的參數存起來（避免後續按鈕跳頁遺失）
 for k in ["portal_token", "email", "tenant", "lang"]:
@@ -131,26 +138,6 @@ SSO_MAX_AGE_SECONDS = int(os.getenv("SSO_MAX_AGE_SECONDS", "300") or "300")  # 5
 
 ALLOW_DEMO_PORTAL_TOKEN = (os.getenv("ALLOW_DEMO_PORTAL_TOKEN", "") or "").lower() in ("1","true","yes","y","on")
 DEMO_EXPECTED_TOKEN = "demo-from-portal"  # only used when ALLOW_DEMO_PORTAL_TOKEN=true
-
-
-def _qp_get(key: str) -> str:
-    # Streamlit newer API
-    try:
-        v = st.query_params.get(key)
-        if v is None:
-            return ""
-        if isinstance(v, list):
-            return v[0] if v else ""
-        return str(v)
-    except Exception:
-        pass
-    # Streamlit older API
-    try:
-        qp = st.experimental_get_query_params()
-        arr = qp.get(key, [""])
-        return arr[0] if arr else ""
-    except Exception:
-        return ""
 
 
 def _qp_clear_all():
