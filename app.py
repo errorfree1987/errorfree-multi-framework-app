@@ -557,10 +557,21 @@ def record_usage(user_email: str, framework_key: str, kind: str):
 
 
 def save_state_to_disk():
+    """
+    SECURITY NOTE:
+    Do NOT persist authentication identity to disk on a shared server.
+    user_state.json is shared across users in the same deployment.
+    Persist only review/session workflow state, NOT login identity.
+    """
     data = {
-        "user_email": st.session_state.get("user_email"),
-        "user_role": st.session_state.get("user_role"),
-        "is_authenticated": st.session_state.get("is_authenticated", False),
+        # ---- DO NOT persist auth identity ----
+        # "user_email": ...
+        # "user_role": ...
+        # "is_authenticated": ...
+        # "company_code": ...
+        # "_portal_sso_checked": ...
+
+        # ---- OK to persist workflow/UI state ----
         "lang": st.session_state.get("lang", "zh"),
         "zh_variant": st.session_state.get("zh_variant", "tw"),
         "usage_date": st.session_state.get("usage_date"),
@@ -571,7 +582,6 @@ def save_state_to_disk():
         "framework_states": st.session_state.get("framework_states", {}),
         "selected_framework_key": st.session_state.get("selected_framework_key"),
         "current_doc_id": st.session_state.get("current_doc_id"),
-        "company_code": st.session_state.get("company_code"),
         "show_admin": st.session_state.get("show_admin", False),
 
         # Step 3 split references (更正2)
@@ -579,18 +589,18 @@ def save_state_to_disk():
         "quote_current": st.session_state.get("quote_current"),
         "quote_history": st.session_state.get("quote_history", []),
         "quote_upload_nonce": st.session_state.get("quote_upload_nonce", 0),
-            "review_upload_nonce": st.session_state.get("review_upload_nonce", 0),
-            "upstream_upload_nonce": st.session_state.get("upstream_upload_nonce", 0),
+        "review_upload_nonce": st.session_state.get("review_upload_nonce", 0),
+        "upstream_upload_nonce": st.session_state.get("upstream_upload_nonce", 0),
         "quote_upload_finalized": st.session_state.get("quote_upload_finalized", False),
         "upstream_step6_done": st.session_state.get("upstream_step6_done", False),
         "upstream_step6_output": st.session_state.get("upstream_step6_output", ""),
         "quote_step6_done_current": st.session_state.get("quote_step6_done_current", False),
 
-        # Step 7 history (re-run when new quote refs are analyzed)
+        # Step 7 history
         "step7_history": st.session_state.get("step7_history", []),
         "integration_history": st.session_state.get("integration_history", []),
 
-        # Follow-up clear flag (fix StreamlitAPIException)
+        # Follow-up clear flag
         "_pending_clear_followup_key": st.session_state.get("_pending_clear_followup_key"),
     }
     try:
@@ -600,12 +610,23 @@ def save_state_to_disk():
 
 
 def restore_state_from_disk():
+    """
+    SECURITY NOTE:
+    Never restore authentication identity from disk.
+    Only restore workflow/UI state.
+    """
     if not STATE_FILE.exists():
         return
     try:
         data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
     except Exception:
         return
+
+    # Strip any legacy auth keys that might exist from older files
+    for bad_key in ["user_email", "user_role", "is_authenticated", "company_code", "_portal_sso_checked"]:
+        if bad_key in data:
+            data.pop(bad_key, None)
+
     for k, v in data.items():
         if k not in st.session_state:
             st.session_state[k] = v
