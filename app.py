@@ -31,11 +31,32 @@ except Exception:
     qp = st.experimental_get_query_params()
 
 def _qp_get(key: str, default: str = "") -> str:
-    v = qp.get(key, default)
-    # qp.get 可能回傳 str 或 list[str]，這裡統一成 str
+    """
+    Streamlit query params compatibility:
+    - st.experimental_get_query_params() -> dict[str, list[str]]
+    - st.query_params (new) -> proxy-like (may not behave like dict.get)
+    """
+    try:
+        # Case 1: dict-like with .get
+        if hasattr(qp, "get"):
+            v = qp.get(key, default)
+        # Case 2: dict / mapping
+        elif isinstance(qp, dict):
+            v = qp.get(key, default)
+        # Case 3: proxy supports __contains__/__getitem__
+        elif hasattr(qp, "__contains__") and key in qp:
+            v = qp[key]
+        else:
+            v = default
+    except Exception:
+        v = default
+
+    # Normalize to str
     if isinstance(v, list):
         return v[0] if v else default
-    return v or default
+    if v is None:
+        return default
+    return str(v) if str(v) else default
 
 # 把 Portal 帶來的參數存起來（避免後續按鈕跳頁遺失）
 for k in ["portal_token", "email", "tenant", "lang"]:
