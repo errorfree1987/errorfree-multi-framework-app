@@ -20,32 +20,76 @@ import time
 import streamlit as st
 
 # --- SSO query params: capture once, persist in session ---
-# Streamlit versions differ:
-# - some: st.query_params is a proxy object (NOT callable)
-# - some: st.query_params is a function
-# - old:  st.experimental_get_query_params()
-# --- SSO query params: capture once, persist in session ---
-# 強制用最穩定的 API 讀 URL query params（避免 st.query_params 在不同版本行為不一致）
-# --- SSO query params: capture once, persist in session ---
-# Streamlit 新版用 st.query_params；舊版才有 experimental_get_query_params（你這版沒有）
-try:
+def _read_query_params() -> dict:
+    """
+    Streamlit 新版: st.query_params 是 dict-like
+    舊版: st.experimental_get_query_params() 可能存在
+    你目前環境顯示 experimental_get_query_params 不存在，所以主用 st.query_params
+    """
     qp_obj = getattr(st, "query_params", None)
-    # st.query_params 在新版是 dict-like proxy（不可呼叫），直接轉 dict
-    qp = dict(qp_obj) if qp_obj is not None else {}
-except Exception:
-    qp = {}
+    if qp_obj is not None:
+        try:
+            return dict(qp_obj)  # 轉成一般 dict
+        except Exception:
+            pass
 
-# ✅ Debug：直接在畫面上顯示目前抓到的 query params（確認 Portal 是否真的帶進來）
-st.info(f"[DEBUG] query params keys = {list(qp.keys())}")
-st.info(f"[DEBUG] portal_token = {qp.get('portal_token')}")
-st.info(f"[DEBUG] email = {qp.get('email')}, tenant = {qp.get('tenant')}, lang = {qp.get('lang')}")
-# ✅ 把 Portal 帶來的參數寫進 session_state，讓後面 Portal-only 檢查讀得到
-for k in ["portal_token", "email", "tenant", "lang"]:
-    v = qp.get(k, "")
+    # fallback：只有在真的存在時才用
+    fn = getattr(st, "experimental_get_query_params", None)
+    if callable(fn):
+        try:
+            return fn() or {}
+        except Exception:
+            return {}
+    return {}
+
+
+def _norm_qp_value(v, default: str = "") -> str:
+    # query_params 可能回傳 str 或 list[str]
+    if v is None:
+        return default
     if isinstance(v, list):
-        v = v[0] if v else ""
-    if v and not st.session_state.get(k):
-        st.session_state[k] = str(v)
+        return str(v[0]) if v else default
+    return str(v) if str(v) else default
+
+
+def get_param(key: str, default: str = "") -> str:
+    """
+    統一取值順序：
+    1) session_state（最穩定）
+    2) URL query params
+    """
+    # 1) session_state
+    if key in st.session_state and st.session_state.get(key):
+        return str(st.session_state.get(key))
+
+    # 2) query params
+    qp = _read_query_params()
+    return _norm_qp_value(qp.get(key), default)
+
+
+# 先讀一次 URL qp，立刻寫入 session_state（避免 rerun / 清參數後讀不到）
+_qp = _read_query_params()
+for k in ["portal_token", "email", "tenant", "lang"]:
+    v = _norm_qp_value(_qp.get(k), "")
+    if v:
+        st.session_state[k] = v
+
+# ✅ Debug：同時印 qp + session_state（你現在看到的畫面就能判斷問題在哪）
+st.info(f"[DEBUG] qp keys = {list(_qp.keys())}")
+st.info(f"[DEBUG] qp portal_token = {_norm_qp_value(_qp.get('portal_token'))}")
+st.info(f"[DEBUG] state portal_token = {st.session_state.get('portal_token')}")
+st.info(f"[DEBUG] state email = {st.session_state.get('email')}, tenant = {st.session_state.get('tenant')}, lang = {st.session_state.get('lang')}")
+
+# --- Portal-only gate: 只認 session_state / get_param 統一來源 ---
+portal_token = get_param("portal_token", "")
+email = get_param("email", "")
+tenant = get_param("tenant", "")
+lang = get_param("lang", "en")
+
+if not portal_token or not email:
+    st.error("請從 Error-Free® Portal 進入此分析框架（Portal-only）。")
+    st.caption("Reason: No valid Portal SSO parameters")
+    st.stop()
 
 def _qp_get(key: str, default: str = "") -> str:
     """
