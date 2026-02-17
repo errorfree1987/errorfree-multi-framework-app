@@ -1,39 +1,46 @@
 import streamlit as st
 import os
-# ===== Error-Free® Portal-only SSO (Portal is the ONLY entry) =====
-# Analyzer MUST NOT show any internal login UI when Portal SSO is enforced.
-# Portal should open Analyzer with query params:
-#   email=<user email>&lang=<en|zh-tw|zh-cn>&ts=<unix seconds>&token=<hmac sha256 hex>
-# token = HMAC_SHA256(PORTAL_SSO_SECRET, f"{email}|{normalized_lang}|{ts}")
-#
-# Transitional support (staging only):
-#   You may also pass: portal_token=demo-from-portal&email=...
-#   Controlled by env: ALLOW_DEMO_PORTAL_TOKEN (default: false for safety)
-#
-# Railway Variables (minimum):
-#   PORTAL_BASE_URL
-#   PORTAL_SSO_SECRET
-#
 import hmac
 import hashlib
 import time
-import streamlit as st
+import requests
 
-# --- SSO query params: capture once, persist in session ---
+# ===== Error-Free® Portal-only SSO (Portal is the ONLY entry) =====
+# Analyzer MUST NOT show any internal login UI when Portal SSO is enforced.
+#
+# Portal opens Analyzer with query params (recommended):
+#   ?portal_token=<one-time token>&email=<user email>&tenant=<tenant>&lang=<en|zh-tw|zh-cn>
+#
+# Analyzer will call Portal API:
+#   POST {PORTAL_SSO_VERIFY_URL or PORTAL_BASE_URL + "/sso/verify"}
+#   body: {"token": "<portal_token>"}
+#
+# Transitional support (staging only):
+#   ALLOW_DEMO_PORTAL_TOKEN=true and portal_token=demo-from-portal
+#
+# Optional legacy support:
+#   email=<...>&lang=<...>&ts=<unix>&token=<hmac>
+# token = HMAC_SHA256(PORTAL_SSO_SECRET, f"{email}|{normalized_lang}|{ts}")
+#
+# Railway Variables (minimum):
+#   PORTAL_BASE_URL
+# Recommended:
+#   PORTAL_SSO_VERIFY_URL   (optional; if not set, use {PORTAL_BASE_URL}/sso/verify)
+#   PORTAL_SSO_SECRET       (only needed if you still use legacy HMAC mode)
+# ===== End Header =====
+
+
+# -----------------------------
+# Query params helpers (新版 st.query_params 為主，舊版為 fallback)
+# -----------------------------
 def _read_query_params() -> dict:
-    """
-    Streamlit 新版: st.query_params 是 dict-like
-    舊版: st.experimental_get_query_params() 可能存在
-    你目前環境顯示 experimental_get_query_params 不存在，所以主用 st.query_params
-    """
     qp_obj = getattr(st, "query_params", None)
     if qp_obj is not None:
         try:
-            return dict(qp_obj)  # 轉成一般 dict
+            return dict(qp_obj)
         except Exception:
             pass
 
-    # fallback：只有在真的存在時才用
     fn = getattr(st, "experimental_get_query_params", None)
     if callable(fn):
         try:
@@ -44,55 +51,20 @@ def _read_query_params() -> dict:
 
 
 def _norm_qp_value(v, default: str = "") -> str:
-    # query_params 可能回傳 str 或 list[str]
     if v is None:
         return default
     if isinstance(v, list):
         return str(v[0]) if v else default
-    return str(v) if str(v) else default
+    s = str(v)
+    return s if s != "" else default
 
 
-def get_param(key: str, default: str = "") -> str:
+def _qp_get(key: str, default: str = "") -> str:
     """
     統一取值順序：
     1) session_state（最穩定）
     2) URL query params
     """
-    # 1) session_state
-    if key in st.session_state and st.session_state.get(key):
-        return str(st.session_state.get(key))
-
-    # 2) query params
-    qp = _read_query_params()
-    return _norm_qp_value(qp.get(key), default)
-
-
-# 先讀一次 URL qp，立刻寫入 session_state（避免 rerun / 清參數後讀不到）
-_qp = _read_query_params()
-for k in ["portal_token", "email", "tenant", "lang"]:
-    v = _norm_qp_value(_qp.get(k), "")
-    if v:
-        st.session_state[k] = v
-
-# ✅ Debug：同時印 qp + session_state（你現在看到的畫面就能判斷問題在哪）
-st.info(f"[DEBUG] qp keys = {list(_qp.keys())}")
-st.info(f"[DEBUG] qp portal_token = {_norm_qp_value(_qp.get('portal_token'))}")
-st.info(f"[DEBUG] state portal_token = {st.session_state.get('portal_token')}")
-st.info(f"[DEBUG] state email = {st.session_state.get('email')}, tenant = {st.session_state.get('tenant')}, lang = {st.session_state.get('lang')}")
-
-# --- Portal-only gate: 只認 session_state / get_param 統一來源 ---
-portal_token = get_param("portal_token", "")
-email = get_param("email", "")
-tenant = get_param("tenant", "")
-lang = get_param("lang", "en")
-
-if not portal_token or not email:
-    st.error("請從 Error-Free® Portal 進入此分析框架（Portal-only）。")
-    st.caption("Reason: No valid Portal SSO parameters")
-    st.stop()
-
-def _qp_get(key: str, default: str = "") -> str:
-    # 1) First: read from session_state (most reliable after reruns)
     try:
         v = st.session_state.get(key)
         if v is not None and str(v) != "":
@@ -100,47 +72,12 @@ def _qp_get(key: str, default: str = "") -> str:
     except Exception:
         pass
 
-    # 2) Second: Streamlit new API st.query_params (dict-like)
-    try:
-        qp_obj = getattr(st, "query_params", None)
-        if qp_obj is not None:
-            v = qp_obj.get(key)
-            if isinstance(v, list):
-                return v[0] if v else default
-            return str(v) if v is not None and str(v) != "" else default
-    except Exception:
-        pass
-
-    # 3) Fallback: old API (if exists)
-    try:
-        fn = getattr(st, "experimental_get_query_params", None)
-        if callable(fn):
-            qp = fn() or {}
-            v = qp.get(key, default)
-            if isinstance(v, list):
-                return v[0] if v else default
-            return str(v) if v is not None and str(v) != "" else default
-    except Exception:
-        pass
-
-    return default
-
-
-# 把 Portal 帶來的參數存起來（避免後續按鈕跳頁遺失）
-for k in ["portal_token", "email", "tenant", "lang"]:
-    val = _qp_get(k, "")
-    if val and k not in st.session_state:
-        st.session_state[k] = val
-
-PORTAL_BASE_URL = (os.getenv("PORTAL_BASE_URL", "") or "").strip()
-PORTAL_SSO_SECRET = (os.getenv("PORTAL_SSO_SECRET", "") or "").strip()
-SSO_MAX_AGE_SECONDS = int(os.getenv("SSO_MAX_AGE_SECONDS", "300") or "300")  # 5 minutes default
-
-ALLOW_DEMO_PORTAL_TOKEN = (os.getenv("ALLOW_DEMO_PORTAL_TOKEN", "") or "").lower() in ("1","true","yes","y","on")
-DEMO_EXPECTED_TOKEN = "demo-from-portal"  # only used when ALLOW_DEMO_PORTAL_TOKEN=true
+    qp = _read_query_params()
+    return _norm_qp_value(qp.get(key), default)
 
 
 def _qp_clear_all():
+    # 清掉 URL 上的 token，避免留在網址列
     try:
         st.query_params.clear()
         return
@@ -150,6 +87,35 @@ def _qp_clear_all():
         st.experimental_set_query_params()
     except Exception:
         pass
+
+
+# 先讀一次 URL qp，立刻寫入 session_state（避免 rerun / 清參數後讀不到）
+_qp = _read_query_params()
+for k in ["portal_token", "email", "tenant", "lang", "ts", "token", "role"]:
+    v = _norm_qp_value(_qp.get(k), "")
+    if v:
+        st.session_state[k] = v
+
+# Debug（預設不顯示；要看再到 Railway variables 設 DEBUG_SSO=true）
+if (os.getenv("DEBUG_SSO", "") or "").lower() in ("1", "true", "yes", "y", "on"):
+    st.info(f"[DEBUG] qp keys = {list(_qp.keys())}")
+    st.info(f"[DEBUG] qp portal_token = {_norm_qp_value(_qp.get('portal_token'))}")
+    st.info(f"[DEBUG] state portal_token = {st.session_state.get('portal_token')}")
+    st.info(f"[DEBUG] state email = {st.session_state.get('email')}, tenant = {st.session_state.get('tenant')}, lang = {st.session_state.get('lang')}")
+
+
+# -----------------------------
+# Config
+# -----------------------------
+PORTAL_BASE_URL = (os.getenv("PORTAL_BASE_URL", "") or "").strip().rstrip("/")
+PORTAL_SSO_VERIFY_URL = (os.getenv("PORTAL_SSO_VERIFY_URL", "") or "").strip()
+PORTAL_SSO_SECRET = (os.getenv("PORTAL_SSO_SECRET", "") or "").strip()
+SSO_MAX_AGE_SECONDS = int(os.getenv("SSO_MAX_AGE_SECONDS", "300") or "300")  # 5 minutes default
+
+ALLOW_DEMO_PORTAL_TOKEN = (os.getenv("ALLOW_DEMO_PORTAL_TOKEN", "") or "").lower() in (
+    "1", "true", "yes", "y", "on"
+)
+DEMO_EXPECTED_TOKEN = "demo-from-portal"
 
 
 def _normalize_lang(raw: str) -> str:
@@ -176,12 +142,15 @@ def _apply_portal_lang(lang_raw: str):
     st.session_state["_lang_locked"] = True
 
 
+# -----------------------------
+# Legacy HMAC verify (optional)
+# -----------------------------
 def _compute_sig(email: str, lang_norm: str, ts: str, secret: str) -> str:
     msg = f"{email}|{lang_norm}|{ts}".encode("utf-8")
     return hmac.new(secret.encode("utf-8"), msg, hashlib.sha256).hexdigest()
 
 
-def _verify_portal_sso(email: str, lang_raw: str, ts: str, token: str) -> (bool, str):
+def _verify_hmac_sso(email: str, lang_raw: str, ts: str, token: str) -> (bool, str):
     if not email:
         return False, "Missing email"
     if not ts:
@@ -221,18 +190,64 @@ def _render_portal_only_block(reason: str = ""):
     st.stop()
 
 
+def _portal_verify_via_api(portal_token: str) -> (bool, str, dict):
+    """
+    Call Portal /sso/verify
+    Expect response JSON like:
+      { "status":"ok", "email":"...", "company_id":"...", "analyzer_id":"..." }
+    """
+    if not portal_token:
+        return False, "Missing portal_token", {}
+
+    verify_url = PORTAL_SSO_VERIFY_URL.strip()
+    if not verify_url:
+        if not PORTAL_BASE_URL:
+            return False, "Missing PORTAL_BASE_URL (or PORTAL_SSO_VERIFY_URL)", {}
+        verify_url = f"{PORTAL_BASE_URL}/sso/verify"
+
+    try:
+        r = requests.post(
+            verify_url,
+            json={"token": portal_token},
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            timeout=15,
+        )
+    except Exception as e:
+        return False, f"Portal verify request failed: {e}", {}
+
+    if r.status_code != 200:
+        try:
+            j = r.json()
+            msg = j.get("message") or j.get("detail") or str(j)
+        except Exception:
+            msg = (r.text or "")[:200]
+        return False, f"Portal verify {r.status_code}: {msg}", {}
+
+    try:
+        data = r.json() or {}
+    except Exception:
+        return False, "Portal verify: invalid JSON response", {}
+
+    status = str(data.get("status", "")).lower()
+    if status not in ("ok", "success", "200", "true"):
+        return False, f"Portal verify returned non-ok: {data}", data
+
+    return True, "OK", data
+
+
 def try_portal_sso_login():
     """
     Portal-only SSO entry guard.
 
-    IMPORTANT BEHAVIOR:
-    - If the session is already authenticated (has user_email + is_authenticated),
-      do NOT force re-check SSO params, because Reset Whole Document is NOT logout.
-      This prevents "No valid Portal SSO parameters" after rerun when query params
-      have already been cleared for hygiene.
+    ✅ 正確行為：
+    - 已登入（session 有 is_authenticated + user_email）就不要再要求 query params
+    - 未登入時：
+        A) portal_token -> Portal /sso/verify（你目前主流程）
+        B) legacy HMAC（可選）
+        C) demo token（staging）
+        D) 都沒有 -> block
     """
-    # If already authenticated in session, treat as already checked.
-    # This is critical to prevent accidental "logout" on rerun (e.g., after reset).
+    # Already authenticated
     if st.session_state.get("is_authenticated") and st.session_state.get("user_email"):
         st.session_state["_portal_sso_checked"] = True
         return
@@ -241,47 +256,82 @@ def try_portal_sso_login():
     if st.session_state.get("_portal_sso_checked", False):
         return
 
-    # 1) Preferred: HMAC-based SSO
-    email = _qp_get("email")
-    lang = _qp_get("lang")
-    ts = _qp_get("ts")
-    token = _qp_get("token")
-
-    if email and token and ts:
-        ok, why = _verify_portal_sso(email=email, lang_raw=lang, ts=ts, token=token)
+    # A) Preferred: portal_token -> Portal /sso/verify
+    portal_token = _qp_get("portal_token", "")
+    if portal_token:
+        ok, why, data = _portal_verify_via_api(portal_token)
         if not ok:
             st.session_state["_portal_sso_checked"] = True
             st.session_state["is_authenticated"] = False
             _render_portal_only_block(why)
 
-        # success
+        st.session_state["_portal_sso_checked"] = True
+        st.session_state["is_authenticated"] = True
+
+        verified_email = (data.get("email") or "").strip()
+        if verified_email:
+            st.session_state["user_email"] = verified_email
+            st.session_state["email"] = verified_email
+        else:
+            # fallback to query param email
+            st.session_state["user_email"] = _qp_get("email", "")
+
+        # optional fields
+        if "company_id" in data:
+            st.session_state["company_id"] = data.get("company_id")
+        if "analyzer_id" in data:
+            st.session_state["analyzer_id"] = data.get("analyzer_id")
+
+        role = _qp_get("role", "") or st.session_state.get("user_role") or "pro"
+        st.session_state["user_role"] = role
+
+        _apply_portal_lang(_qp_get("lang", "en"))
+
+        _qp_clear_all()
+        st.rerun()
+
+    # B) Optional: legacy HMAC mode (email+lang+ts+token)
+    email = _qp_get("email", "")
+    lang = _qp_get("lang", "en")
+    ts = _qp_get("ts", "")
+    token = _qp_get("token", "")
+
+    if email and token and ts:
+        ok, why = _verify_hmac_sso(email=email, lang_raw=lang, ts=ts, token=token)
+        if not ok:
+            st.session_state["_portal_sso_checked"] = True
+            st.session_state["is_authenticated"] = False
+            _render_portal_only_block(why)
+
         st.session_state["_portal_sso_checked"] = True
         st.session_state["is_authenticated"] = True
         st.session_state["user_email"] = email
-        # Keep your existing role logic; Portal can optionally pass role
-        role = _qp_get("role") or st.session_state.get("user_role") or "pro"
+        st.session_state["email"] = email
+
+        role = _qp_get("role", "") or st.session_state.get("user_role") or "pro"
         st.session_state["user_role"] = role
 
         _apply_portal_lang(lang)
-        # Hygiene: clear query params so token isn't left in the URL
+
         _qp_clear_all()
         st.rerun()
 
-    # 2) Transitional DEMO token (staging only)
-    portal_token = _qp_get("portal_token")
-    if portal_token and ALLOW_DEMO_PORTAL_TOKEN and portal_token == DEMO_EXPECTED_TOKEN:
+    # C) Transitional demo token (staging only)
+    if ALLOW_DEMO_PORTAL_TOKEN and _qp_get("portal_token", "") == DEMO_EXPECTED_TOKEN:
         st.session_state["_portal_sso_checked"] = True
         st.session_state["is_authenticated"] = True
-        st.session_state["user_email"] = email or st.session_state.get("user_email") or "unknown"
+        st.session_state["user_email"] = _qp_get("email", "") or "unknown"
+        st.session_state["email"] = st.session_state["user_email"]
         st.session_state["user_role"] = st.session_state.get("user_role") or "pro"
-        _apply_portal_lang(lang)
+        _apply_portal_lang(_qp_get("lang", "en"))
         _qp_clear_all()
         st.rerun()
 
-    # 3) No valid SSO -> block (Portal-only)
+    # D) No valid SSO -> block
     st.session_state["_portal_sso_checked"] = True
     st.session_state["is_authenticated"] = False
     _render_portal_only_block("No valid Portal SSO parameters")
+
 
 # ===== End Portal-only SSO =====
 import os, json, datetime, secrets
