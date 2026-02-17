@@ -19,7 +19,7 @@ import requests
 #   ALLOW_DEMO_PORTAL_TOKEN=true and portal_token=demo-from-portal
 #
 # Optional legacy support:
-#   email=<...>&lang=<...>&ts=<unix>&token=<hmac>
+#   email=<...>&lang=<...>&ts=<unix>&token=<hmac>-
 # token = HMAC_SHA256(PORTAL_SSO_SECRET, f"{email}|{normalized_lang}|{ts}")
 #
 # Railway Variables (minimum):
@@ -80,13 +80,19 @@ def _qp_clear_all():
     # 清掉 URL 上的 token，避免留在網址列
     try:
         st.query_params.clear()
-        return
     except Exception:
-        pass
-    try:
-        st.experimental_set_query_params()
-    except Exception:
-        pass
+        try:
+            st.experimental_set_query_params()
+        except Exception:
+            pass
+
+    # ✅ ALSO clear sensitive fields from session_state (cleaner Portal-only gate)
+    for k in ["portal_token", "token", "ts"]:
+        try:
+            if k in st.session_state:
+                st.session_state.pop(k, None)
+        except Exception:
+            pass
 
 
 # 先讀一次 URL qp，立刻寫入 session_state（避免 rerun / 清參數後讀不到）
@@ -269,12 +275,16 @@ def try_portal_sso_login():
         st.session_state["is_authenticated"] = True
 
         verified_email = (data.get("email") or "").strip()
-        if verified_email:
-            st.session_state["user_email"] = verified_email
-            st.session_state["email"] = verified_email
-        else:
-            # fallback to query param email
-            st.session_state["user_email"] = _qp_get("email", "")
+        qp_email = (_qp_get("email", "") or "").strip()
+
+        # ✅ MUST have an email, otherwise treat as invalid SSO
+        final_email = verified_email or qp_email
+        if not final_email:
+            st.session_state["is_authenticated"] = False
+            _render_portal_only_block("Portal verify succeeded but email is missing")
+
+        st.session_state["user_email"] = final_email
+        st.session_state["email"] = final_email
 
         # optional fields
         if "company_id" in data:
@@ -331,6 +341,8 @@ def try_portal_sso_login():
     st.session_state["_portal_sso_checked"] = True
     st.session_state["is_authenticated"] = False
     _render_portal_only_block("No valid Portal SSO parameters")
+
+
 
 
 # ===== End Portal-only SSO =====
