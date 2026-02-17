@@ -24,11 +24,14 @@ import streamlit as st
 # - some: st.query_params is a proxy object (NOT callable)
 # - some: st.query_params is a function
 # - old:  st.experimental_get_query_params()
-try:
-    _qp_attr = getattr(st, "query_params", None)
-    qp = _qp_attr() if callable(_qp_attr) else _qp_attr
-except Exception:
-    qp = st.experimental_get_query_params()
+# --- SSO query params: capture once, persist in session ---
+# 強制用最穩定的 API 讀 URL query params（避免 st.query_params 在不同版本行為不一致）
+qp = st.experimental_get_query_params()
+
+# ✅ Debug：直接在畫面上顯示目前抓到的 query params（確認 Portal 是否真的帶進來）
+st.info(f"[DEBUG] query params keys = {list(qp.keys())}")
+st.info(f"[DEBUG] portal_token = {qp.get('portal_token')}")
+st.info(f"[DEBUG] email = {qp.get('email')}, tenant = {qp.get('tenant')}, lang = {qp.get('lang')}")
 
 def _qp_get(key: str, default: str = "") -> str:
     """
