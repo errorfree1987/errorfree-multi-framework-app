@@ -39,6 +39,13 @@ except Exception:
 st.info(f"[DEBUG] query params keys = {list(qp.keys())}")
 st.info(f"[DEBUG] portal_token = {qp.get('portal_token')}")
 st.info(f"[DEBUG] email = {qp.get('email')}, tenant = {qp.get('tenant')}, lang = {qp.get('lang')}")
+# ✅ 把 Portal 帶來的參數寫進 session_state，讓後面 Portal-only 檢查讀得到
+for k in ["portal_token", "email", "tenant", "lang"]:
+    v = qp.get(k, "")
+    if isinstance(v, list):
+        v = v[0] if v else ""
+    if v and not st.session_state.get(k):
+        st.session_state[k] = str(v)
 
 def _qp_get(key: str, default: str = "") -> str:
     """
