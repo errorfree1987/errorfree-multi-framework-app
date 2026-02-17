@@ -26,7 +26,14 @@ import streamlit as st
 # - old:  st.experimental_get_query_params()
 # --- SSO query params: capture once, persist in session ---
 # 強制用最穩定的 API 讀 URL query params（避免 st.query_params 在不同版本行為不一致）
-qp = st.experimental_get_query_params()
+# --- SSO query params: capture once, persist in session ---
+# Streamlit 新版用 st.query_params；舊版才有 experimental_get_query_params（你這版沒有）
+try:
+    qp_obj = getattr(st, "query_params", None)
+    # st.query_params 在新版是 dict-like proxy（不可呼叫），直接轉 dict
+    qp = dict(qp_obj) if qp_obj is not None else {}
+except Exception:
+    qp = {}
 
 # ✅ Debug：直接在畫面上顯示目前抓到的 query params（確認 Portal 是否真的帶進來）
 st.info(f"[DEBUG] query params keys = {list(qp.keys())}")
