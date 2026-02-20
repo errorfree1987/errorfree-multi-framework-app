@@ -533,7 +533,7 @@ if (
     or (st.session_state.get("tenant_ai_settings") or {}).get("tenant") != st.session_state["tenant"]
 ):
     st.session_state["tenant_ai_settings"] = load_tenant_ai_settings_from_supabase(st.session_state["tenant"])
-        st.session_state["user_role"] = role
+    st.session_state["user_role"] = role
 
         if "company_id" in data:
             st.session_state["company_id"] = data.get("company_id") or ""
