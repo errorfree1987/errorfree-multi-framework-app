@@ -87,7 +87,7 @@ def _qp_clear_all():
             pass
 
     # ✅ ALSO clear sensitive fields from session_state (cleaner Portal-only gate)
-    for k in ["portal_token", "token", "ts"]:
+    for k in ["portal_token", "token", "ts", "analyzer_session"]:
         try:
             if k in st.session_state:
                 st.session_state.pop(k, None)
@@ -122,6 +122,132 @@ ALLOW_DEMO_PORTAL_TOKEN = (os.getenv("ALLOW_DEMO_PORTAL_TOKEN", "") or "").lower
     "1", "true", "yes", "y", "on"
 )
 DEMO_EXPECTED_TOKEN = "demo-from-portal"
+# -----------------------------
+# Analyzer session (survive browser refresh without reusing portal_token)
+# - We mint a signed short-lived "analyzer_session" and store it in browser localStorage.
+# - On a fresh session (after F5), JS will restore it into URL temporarily, then we verify and clear URL again.
+# -----------------------------
+ANALYZER_SESSION_SECRET = (os.getenv("ANALYZER_SESSION_SECRET", "") or "").strip() or PORTAL_SSO_SECRET
+ANALYZER_SESSION_TTL_SECONDS = int(os.getenv("ANALYZER_SESSION_TTL_SECONDS", "3600") or "3600")  # default 1 hour
+
+_BROWSER_LS_KEY = "ef_analyzer_session_v1"
+_QP_SESSION_KEY = "analyzer_session"
+
+
+def _b64url_encode(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("utf-8").rstrip("=")
+
+
+def _b64url_decode(s: str) -> bytes:
+    s = (s or "").strip()
+    if not s:
+        return b""
+    pad = "=" * ((4 - (len(s) % 4)) % 4)
+    return base64.urlsafe_b64decode((s + pad).encode("utf-8"))
+
+
+def _sign_payload(payload_b64: str, secret: str) -> str:
+    return hmac.new(secret.encode("utf-8"), payload_b64.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def mint_analyzer_session(claims: dict) -> str:
+    """
+    claims must include: email, tenant, role, exp (unix seconds)
+    """
+    if not ANALYZER_SESSION_SECRET:
+        return ""
+
+    payload = dict(claims or {})
+    now = int(time.time())
+    payload.setdefault("iat", now)
+    payload.setdefault("exp", now + ANALYZER_SESSION_TTL_SECONDS)
+
+    payload_json = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    payload_b64 = _b64url_encode(payload_json)
+    sig = _sign_payload(payload_b64, ANALYZER_SESSION_SECRET)
+    return f"{payload_b64}.{sig}"
+
+
+def verify_analyzer_session(token: str) -> dict | None:
+    if not token or "." not in token:
+        return None
+    if not ANALYZER_SESSION_SECRET:
+        return None
+
+    payload_b64, sig = token.split(".", 1)
+    expected = _sign_payload(payload_b64, ANALYZER_SESSION_SECRET)
+    if not hmac.compare_digest(expected, sig):
+        return None
+
+    try:
+        payload = json.loads(_b64url_decode(payload_b64).decode("utf-8"))
+    except Exception:
+        return None
+
+    try:
+        exp = int(payload.get("exp", 0))
+    except Exception:
+        exp = 0
+
+    if exp <= 0 or int(time.time()) > exp:
+        return None
+
+    # minimal required
+    email = (payload.get("email") or "").strip().lower()
+    tenant = (payload.get("tenant") or "").strip()
+    role = (payload.get("role") or "").strip()
+
+    if not email or not tenant or not role:
+        return None
+
+    return payload
+
+
+def _store_session_to_browser(session_token: str):
+    if not session_token:
+        return
+    # Store into localStorage
+    components.html(
+        f"""
+<script>
+(function(){{
+  try {{
+    localStorage.setItem({json.dumps(_BROWSER_LS_KEY)}, {json.dumps(session_token)});
+  }} catch(e) {{}}
+}})();
+</script>
+        """,
+        height=0,
+    )
+
+
+def _inject_restore_session_js():
+    """
+    If browser has localStorage session, restore into URL temporarily as ?analyzer_session=...
+    (Python will read it, verify, then clear URL again.)
+    """
+    components.html(
+        f"""
+<script>
+(function(){{
+  try {{
+    const k = {json.dumps(_BROWSER_LS_KEY)};
+    const qpKey = {json.dumps(_QP_SESSION_KEY)};
+    const t = localStorage.getItem(k);
+    if(!t) return;
+
+    const u = new URL(window.location.href);
+    if(u.searchParams.get(qpKey)) return;           // already present
+    if(u.searchParams.get("portal_token")) return;  // Portal path should win
+
+    u.searchParams.set(qpKey, t);
+    window.location.replace(u.toString());
+  }} catch(e) {{}}
+}})();
+</script>
+        """,
+        height=0,
+    )
 
 
 def _normalize_lang(raw: str) -> str:
@@ -245,24 +371,49 @@ def try_portal_sso_login():
     """
     Portal-only SSO entry guard.
 
-    ✅ 正確行為：
-    - 已登入（session 有 is_authenticated + user_email）就不要再要求 query params
-    - 未登入時：
-        A) portal_token -> Portal /sso/verify（你目前主流程）
-        B) legacy HMAC（可選）
-        C) demo token（staging）
-        D) 都沒有 -> block
+    Priority:
+    0) Already authenticated in session_state -> allow
+    1) analyzer_session (restored from browser localStorage) -> verify locally -> allow
+    2) portal_token -> call Portal /sso/verify (one-time) -> then mint analyzer_session -> allow
+    3) legacy HMAC (optional)
+    4) demo token (staging)
+    5) otherwise -> block (but inject JS restore attempt first)
     """
-    # Already authenticated
+    # 0) Already authenticated
     if st.session_state.get("is_authenticated") and st.session_state.get("user_email"):
         st.session_state["_portal_sso_checked"] = True
         return
 
-    # Only check once per session
+    # Only check once per Streamlit session
     if st.session_state.get("_portal_sso_checked", False):
         return
 
-    # A) Preferred: portal_token -> Portal /sso/verify
+    # 1) analyzer_session (restored into URL temporarily)
+    sess_tok = _qp_get(_QP_SESSION_KEY, "")
+    if sess_tok:
+        payload = verify_analyzer_session(sess_tok)
+        if payload:
+            st.session_state["_portal_sso_checked"] = True
+            st.session_state["is_authenticated"] = True
+
+            st.session_state["user_email"] = (payload.get("email") or "").strip().lower()
+            st.session_state["email"] = st.session_state["user_email"]
+            st.session_state["tenant"] = payload.get("tenant") or ""
+            st.session_state["user_role"] = payload.get("role") or "member"
+
+            if "company_id" in payload:
+                st.session_state["company_id"] = payload.get("company_id") or ""
+            if "analyzer_id" in payload:
+                st.session_state["analyzer_id"] = payload.get("analyzer_id") or ""
+
+            _apply_portal_lang(payload.get("lang") or _qp_get("lang", "en"))
+
+            _qp_clear_all()
+            st.rerun()
+
+        # session token exists but invalid/expired -> continue to other paths (Portal or block)
+
+    # 2) portal_token -> Portal /sso/verify (one-time)
     portal_token = _qp_get("portal_token", "")
     if portal_token:
         ok, why, data = _portal_verify_via_api(portal_token)
@@ -271,36 +422,50 @@ def try_portal_sso_login():
             st.session_state["is_authenticated"] = False
             _render_portal_only_block(why)
 
-        st.session_state["_portal_sso_checked"] = True
-        st.session_state["is_authenticated"] = True
+        verified_email = (data.get("email") or "").strip().lower()
+        tenant = (data.get("tenant") or data.get("tenant_slug") or "").strip()
+        role = (data.get("role") or "").strip() or "member"
 
-        verified_email = (data.get("email") or "").strip()
-        qp_email = (_qp_get("email", "") or "").strip()
-
-        # ✅ MUST have an email, otherwise treat as invalid SSO
-        final_email = verified_email or qp_email
-        if not final_email:
+        if not verified_email:
+            st.session_state["_portal_sso_checked"] = True
             st.session_state["is_authenticated"] = False
             _render_portal_only_block("Portal verify succeeded but email is missing")
+        if not tenant:
+            st.session_state["_portal_sso_checked"] = True
+            st.session_state["is_authenticated"] = False
+            _render_portal_only_block("Portal verify succeeded but tenant is missing")
 
-        st.session_state["user_email"] = final_email
-        st.session_state["email"] = final_email
-
-        # optional fields
-        if "company_id" in data:
-            st.session_state["company_id"] = data.get("company_id")
-        if "analyzer_id" in data:
-            st.session_state["analyzer_id"] = data.get("analyzer_id")
-
-        role = _qp_get("role", "") or st.session_state.get("user_role") or "pro"
+        st.session_state["_portal_sso_checked"] = True
+        st.session_state["is_authenticated"] = True
+        st.session_state["user_email"] = verified_email
+        st.session_state["email"] = verified_email
+        st.session_state["tenant"] = tenant
         st.session_state["user_role"] = role
 
-        _apply_portal_lang(_qp_get("lang", "en"))
+        if "company_id" in data:
+            st.session_state["company_id"] = data.get("company_id") or ""
+        if "analyzer_id" in data:
+            st.session_state["analyzer_id"] = data.get("analyzer_id") or ""
+
+        lang_raw = _qp_get("lang", "en")
+        _apply_portal_lang(lang_raw)
+
+        # Mint Analyzer session for refresh survival (does NOT reuse portal_token)
+        claims = {
+            "email": verified_email,
+            "tenant": tenant,
+            "role": role,
+            "company_id": data.get("company_id") or "",
+            "analyzer_id": data.get("analyzer_id") or "",
+            "lang": _normalize_lang(lang_raw),
+        }
+        session_token = mint_analyzer_session(claims)
+        _store_session_to_browser(session_token)
 
         _qp_clear_all()
         st.rerun()
 
-    # B) Optional: legacy HMAC mode (email+lang+ts+token)
+    # 3) Optional legacy HMAC mode
     email = _qp_get("email", "")
     lang = _qp_get("lang", "en")
     ts = _qp_get("ts", "")
@@ -317,27 +482,49 @@ def try_portal_sso_login():
         st.session_state["is_authenticated"] = True
         st.session_state["user_email"] = email
         st.session_state["email"] = email
-
-        role = _qp_get("role", "") or st.session_state.get("user_role") or "pro"
-        st.session_state["user_role"] = role
+        st.session_state["tenant"] = _qp_get("tenant", "")  # legacy path (not preferred)
+        st.session_state["user_role"] = _qp_get("role", "") or "member"
 
         _apply_portal_lang(lang)
+
+        # also mint analyzer_session for refresh survival
+        claims = {
+            "email": (email or "").strip().lower(),
+            "tenant": st.session_state.get("tenant") or "",
+            "role": st.session_state.get("user_role") or "member",
+            "lang": _normalize_lang(lang),
+        }
+        session_token = mint_analyzer_session(claims)
+        _store_session_to_browser(session_token)
 
         _qp_clear_all()
         st.rerun()
 
-    # C) Transitional demo token (staging only)
+    # 4) Transitional demo token (staging only)
     if ALLOW_DEMO_PORTAL_TOKEN and _qp_get("portal_token", "") == DEMO_EXPECTED_TOKEN:
         st.session_state["_portal_sso_checked"] = True
         st.session_state["is_authenticated"] = True
         st.session_state["user_email"] = _qp_get("email", "") or "unknown"
         st.session_state["email"] = st.session_state["user_email"]
-        st.session_state["user_role"] = st.session_state.get("user_role") or "pro"
+        st.session_state["tenant"] = _qp_get("tenant", "") or ""
+        st.session_state["user_role"] = _qp_get("role", "") or "demo"
         _apply_portal_lang(_qp_get("lang", "en"))
+
+        claims = {
+            "email": (st.session_state["user_email"] or "").strip().lower(),
+            "tenant": st.session_state.get("tenant") or "",
+            "role": st.session_state.get("user_role") or "demo",
+            "lang": _normalize_lang(_qp_get("lang", "en")),
+        }
+        session_token = mint_analyzer_session(claims)
+        _store_session_to_browser(session_token)
+
         _qp_clear_all()
         st.rerun()
 
-    # D) No valid SSO -> block
+    # 5) No valid SSO -> try restore from browser, then block
+    _inject_restore_session_js()
+
     st.session_state["_portal_sso_checked"] = True
     st.session_state["is_authenticated"] = False
     _render_portal_only_block("No valid Portal SSO parameters")
@@ -359,8 +546,9 @@ import base64
 
 
 import streamlit as st
-
 import streamlit.components.v1 as components
+import json
+import base64
 
 import pdfplumber
 
