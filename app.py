@@ -4,6 +4,87 @@ import hmac
 import hashlib
 import time
 import requests
+# =========================
+# Tenant AI Settings (D4)
+# Read from Supabase (server-side)
+# =========================
+import os
+import requests
+
+def load_tenant_ai_settings_from_supabase(tenant: str) -> dict:
+    """
+    Server-side only. Reads public.tenant_ai_settings by tenant.
+    Requires Railway env:
+      - SUPABASE_URL
+      - SUPABASE_SERVICE_KEY   (service_role key; DO NOT expose to frontend)
+    """
+    supabase_url = os.getenv("SUPABASE_URL", "").strip()
+    service_key = os.getenv("SUPABASE_SERVICE_KEY", "").strip()
+
+    if not supabase_url or not service_key:
+        # Fail closed-ish: return minimal defaults (keeps app running but signals misconfig)
+        return {
+            "tenant": tenant,
+            "provider": "openai_compatible",
+            "base_url": None,
+            "model": None,
+            "api_key_ref": None,
+            "max_tokens_per_request": None,
+            "source": "missing_env",
+        }
+
+    # PostgREST endpoint
+    endpoint = f"{supabase_url}/rest/v1/tenant_ai_settings"
+    params = {
+        "select": "tenant,provider,base_url,model,api_key_ref,max_tokens_per_request",
+        "tenant": f"eq.{tenant}",
+        "limit": "1",
+    }
+    headers = {
+        "apikey": service_key,
+        "Authorization": f"Bearer {service_key}",
+        "Accept": "application/json",
+    }
+
+    try:
+        resp = requests.get(endpoint, params=params, headers=headers, timeout=10)
+        if resp.status_code != 200:
+            return {
+                "tenant": tenant,
+                "provider": "openai_compatible",
+                "base_url": None,
+                "model": None,
+                "api_key_ref": None,
+                "max_tokens_per_request": None,
+                "source": f"http_{resp.status_code}",
+            }
+
+        rows = resp.json() or []
+        if not rows:
+            return {
+                "tenant": tenant,
+                "provider": "openai_compatible",
+                "base_url": None,
+                "model": None,
+                "api_key_ref": None,
+                "max_tokens_per_request": None,
+                "source": "not_found",
+            }
+
+        row = rows[0]
+        row["source"] = "supabase"
+        return row
+
+    except Exception as e:
+        return {
+            "tenant": tenant,
+            "provider": "openai_compatible",
+            "base_url": None,
+            "model": None,
+            "api_key_ref": None,
+            "max_tokens_per_request": None,
+            "source": f"exception:{type(e).__name__}",
+        }
 
 # ===== Error-Free® Portal-only SSO (Portal is the ONLY entry) =====
 # Analyzer MUST NOT show any internal login UI when Portal SSO is enforced.
