@@ -2185,6 +2185,23 @@ def language_selector():
     # 先套用 Portal lock
     apply_portal_language_lock()
 
+    # =========================
+    # Tenant AI Settings (safe debug / no secrets)
+    # =========================
+    tas = st.session_state.get("tenant_ai_settings") or {}
+    tenant_dbg = st.session_state.get("tenant") or ""
+    source = tas.get("source") or "unknown"
+    provider = tas.get("provider") or "(default)"
+    model = tas.get("model") or "(default)"
+
+    st.sidebar.caption(f"Tenant: {tenant_dbg}")
+    st.sidebar.caption(f"AI settings source: {source}")
+    st.sidebar.caption(f"Provider: {provider}")
+    st.sidebar.caption(f"Model: {model}")
+
+    # =========================
+    # Original language selector logic (keep as-is)
+    # =========================
     lang = st.session_state.get("lang", "zh")
     zhv = st.session_state.get("zh_variant", "tw")
 
