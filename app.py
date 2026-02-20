@@ -468,7 +468,7 @@ def try_portal_sso_login():
     if st.session_state.get("_portal_sso_checked", False):
         return
 
-    # 1) analyzer_session in URL -> verify locally -> allow (KEEP it in URL for refresh)
+        # 1) analyzer_session in URL -> verify locally -> allow (KEEP it in URL for refresh)
     sess_tok = _qp_get(_QP_SESSION_KEY, "")
     if sess_tok:
         payload = verify_analyzer_session(sess_tok)
@@ -479,12 +479,16 @@ def try_portal_sso_login():
             st.session_state["user_email"] = (payload.get("email") or "").strip().lower()
             st.session_state["email"] = st.session_state["user_email"]
             st.session_state["tenant"] = (payload.get("tenant") or "").strip()
-            # Load tenant AI settings (once per tenant)
-if (
-    "tenant_ai_settings" not in st.session_state
-    or (st.session_state.get("tenant_ai_settings") or {}).get("tenant") != st.session_state["tenant"]
-):
-    st.session_state["tenant_ai_settings"] = load_tenant_ai_settings_from_supabase(st.session_state["tenant"])
+
+            # ✅ Load tenant AI settings (once per tenant)
+            if (
+                "tenant_ai_settings" not in st.session_state
+                or (st.session_state.get("tenant_ai_settings") or {}).get("tenant") != st.session_state["tenant"]
+            ):
+                st.session_state["tenant_ai_settings"] = load_tenant_ai_settings_from_supabase(
+                    st.session_state["tenant"]
+                )
+
             st.session_state["user_role"] = (payload.get("role") or "").strip() or "member"
 
             if "company_id" in payload:
