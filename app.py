@@ -369,17 +369,16 @@ def _portal_verify_via_api(portal_token: str) -> (bool, str, dict):
 
 def try_portal_sso_login():
     """
-    Portal-only SSO entry guard.
+    Portal-only SSO entry guard (refresh-safe version).
 
-    Priority:
-    0) Already authenticated in session_state -> allow
-    1) analyzer_session (restored from browser localStorage) -> verify locally -> allow
-    2) portal_token -> call Portal /sso/verify (one-time) -> then mint analyzer_session -> allow
-    3) legacy HMAC (optional)
-    4) demo token (staging)
-    5) otherwise -> block (but inject JS restore attempt first)
+    ✅ 核心策略：
+    - 第一次由 Portal 帶 portal_token 進來 -> Portal /sso/verify 成功後
+      立刻 mint analyzer_session，並把 URL 改成只保留 ?analyzer_session=...
+      （不再依賴 localStorage）
+    - Refresh 時 URL 還在 -> 直接用 analyzer_session 放行
     """
-    # 0) Already authenticated
+
+    # 0) Already authenticated in this Streamlit session
     if st.session_state.get("is_authenticated") and st.session_state.get("user_email"):
         st.session_state["_portal_sso_checked"] = True
         return
@@ -388,7 +387,7 @@ def try_portal_sso_login():
     if st.session_state.get("_portal_sso_checked", False):
         return
 
-    # 1) analyzer_session (restored into URL temporarily)
+    # 1) analyzer_session in URL -> verify locally -> allow (KEEP it in URL for refresh)
     sess_tok = _qp_get(_QP_SESSION_KEY, "")
     if sess_tok:
         payload = verify_analyzer_session(sess_tok)
@@ -398,8 +397,8 @@ def try_portal_sso_login():
 
             st.session_state["user_email"] = (payload.get("email") or "").strip().lower()
             st.session_state["email"] = st.session_state["user_email"]
-            st.session_state["tenant"] = payload.get("tenant") or ""
-            st.session_state["user_role"] = payload.get("role") or "member"
+            st.session_state["tenant"] = (payload.get("tenant") or "").strip()
+            st.session_state["user_role"] = (payload.get("role") or "").strip() or "member"
 
             if "company_id" in payload:
                 st.session_state["company_id"] = payload.get("company_id") or ""
@@ -407,13 +406,10 @@ def try_portal_sso_login():
                 st.session_state["analyzer_id"] = payload.get("analyzer_id") or ""
 
             _apply_portal_lang(payload.get("lang") or _qp_get("lang", "en"))
+            return
+        # sess_tok exists but invalid/expired -> continue to Portal token path or block
 
-            _qp_clear_all()
-            st.rerun()
-
-        # session token exists but invalid/expired -> continue to other paths (Portal or block)
-
-    # 2) portal_token -> Portal /sso/verify (one-time)
+    # 2) portal_token -> call Portal /sso/verify (one-time) -> mint analyzer_session -> rewrite URL
     portal_token = _qp_get("portal_token", "")
     if portal_token:
         ok, why, data = _portal_verify_via_api(portal_token)
@@ -450,7 +446,7 @@ def try_portal_sso_login():
         lang_raw = _qp_get("lang", "en")
         _apply_portal_lang(lang_raw)
 
-        # Mint Analyzer session for refresh survival (does NOT reuse portal_token)
+        # Mint refresh-safe analyzer_session
         claims = {
             "email": verified_email,
             "tenant": tenant,
@@ -460,12 +456,32 @@ def try_portal_sso_login():
             "lang": _normalize_lang(lang_raw),
         }
         session_token = mint_analyzer_session(claims)
-        _store_session_to_browser(session_token)
+        if not session_token:
+            _render_portal_only_block("Cannot mint analyzer_session: missing ANALYZER_SESSION_SECRET (or PORTAL_SSO_SECRET)")
 
-        _qp_clear_all()
+        # Rewrite URL to keep only analyzer_session (so Refresh works, and portal_token disappears)
+        try:
+            st.query_params.clear()
+            st.query_params[_QP_SESSION_KEY] = session_token
+        except Exception:
+            try:
+                st.experimental_set_query_params(**{_QP_SESSION_KEY: session_token})
+            except Exception:
+                # If Streamlit cannot rewrite URL for some reason, we still allow this run,
+                # but refresh may not survive.
+                pass
+
+        # Clear sensitive keys from session_state (URL no longer has them)
+        for k in ["portal_token", "token", "ts"]:
+            try:
+                if k in st.session_state:
+                    st.session_state.pop(k, None)
+            except Exception:
+                pass
+
         st.rerun()
 
-    # 3) Optional legacy HMAC mode
+    # 3) Optional legacy HMAC mode (keep as-is)
     email = _qp_get("email", "")
     lang = _qp_get("lang", "en")
     ts = _qp_get("ts", "")
@@ -482,25 +498,12 @@ def try_portal_sso_login():
         st.session_state["is_authenticated"] = True
         st.session_state["user_email"] = email
         st.session_state["email"] = email
-        st.session_state["tenant"] = _qp_get("tenant", "")  # legacy path (not preferred)
+        st.session_state["tenant"] = _qp_get("tenant", "")
         st.session_state["user_role"] = _qp_get("role", "") or "member"
-
         _apply_portal_lang(lang)
+        return
 
-        # also mint analyzer_session for refresh survival
-        claims = {
-            "email": (email or "").strip().lower(),
-            "tenant": st.session_state.get("tenant") or "",
-            "role": st.session_state.get("user_role") or "member",
-            "lang": _normalize_lang(lang),
-        }
-        session_token = mint_analyzer_session(claims)
-        _store_session_to_browser(session_token)
-
-        _qp_clear_all()
-        st.rerun()
-
-    # 4) Transitional demo token (staging only)
+    # 4) demo token (keep as-is)
     if ALLOW_DEMO_PORTAL_TOKEN and _qp_get("portal_token", "") == DEMO_EXPECTED_TOKEN:
         st.session_state["_portal_sso_checked"] = True
         st.session_state["is_authenticated"] = True
@@ -509,22 +512,9 @@ def try_portal_sso_login():
         st.session_state["tenant"] = _qp_get("tenant", "") or ""
         st.session_state["user_role"] = _qp_get("role", "") or "demo"
         _apply_portal_lang(_qp_get("lang", "en"))
+        return
 
-        claims = {
-            "email": (st.session_state["user_email"] or "").strip().lower(),
-            "tenant": st.session_state.get("tenant") or "",
-            "role": st.session_state.get("user_role") or "demo",
-            "lang": _normalize_lang(_qp_get("lang", "en")),
-        }
-        session_token = mint_analyzer_session(claims)
-        _store_session_to_browser(session_token)
-
-        _qp_clear_all()
-        st.rerun()
-
-    # 5) No valid SSO -> try restore from browser, then block
-    _inject_restore_session_js()
-
+    # 5) No valid SSO -> block
     st.session_state["_portal_sso_checked"] = True
     st.session_state["is_authenticated"] = False
     _render_portal_only_block("No valid Portal SSO parameters")
