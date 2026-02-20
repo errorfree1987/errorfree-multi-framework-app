@@ -447,7 +447,6 @@ def _portal_verify_via_api(portal_token: str) -> (bool, str, dict):
 
     return True, "OK", data
 
-
 def try_portal_sso_login():
     """
     Portal-only SSO entry guard (refresh-safe version).
@@ -455,7 +454,6 @@ def try_portal_sso_login():
     ✅ 核心策略：
     - 第一次由 Portal 帶 portal_token 進來 -> Portal /sso/verify 成功後
       立刻 mint analyzer_session，並把 URL 改成只保留 ?analyzer_session=...
-      （不再依賴 localStorage）
     - Refresh 時 URL 還在 -> 直接用 analyzer_session 放行
     """
 
@@ -468,7 +466,7 @@ def try_portal_sso_login():
     if st.session_state.get("_portal_sso_checked", False):
         return
 
-        # 1) analyzer_session in URL -> verify locally -> allow (KEEP it in URL for refresh)
+    # 1) analyzer_session in URL -> verify locally -> allow (KEEP it in URL for refresh)
     sess_tok = _qp_get(_QP_SESSION_KEY, "")
     if sess_tok:
         payload = verify_analyzer_session(sess_tok)
@@ -479,6 +477,7 @@ def try_portal_sso_login():
             st.session_state["user_email"] = (payload.get("email") or "").strip().lower()
             st.session_state["email"] = st.session_state["user_email"]
             st.session_state["tenant"] = (payload.get("tenant") or "").strip()
+            st.session_state["user_role"] = (payload.get("role") or "").strip() or "member"
 
             # ✅ Load tenant AI settings (once per tenant)
             if (
@@ -488,8 +487,6 @@ def try_portal_sso_login():
                 st.session_state["tenant_ai_settings"] = load_tenant_ai_settings_from_supabase(
                     st.session_state["tenant"]
                 )
-
-            st.session_state["user_role"] = (payload.get("role") or "").strip() or "member"
 
             if "company_id" in payload:
                 st.session_state["company_id"] = payload.get("company_id") or ""
@@ -527,13 +524,16 @@ def try_portal_sso_login():
         st.session_state["user_email"] = verified_email
         st.session_state["email"] = verified_email
         st.session_state["tenant"] = tenant
-        # Load tenant AI settings (once per tenant)
-if (
-    "tenant_ai_settings" not in st.session_state
-    or (st.session_state.get("tenant_ai_settings") or {}).get("tenant") != st.session_state["tenant"]
-):
-    st.session_state["tenant_ai_settings"] = load_tenant_ai_settings_from_supabase(st.session_state["tenant"])
-    st.session_state["user_role"] = role
+        st.session_state["user_role"] = role
+
+        # ✅ Load tenant AI settings (once per tenant)
+        if (
+            "tenant_ai_settings" not in st.session_state
+            or (st.session_state.get("tenant_ai_settings") or {}).get("tenant") != st.session_state["tenant"]
+        ):
+            st.session_state["tenant_ai_settings"] = load_tenant_ai_settings_from_supabase(
+                st.session_state["tenant"]
+            )
 
         if "company_id" in data:
             st.session_state["company_id"] = data.get("company_id") or ""
@@ -554,7 +554,9 @@ if (
         }
         session_token = mint_analyzer_session(claims)
         if not session_token:
-            _render_portal_only_block("Cannot mint analyzer_session: missing ANALYZER_SESSION_SECRET (or PORTAL_SSO_SECRET)")
+            _render_portal_only_block(
+                "Cannot mint analyzer_session: missing ANALYZER_SESSION_SECRET (or PORTAL_SSO_SECRET)"
+            )
 
         # Rewrite URL to keep only analyzer_session (so Refresh works, and portal_token disappears)
         try:
@@ -564,8 +566,6 @@ if (
             try:
                 st.experimental_set_query_params(**{_QP_SESSION_KEY: session_token})
             except Exception:
-                # If Streamlit cannot rewrite URL for some reason, we still allow this run,
-                # but refresh may not survive.
                 pass
 
         # Clear sensitive keys from session_state (URL no longer has them)
@@ -597,6 +597,17 @@ if (
         st.session_state["email"] = email
         st.session_state["tenant"] = _qp_get("tenant", "")
         st.session_state["user_role"] = _qp_get("role", "") or "member"
+
+        # ✅ Load tenant AI settings (best-effort)
+        if st.session_state.get("tenant"):
+            if (
+                "tenant_ai_settings" not in st.session_state
+                or (st.session_state.get("tenant_ai_settings") or {}).get("tenant") != st.session_state["tenant"]
+            ):
+                st.session_state["tenant_ai_settings"] = load_tenant_ai_settings_from_supabase(
+                    st.session_state["tenant"]
+                )
+
         _apply_portal_lang(lang)
         return
 
@@ -608,6 +619,17 @@ if (
         st.session_state["email"] = st.session_state["user_email"]
         st.session_state["tenant"] = _qp_get("tenant", "") or ""
         st.session_state["user_role"] = _qp_get("role", "") or "demo"
+
+        # ✅ Load tenant AI settings (best-effort)
+        if st.session_state.get("tenant"):
+            if (
+                "tenant_ai_settings" not in st.session_state
+                or (st.session_state.get("tenant_ai_settings") or {}).get("tenant") != st.session_state["tenant"]
+            ):
+                st.session_state["tenant_ai_settings"] = load_tenant_ai_settings_from_supabase(
+                    st.session_state["tenant"]
+                )
+
         _apply_portal_lang(_qp_get("lang", "en"))
         return
 
@@ -615,9 +637,6 @@ if (
     st.session_state["_portal_sso_checked"] = True
     st.session_state["is_authenticated"] = False
     _render_portal_only_block("No valid Portal SSO parameters")
-
-
-
 
 # ===== End Portal-only SSO =====
 import os, json, datetime, secrets
@@ -687,7 +706,6 @@ def ensure_pdf_font():
         PDF_FONT_NAME = "Helvetica"
     finally:
         PDF_FONT_REGISTERED = True
-
 
 
 
