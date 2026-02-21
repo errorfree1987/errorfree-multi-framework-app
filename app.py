@@ -3922,7 +3922,7 @@ def main():
                         data=data,
                         file_name=filename,
                         mime=mime,
-                        key=f"download_{framework_key}_{now_ts}",
+                        key=tenant_namespace("ui", f"download_{framework_key}_{now_ts}").replace("/", "__"),
                     )
 
 
