@@ -2181,6 +2181,29 @@ def render_logo(width: int = 260):
 #     st.write("LOGO =", str(p) if p else "(not found)")
 
 # =========================
+# Tenant namespace helper (D3)
+# =========================
+def tenant_namespace(*parts: str) -> str:
+    """
+    Build a tenant-scoped namespace path.
+    Example:
+      tenant_namespace("reviews", "drafts") -> "tenants/<tenant>/reviews/drafts"
+    """
+    tenant = (st.session_state.get("tenant") or "").strip()
+    if not tenant:
+        return "tenants/unknown"
+
+    safe_parts = []
+    for p in parts:
+        s = (p or "").strip().strip("/")
+        if s:
+            safe_parts.append(s)
+
+    if safe_parts:
+        return "tenants/" + tenant + "/" + "/".join(safe_parts)
+    return "tenants/" + tenant
+    
+# =========================
 # Portal-driven Language Lock + Logout UX
 # =========================
 
