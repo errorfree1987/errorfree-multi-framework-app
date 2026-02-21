@@ -965,7 +965,7 @@ def _framework_file() -> Path:
     Frameworks are normally shipped with the app as ./frameworks.json (repo file).
     D3-B: allow optional tenant override at tenants/<tenant>/data/frameworks.json.
     """
-    tenant_f = Path(tenant_namespace("data", "frameworks.json"))
+    tenant_f = _tenant_data_file("frameworks.json")
     return tenant_f if tenant_f.exists() else Path("frameworks.json")
 
 
