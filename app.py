@@ -860,23 +860,42 @@ def ensure_pdf_font():
 # Company multi-tenant support
 # =========================
 
-COMPANY_FILE = Path("companies.json")
+def _tenant_data_file(filename: str) -> Path:
+    """
+    Tenant-scoped local persistence path (D3-B).
+
+    All on-disk JSON files MUST live under:
+      tenants/<tenant>/data/<filename>
+
+    IMPORTANT:
+    - Compute at CALL time (not import time), because tenant may only be known
+      after Portal SSO verification / analyzer_session verification.
+    """
+    p = Path(tenant_namespace("data", filename))
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    return p
 
 
 def load_companies() -> dict:
-    if not COMPANY_FILE.exists():
+    f = _tenant_data_file("companies.json")
+    if not f.exists():
         return {}
     try:
-        return json.loads(COMPANY_FILE.read_text(encoding="utf-8"))
+        return json.loads(f.read_text(encoding="utf-8"))
     except Exception:
         return {}
 
 
 def save_companies(data: dict):
     try:
-        COMPANY_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        f = _tenant_data_file("companies.json")
+        f.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception:
         pass
+
 
 
 
@@ -892,23 +911,24 @@ ACCOUNTS = {
     "test@errorfree.com": {"password": "3333", "role": "pro"},
 }
 
-GUEST_FILE = Path("guest_accounts.json")
-
 
 def load_guest_accounts() -> Dict[str, Dict]:
-    if not GUEST_FILE.exists():
+    f = _tenant_data_file("guest_accounts.json")
+    if not f.exists():
         return {}
     try:
-        return json.loads(GUEST_FILE.read_text(encoding="utf-8"))
+        return json.loads(f.read_text(encoding="utf-8"))
     except Exception:
         return {}
 
 
 def save_guest_accounts(data: Dict[str, Dict]):
     try:
-        GUEST_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        f = _tenant_data_file("guest_accounts.json")
+        f.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
+
 
 
 
@@ -918,15 +938,22 @@ def save_guest_accounts(data: Dict[str, Dict]):
 # Framework definitions (external JSON)
 # =========================
 
-FRAMEWORK_FILE = Path("frameworks.json")
+def _framework_file() -> Path:
+    """
+    Frameworks are normally shipped with the app as ./frameworks.json (repo file).
+    D3-B: allow optional tenant override at tenants/<tenant>/data/frameworks.json.
+    """
+    tenant_f = Path(tenant_namespace("data", "frameworks.json"))
+    return tenant_f if tenant_f.exists() else Path("frameworks.json")
 
 
 def load_frameworks() -> Dict[str, Dict]:
     """Load framework definitions from an external JSON file."""
-    if not FRAMEWORK_FILE.exists():
+    f = _framework_file()
+    if not f.exists():
         return {}
     try:
-        return json.loads(FRAMEWORK_FILE.read_text(encoding="utf-8"))
+        return json.loads(f.read_text(encoding="utf-8"))
     except Exception:
         return {}
 
@@ -935,43 +962,45 @@ FRAMEWORKS: Dict[str, Dict] = load_frameworks()
 
 
 
+
+
+
 # =========================
 # State persistence & usage tracking (4A)
 # =========================
 
-STATE_FILE = Path("user_state.json")
-DOC_TRACK_FILE = Path("user_docs.json")
-USAGE_FILE = Path("usage_stats.json")  # 使用量統計
-
-
 def load_doc_tracking() -> Dict[str, List[str]]:
-    if not DOC_TRACK_FILE.exists():
+    f = _tenant_data_file("user_docs.json")
+    if not f.exists():
         return {}
     try:
-        return json.loads(DOC_TRACK_FILE.read_text(encoding="utf-8"))
+        return json.loads(f.read_text(encoding="utf-8"))
     except Exception:
         return {}
 
 
 def save_doc_tracking(data: Dict[str, List[str]]):
     try:
-        DOC_TRACK_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        f = _tenant_data_file("user_docs.json")
+        f.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
 
 
 def load_usage_stats() -> Dict[str, Dict]:
-    if not USAGE_FILE.exists():
+    f = _tenant_data_file("usage_stats.json")
+    if not f.exists():
         return {}
     try:
-        return json.loads(USAGE_FILE.read_text(encoding="utf-8"))
+        return json.loads(f.read_text(encoding="utf-8"))
     except Exception:
         return {}
 
 
 def save_usage_stats(data: Dict[str, Dict]):
     try:
-        USAGE_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        f = _tenant_data_file("usage_stats.json")
+        f.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception:
         pass
 
@@ -1011,7 +1040,11 @@ def save_state_to_disk():
     """
     SECURITY NOTE:
     Do NOT persist authentication identity to disk on a shared server.
-    user_state.json is shared across users in the same deployment.
+
+    D3-B note:
+    This file is tenant-scoped (tenants/<tenant>/data/user_state.json), but is still
+    shared by ALL users within the same tenant deployment.
+
     Persist only review/session workflow state, NOT login identity.
     """
     data = {
@@ -1055,7 +1088,8 @@ def save_state_to_disk():
         "_pending_clear_followup_key": st.session_state.get("_pending_clear_followup_key"),
     }
     try:
-        STATE_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        f = _tenant_data_file("user_state.json")
+        f.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
 
@@ -1066,10 +1100,11 @@ def restore_state_from_disk():
     Never restore authentication identity from disk.
     Only restore workflow/UI state.
     """
-    if not STATE_FILE.exists():
+    f = _tenant_data_file("user_state.json")
+    if not f.exists():
         return
     try:
-        data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        data = json.loads(f.read_text(encoding="utf-8"))
     except Exception:
         return
 
