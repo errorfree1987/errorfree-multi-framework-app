@@ -2755,7 +2755,7 @@ def main():
     # and BEFORE any login UI is rendered.
     try_portal_sso_login()
         # Sidebar (Portal language is locked; do not show mixed-language UI)
-    with st.sidebar:
+  with st.sidebar:
     st.header(
         "🧭 "
         + (
@@ -2806,9 +2806,7 @@ def main():
 
         email = st.session_state.get("user_email", "")
         if email:
-            st.markdown(
-                f"Email: [{email}](mailto:{email})" if not is_zh else f"Email：[{email}](mailto:{email})"
-            )
+            st.markdown(f"Email: [{email}](mailto:{email})" if not is_zh else f"Email：[{email}](mailto:{email})")
 
         if st.button("Logout" if not is_zh else "登出"):
             do_logout()
