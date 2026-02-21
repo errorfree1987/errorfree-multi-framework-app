@@ -2956,10 +2956,11 @@ def main():
     st.sidebar.caption(f"Reviews path: {tenant_namespace('reviews')}")
         # D3-B Step9: Tenant review history (Supabase)
         # D3-B Step12: Tenant review history ( Latest 20 ) — checkbox on same row + colored badges
-    c1, c2 = st.sidebar.columns([12, 1])
-    with c1:
+        # Header: put checkbox right next to the title (not flush-right)
+    tcol, cbcol, _spacer = st.sidebar.columns([11, 2, 17])
+    with tcol:
         st.caption("Review history ( Latest 20 )")
-    with c2:
+    with cbcol:
         show_history = st.checkbox(
             "review_history_toggle",
             value=False,
