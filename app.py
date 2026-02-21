@@ -2955,15 +2955,13 @@ def main():
     st.sidebar.caption(f"Namespace: {tenant_namespace()}")
     st.sidebar.caption(f"Reviews path: {tenant_namespace('reviews')}")
         # D3-B Step9: Tenant review history (Supabase)
-        # D3-B Step11: Tenant review history (Latest 20) — aligned with sidebar captions
-    c1, c2, c3 = st.sidebar.columns([8, 2, 1])
+        # D3-B Step12: Tenant review history ( Latest 20 ) — checkbox on same row + colored badges
+    c1, c2 = st.sidebar.columns([12, 1])
     with c1:
         st.caption("Review history ( Latest 20 )")
     with c2:
-        st.caption("Show")
-    with c3:
         show_history = st.checkbox(
-            "show_review_history",
+            "review_history_toggle",
             value=False,
             label_visibility="collapsed",
             key=tenant_namespace("ui", "show_review_history").replace("/", "__"),
@@ -2988,9 +2986,12 @@ def main():
                 rid = (r.get("id") or "")
                 rid8 = rid[:8] if rid else "-"
 
-                # two-line compact caption style (matches Tenant/Provider/Model lines)
-                st.sidebar.caption(f"{created_at}  |  {fw}  |  {doc}")
-                st.sidebar.caption(f"{short_dl}  ·  {rid8}")
+                # Markdown + backticks => colored "badge" look like before
+                st.sidebar.markdown(
+                    f"- `{created_at}` **{fw}**  \n"
+                    f"  {doc}  \n"
+                    f"  {short_dl} · `{rid8}`"
+                )
 
         if st.session_state.get("_last_reviews_read_error"):
             st.sidebar.caption(f"Read error: {st.session_state.get('_last_reviews_read_error')}")
