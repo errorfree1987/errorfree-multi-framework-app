@@ -231,9 +231,53 @@ def _sign_payload(payload_b64: str, secret: str) -> str:
     return hmac.new(secret.encode("utf-8"), payload_b64.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
+def _get_tenant_epoch_from_supabase(tenant: str) -> int | None:
+    """
+    Read tenant_session_epoch.epoch for a tenant.
+    Returns:
+      - int epoch (>=0) if query succeeds (even if row missing -> 0)
+      - None if cannot check (missing env / request error)
+    Security/availability tradeoff:
+      - If None -> we skip epoch check (best-effort), so system won't lock everyone out on transient DB issues.
+    """
+    tenant = (tenant or "").strip()
+    if not tenant:
+        return 0
+
+    supabase_url = (os.getenv("SUPABASE_URL", "") or "").strip().rstrip("/")
+    service_key = (os.getenv("SUPABASE_SERVICE_KEY", "") or "").strip()
+
+    if not supabase_url or not service_key:
+        return None
+
+    endpoint = f"{supabase_url}/rest/v1/tenant_session_epoch"
+    params = {"select": "epoch", "tenant": f"eq.{tenant}", "limit": "1"}
+    headers = {
+        "apikey": service_key,
+        "Authorization": f"Bearer {service_key}",
+        "Accept": "application/json",
+    }
+
+    try:
+        r = requests.get(endpoint, params=params, headers=headers, timeout=10)
+        if r.status_code != 200:
+            return None
+        rows = r.json() or []
+        if not rows:
+            return 0
+        epoch = rows[0].get("epoch", 0)
+        try:
+            return int(epoch)
+        except Exception:
+            return 0
+    except Exception:
+        return None
+
+
 def mint_analyzer_session(claims: dict) -> str:
     """
     claims must include: email, tenant, role, exp (unix seconds)
+    We also embed tenant session epoch for server-side revoke.
     """
     if not ANALYZER_SESSION_SECRET:
         return ""
@@ -243,6 +287,17 @@ def mint_analyzer_session(claims: dict) -> str:
     payload.setdefault("iat", now)
     payload.setdefault("exp", now + ANALYZER_SESSION_TTL_SECONDS)
 
+    # Embed epoch (default 0). If we can read current epoch from Supabase, use it.
+    tenant = (payload.get("tenant") or "").strip()
+    if "epoch" not in payload:
+        current_epoch = _get_tenant_epoch_from_supabase(tenant)
+        payload["epoch"] = int(current_epoch) if current_epoch is not None else 0
+    else:
+        try:
+            payload["epoch"] = int(payload.get("epoch") or 0)
+        except Exception:
+            payload["epoch"] = 0
+
     payload_json = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     payload_b64 = _b64url_encode(payload_json)
     sig = _sign_payload(payload_b64, ANALYZER_SESSION_SECRET)
@@ -250,6 +305,11 @@ def mint_analyzer_session(claims: dict) -> str:
 
 
 def verify_analyzer_session(token: str) -> dict | None:
+    """
+    Verify signature + exp + required fields.
+    Then (best-effort) verify tenant epoch matches Supabase.
+    If epoch mismatches -> revoked -> reject.
+    """
     if not token or "." not in token:
         return None
     if not ANALYZER_SESSION_SECRET:
@@ -281,6 +341,19 @@ def verify_analyzer_session(token: str) -> dict | None:
     if not email or not tenant or not role:
         return None
 
+    # Epoch check (best-effort)
+    try:
+        token_epoch = int(payload.get("epoch", 0) or 0)
+    except Exception:
+        token_epoch = 0
+
+    current_epoch = _get_tenant_epoch_from_supabase(tenant)
+    if current_epoch is not None:
+        if token_epoch != int(current_epoch):
+            # revoked / rotated
+            return None
+
+    payload["epoch"] = token_epoch
     return payload
 
 
