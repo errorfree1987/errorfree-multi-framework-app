@@ -2570,6 +2570,18 @@ def main():
             else:
                 st.markdown("**語言：** `zh-tw`（由 Portal 鎖定）")
 
+                # --- Tenant AI settings (safe debug / no secrets) ---
+        tas = st.session_state.get("tenant_ai_settings") or {}
+        tenant_dbg = st.session_state.get("tenant") or ""
+        source = tas.get("source") or "unknown"
+        provider = tas.get("provider") or "(default)"
+        model = tas.get("model") or "(default)"
+
+        st.caption(f"Tenant: {tenant_dbg}")
+        st.caption(f"AI settings source: {source}")
+        st.caption(f"Provider: {provider}")
+        st.caption(f"Model: {model}")
+
         # Account section (only if authenticated)
         if st.session_state.get("is_authenticated"):
             st.markdown("---")
