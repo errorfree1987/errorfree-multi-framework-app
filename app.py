@@ -1,61 +1,407 @@
 import streamlit as st
 import os
-# ===== Error-Free® Portal-only SSO (Portal is the ONLY entry) =====
-# Analyzer MUST NOT show any internal login UI when Portal SSO is enforced.
-# Portal should open Analyzer with query params:
-#   email=<user email>&lang=<en|zh-tw|zh-cn>&ts=<unix seconds>&token=<hmac sha256 hex>
-# token = HMAC_SHA256(PORTAL_SSO_SECRET, f"{email}|{normalized_lang}|{ts}")
-#
-# Transitional support (staging only):
-#   You may also pass: portal_token=demo-from-portal&email=...
-#   Controlled by env: ALLOW_DEMO_PORTAL_TOKEN (default: false for safety)
-#
-# Railway Variables (minimum):
-#   PORTAL_BASE_URL
-#   PORTAL_SSO_SECRET
-#
 import hmac
 import hashlib
 import time
+import requests
+# =========================
+# Tenant AI Settings (D4)
+# Read from Supabase (server-side)
+# =========================
+import os
+import requests
 
-PORTAL_BASE_URL = (os.getenv("PORTAL_BASE_URL", "") or "").strip()
-PORTAL_SSO_SECRET = (os.getenv("PORTAL_SSO_SECRET", "") or "").strip()
-SSO_MAX_AGE_SECONDS = int(os.getenv("SSO_MAX_AGE_SECONDS", "300") or "300")  # 5 minutes default
+def load_tenant_ai_settings_from_supabase(tenant: str) -> dict:
+    """
+    Server-side only. Reads public.tenant_ai_settings by tenant.
+    Requires Railway env:
+      - SUPABASE_URL
+      - SUPABASE_SERVICE_KEY   (service_role key; DO NOT expose to frontend)
+    """
+    supabase_url = os.getenv("SUPABASE_URL", "").strip()
+    service_key = os.getenv("SUPABASE_SERVICE_KEY", "").strip()
 
-ALLOW_DEMO_PORTAL_TOKEN = (os.getenv("ALLOW_DEMO_PORTAL_TOKEN", "") or "").lower() in ("1","true","yes","y","on")
-DEMO_EXPECTED_TOKEN = "demo-from-portal"  # only used when ALLOW_DEMO_PORTAL_TOKEN=true
+    if not supabase_url or not service_key:
+        # Fail closed-ish: return minimal defaults (keeps app running but signals misconfig)
+        return {
+            "tenant": tenant,
+            "provider": "openai_compatible",
+            "base_url": None,
+            "model": None,
+            "api_key_ref": None,
+            "max_tokens_per_request": None,
+            "source": "missing_env",
+        }
 
+    # PostgREST endpoint
+    endpoint = f"{supabase_url}/rest/v1/tenant_ai_settings"
+    params = {
+        "select": "tenant,provider,base_url,model,api_key_ref,max_tokens_per_request",
+        "tenant": f"eq.{tenant}",
+        "limit": "1",
+    }
+    headers = {
+        "apikey": service_key,
+        "Authorization": f"Bearer {service_key}",
+        "Accept": "application/json",
+    }
 
-def _qp_get(key: str) -> str:
-    # Streamlit newer API
     try:
-        v = st.query_params.get(key)
-        if v is None:
-            return ""
-        if isinstance(v, list):
-            return v[0] if v else ""
-        return str(v)
+        resp = requests.get(endpoint, params=params, headers=headers, timeout=10)
+        if resp.status_code != 200:
+            return {
+                "tenant": tenant,
+                "provider": "openai_compatible",
+                "base_url": None,
+                "model": None,
+                "api_key_ref": None,
+                "max_tokens_per_request": None,
+                "source": f"http_{resp.status_code}",
+            }
+
+        rows = resp.json() or []
+        if not rows:
+            return {
+                "tenant": tenant,
+                "provider": "openai_compatible",
+                "base_url": None,
+                "model": None,
+                "api_key_ref": None,
+                "max_tokens_per_request": None,
+                "source": "not_found",
+            }
+
+        row = rows[0]
+        row["source"] = "supabase"
+        return row
+
+    except Exception as e:
+        return {
+            "tenant": tenant,
+            "provider": "openai_compatible",
+            "base_url": None,
+            "model": None,
+            "api_key_ref": None,
+            "max_tokens_per_request": None,
+            "source": f"exception:{type(e).__name__}",
+        }
+
+# ===== Error-Free® Portal-only SSO (Portal is the ONLY entry) =====
+# Analyzer MUST NOT show any internal login UI when Portal SSO is enforced.
+#
+# Portal opens Analyzer with query params (recommended):
+#   ?portal_token=<one-time token>&email=<user email>&tenant=<tenant>&lang=<en|zh-tw|zh-cn>
+#
+# Analyzer will call Portal API:
+#   POST {PORTAL_SSO_VERIFY_URL or PORTAL_BASE_URL + "/sso/verify"}
+#   body: {"token": "<portal_token>"}
+#
+# Transitional support (staging only):
+#   ALLOW_DEMO_PORTAL_TOKEN=true and portal_token=demo-from-portal
+#
+# Optional legacy support:
+#   email=<...>&lang=<...>&ts=<unix>&token=<hmac>-
+# token = HMAC_SHA256(PORTAL_SSO_SECRET, f"{email}|{normalized_lang}|{ts}")
+#
+# Railway Variables (minimum):
+#   PORTAL_BASE_URL
+# Recommended:
+#   PORTAL_SSO_VERIFY_URL   (optional; if not set, use {PORTAL_BASE_URL}/sso/verify)
+#   PORTAL_SSO_SECRET       (only needed if you still use legacy HMAC mode)
+# ===== End Header =====
+
+
+# -----------------------------
+# Query params helpers (新版 st.query_params 為主，舊版為 fallback)
+# -----------------------------
+def _read_query_params() -> dict:
+    qp_obj = getattr(st, "query_params", None)
+    if qp_obj is not None:
+        try:
+            return dict(qp_obj)
+        except Exception:
+            pass
+
+    fn = getattr(st, "experimental_get_query_params", None)
+    if callable(fn):
+        try:
+            return fn() or {}
+        except Exception:
+            return {}
+    return {}
+
+
+def _norm_qp_value(v, default: str = "") -> str:
+    if v is None:
+        return default
+    if isinstance(v, list):
+        return str(v[0]) if v else default
+    s = str(v)
+    return s if s != "" else default
+
+
+def _qp_get(key: str, default: str = "") -> str:
+    """
+    統一取值順序：
+    1) session_state（最穩定）
+    2) URL query params
+    """
+    try:
+        v = st.session_state.get(key)
+        if v is not None and str(v) != "":
+            return str(v)
     except Exception:
         pass
-    # Streamlit older API
-    try:
-        qp = st.experimental_get_query_params()
-        arr = qp.get(key, [""])
-        return arr[0] if arr else ""
-    except Exception:
-        return ""
+
+    qp = _read_query_params()
+    return _norm_qp_value(qp.get(key), default)
 
 
 def _qp_clear_all():
+    # 清掉 URL 上的 token，避免留在網址列
     try:
         st.query_params.clear()
-        return
     except Exception:
-        pass
+        try:
+            st.experimental_set_query_params()
+        except Exception:
+            pass
+
+    # ✅ ALSO clear sensitive fields from session_state (cleaner Portal-only gate)
+    for k in ["portal_token", "token", "ts", "analyzer_session"]:
+        try:
+            if k in st.session_state:
+                st.session_state.pop(k, None)
+        except Exception:
+            pass
+
+
+# 先讀一次 URL qp，立刻寫入 session_state（避免 rerun / 清參數後讀不到）
+_qp = _read_query_params()
+for k in ["portal_token", "email", "tenant", "lang", "ts", "token", "role"]:
+    v = _norm_qp_value(_qp.get(k), "")
+    if v:
+        st.session_state[k] = v
+
+# Debug（預設不顯示；要看再到 Railway variables 設 DEBUG_SSO=true）
+if (os.getenv("DEBUG_SSO", "") or "").lower() in ("1", "true", "yes", "y", "on"):
+    st.info(f"[DEBUG] qp keys = {list(_qp.keys())}")
+    st.info(f"[DEBUG] qp portal_token = {_norm_qp_value(_qp.get('portal_token'))}")
+    st.info(f"[DEBUG] state portal_token = {st.session_state.get('portal_token')}")
+    st.info(f"[DEBUG] state email = {st.session_state.get('email')}, tenant = {st.session_state.get('tenant')}, lang = {st.session_state.get('lang')}")
+
+
+# -----------------------------
+# Config
+# -----------------------------
+PORTAL_BASE_URL = (os.getenv("PORTAL_BASE_URL", "") or "").strip().rstrip("/")
+PORTAL_SSO_VERIFY_URL = (os.getenv("PORTAL_SSO_VERIFY_URL", "") or "").strip()
+PORTAL_SSO_SECRET = (os.getenv("PORTAL_SSO_SECRET", "") or "").strip()
+SSO_MAX_AGE_SECONDS = int(os.getenv("SSO_MAX_AGE_SECONDS", "300") or "300")  # 5 minutes default
+
+ALLOW_DEMO_PORTAL_TOKEN = (os.getenv("ALLOW_DEMO_PORTAL_TOKEN", "") or "").lower() in (
+    "1", "true", "yes", "y", "on"
+)
+DEMO_EXPECTED_TOKEN = "demo-from-portal"
+# -----------------------------
+# Analyzer session (survive browser refresh without reusing portal_token)
+# - We mint a signed short-lived "analyzer_session" and store it in browser localStorage.
+# - On a fresh session (after F5), JS will restore it into URL temporarily, then we verify and clear URL again.
+# -----------------------------
+ANALYZER_SESSION_SECRET = (os.getenv("ANALYZER_SESSION_SECRET", "") or "").strip() or PORTAL_SSO_SECRET
+ANALYZER_SESSION_TTL_SECONDS = int(os.getenv("ANALYZER_SESSION_TTL_SECONDS", "3600") or "3600")  # default 1 hour
+
+_BROWSER_LS_KEY = "ef_analyzer_session_v1"
+_QP_SESSION_KEY = "analyzer_session"
+
+
+def _b64url_encode(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("utf-8").rstrip("=")
+
+
+def _b64url_decode(s: str) -> bytes:
+    s = (s or "").strip()
+    if not s:
+        return b""
+    pad = "=" * ((4 - (len(s) % 4)) % 4)
+    return base64.urlsafe_b64decode((s + pad).encode("utf-8"))
+
+
+def _sign_payload(payload_b64: str, secret: str) -> str:
+    return hmac.new(secret.encode("utf-8"), payload_b64.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _get_tenant_epoch_from_supabase(tenant: str) -> int | None:
+    """
+    Read tenant_session_epoch.epoch for a tenant.
+    Returns:
+      - int epoch (>=0) if query succeeds (even if row missing -> 0)
+      - None if cannot check (missing env / request error)
+    Security/availability tradeoff:
+      - If None -> we skip epoch check (best-effort), so system won't lock everyone out on transient DB issues.
+    """
+    tenant = (tenant or "").strip()
+    if not tenant:
+        return 0
+
+    supabase_url = (os.getenv("SUPABASE_URL", "") or "").strip().rstrip("/")
+    service_key = (os.getenv("SUPABASE_SERVICE_KEY", "") or "").strip()
+
+    if not supabase_url or not service_key:
+        return None
+
+    endpoint = f"{supabase_url}/rest/v1/tenant_session_epoch"
+    params = {"select": "epoch", "tenant": f"eq.{tenant}", "limit": "1"}
+    headers = {
+        "apikey": service_key,
+        "Authorization": f"Bearer {service_key}",
+        "Accept": "application/json",
+    }
+
     try:
-        st.experimental_set_query_params()
+        r = requests.get(endpoint, params=params, headers=headers, timeout=10)
+        if r.status_code != 200:
+            return None
+        rows = r.json() or []
+        if not rows:
+            return 0
+        epoch = rows[0].get("epoch", 0)
+        try:
+            return int(epoch)
+        except Exception:
+            return 0
     except Exception:
-        pass
+        return None
+
+
+def mint_analyzer_session(claims: dict) -> str:
+    """
+    claims must include: email, tenant, role, exp (unix seconds)
+    We also embed tenant session epoch for server-side revoke.
+    """
+    if not ANALYZER_SESSION_SECRET:
+        return ""
+
+    payload = dict(claims or {})
+    now = int(time.time())
+    payload.setdefault("iat", now)
+    payload.setdefault("exp", now + ANALYZER_SESSION_TTL_SECONDS)
+
+    # Embed epoch (default 0). If we can read current epoch from Supabase, use it.
+    tenant = (payload.get("tenant") or "").strip()
+    if "epoch" not in payload:
+        current_epoch = _get_tenant_epoch_from_supabase(tenant)
+        payload["epoch"] = int(current_epoch) if current_epoch is not None else 0
+    else:
+        try:
+            payload["epoch"] = int(payload.get("epoch") or 0)
+        except Exception:
+            payload["epoch"] = 0
+
+    payload_json = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    payload_b64 = _b64url_encode(payload_json)
+    sig = _sign_payload(payload_b64, ANALYZER_SESSION_SECRET)
+    return f"{payload_b64}.{sig}"
+
+
+def verify_analyzer_session(token: str) -> dict | None:
+    """
+    Verify signature + exp + required fields.
+    Then (best-effort) verify tenant epoch matches Supabase.
+    If epoch mismatches -> revoked -> reject.
+    """
+    if not token or "." not in token:
+        return None
+    if not ANALYZER_SESSION_SECRET:
+        return None
+
+    payload_b64, sig = token.split(".", 1)
+    expected = _sign_payload(payload_b64, ANALYZER_SESSION_SECRET)
+    if not hmac.compare_digest(expected, sig):
+        return None
+
+    try:
+        payload = json.loads(_b64url_decode(payload_b64).decode("utf-8"))
+    except Exception:
+        return None
+
+    try:
+        exp = int(payload.get("exp", 0))
+    except Exception:
+        exp = 0
+
+    if exp <= 0 or int(time.time()) > exp:
+        return None
+
+    # minimal required
+    email = (payload.get("email") or "").strip().lower()
+    tenant = (payload.get("tenant") or "").strip()
+    role = (payload.get("role") or "").strip()
+
+    if not email or not tenant or not role:
+        return None
+
+    # Epoch check (best-effort)
+    try:
+        token_epoch = int(payload.get("epoch", 0) or 0)
+    except Exception:
+        token_epoch = 0
+
+    current_epoch = _get_tenant_epoch_from_supabase(tenant)
+    if current_epoch is not None:
+        if token_epoch != int(current_epoch):
+            # revoked / rotated
+            return None
+
+    payload["epoch"] = token_epoch
+    return payload
+
+
+def _store_session_to_browser(session_token: str):
+    if not session_token:
+        return
+    # Store into localStorage
+    components.html(
+        f"""
+<script>
+(function(){{
+  try {{
+    localStorage.setItem({json.dumps(_BROWSER_LS_KEY)}, {json.dumps(session_token)});
+  }} catch(e) {{}}
+}})();
+</script>
+        """,
+        height=0,
+    )
+
+
+def _inject_restore_session_js():
+    """
+    If browser has localStorage session, restore into URL temporarily as ?analyzer_session=...
+    (Python will read it, verify, then clear URL again.)
+    """
+    components.html(
+        f"""
+<script>
+(function(){{
+  try {{
+    const k = {json.dumps(_BROWSER_LS_KEY)};
+    const qpKey = {json.dumps(_QP_SESSION_KEY)};
+    const t = localStorage.getItem(k);
+    if(!t) return;
+
+    const u = new URL(window.location.href);
+    if(u.searchParams.get(qpKey)) return;           // already present
+    if(u.searchParams.get("portal_token")) return;  // Portal path should win
+
+    u.searchParams.set(qpKey, t);
+    window.location.replace(u.toString());
+  }} catch(e) {{}}
+}})();
+</script>
+        """,
+        height=0,
+    )
 
 
 def _normalize_lang(raw: str) -> str:
@@ -82,12 +428,15 @@ def _apply_portal_lang(lang_raw: str):
     st.session_state["_lang_locked"] = True
 
 
+# -----------------------------
+# Legacy HMAC verify (optional)
+# -----------------------------
 def _compute_sig(email: str, lang_norm: str, ts: str, secret: str) -> str:
     msg = f"{email}|{lang_norm}|{ts}".encode("utf-8")
     return hmac.new(secret.encode("utf-8"), msg, hashlib.sha256).hexdigest()
 
 
-def _verify_portal_sso(email: str, lang_raw: str, ts: str, token: str) -> (bool, str):
+def _verify_hmac_sso(email: str, lang_raw: str, ts: str, token: str) -> (bool, str):
     if not email:
         return False, "Missing email"
     if not ts:
@@ -127,49 +476,310 @@ def _render_portal_only_block(reason: str = ""):
     st.stop()
 
 
+def _portal_verify_via_api(portal_token: str) -> (bool, str, dict):
+    """
+    Call Portal /sso/verify
+    Expect response JSON like:
+      { "status":"ok", "email":"...", "company_id":"...", "analyzer_id":"..." }
+    """
+    if not portal_token:
+        return False, "Missing portal_token", {}
+
+    verify_url = PORTAL_SSO_VERIFY_URL.strip()
+    if not verify_url:
+        if not PORTAL_BASE_URL:
+            return False, "Missing PORTAL_BASE_URL (or PORTAL_SSO_VERIFY_URL)", {}
+        verify_url = f"{PORTAL_BASE_URL}/sso/verify"
+
+    try:
+        r = requests.post(
+            verify_url,
+            json={"token": portal_token},
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            timeout=15,
+        )
+    except Exception as e:
+        return False, f"Portal verify request failed: {e}", {}
+
+    if r.status_code != 200:
+        try:
+            j = r.json()
+            msg = j.get("message") or j.get("detail") or str(j)
+        except Exception:
+            msg = (r.text or "")[:200]
+        return False, f"Portal verify {r.status_code}: {msg}", {}
+
+    try:
+        data = r.json() or {}
+    except Exception:
+        return False, "Portal verify: invalid JSON response", {}
+
+    status = str(data.get("status", "")).lower()
+    if status not in ("ok", "success", "200", "true"):
+        return False, f"Portal verify returned non-ok: {data}", data
+
+    return True, "OK", data
+
 def try_portal_sso_login():
-    # Only check once per session
+    """
+    Portal-only SSO entry guard (refresh-safe version) + tenant revoke (epoch).
+
+    ✅ 核心策略：
+    - 第一次由 Portal 帶 portal_token 進來 -> Portal /sso/verify 成功後
+      mint analyzer_session，並把 URL 改成只保留 ?analyzer_session=...
+    - Refresh 時 URL 還在 -> 用 analyzer_session 放行
+    - ✅ Revoke：比對 tenant_session_epoch.epoch，不一致立刻拒絕（舊 token 立即失效）
+    """
+
+    def _extract_epoch_from_session_token(tok: str) -> int:
+        """Read epoch from the signed session token payload (best-effort)."""
+        try:
+            if not tok or "." not in tok:
+                return 0
+            payload_b64 = tok.split(".", 1)[0]
+            payload = json.loads(_b64url_decode(payload_b64).decode("utf-8"))
+            return int(payload.get("epoch", 0) or 0)
+        except Exception:
+            return 0
+
+    def _get_epoch_strict(tenant: str) -> int:
+        """
+        STRICT epoch fetch: must return an int.
+        If cannot fetch epoch (env missing / HTTP error), we BLOCK (fail-closed),
+        so revoke is always enforceable.
+        """
+        tenant = (tenant or "").strip()
+        if not tenant:
+            return 0
+
+        supabase_url = (os.getenv("SUPABASE_URL", "") or "").strip().rstrip("/")
+        service_key = (os.getenv("SUPABASE_SERVICE_KEY", "") or "").strip()
+
+        if not supabase_url or not service_key:
+            _render_portal_only_block("Epoch check unavailable: missing SUPABASE_URL / SUPABASE_SERVICE_KEY")
+
+        endpoint = f"{supabase_url}/rest/v1/tenant_session_epoch"
+        params = {"select": "epoch", "tenant": f"eq.{tenant}", "limit": "1"}
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Accept": "application/json",
+        }
+
+        try:
+            r = requests.get(endpoint, params=params, headers=headers, timeout=10)
+        except Exception as e:
+            _render_portal_only_block(f"Epoch check failed: {e}")
+
+        if r.status_code != 200:
+            _render_portal_only_block(f"Epoch check HTTP {r.status_code}: {(r.text or '')[:120]}")
+
+        try:
+            rows = r.json() or []
+        except Exception:
+            _render_portal_only_block("Epoch check failed: invalid JSON")
+
+        if not rows:
+            return 0
+
+        try:
+            return int(rows[0].get("epoch", 0) or 0)
+        except Exception:
+            return 0
+
+    def _enforce_epoch_or_block(tenant: str, token_epoch: int):
+        """If epoch mismatch => revoked => block immediately."""
+        current_epoch = _get_epoch_strict(tenant)
+        if int(token_epoch) != int(current_epoch):
+            _render_portal_only_block("Session revoked (tenant epoch mismatch). Please re-enter from Portal.")
+
+    # 0) Already authenticated in this Streamlit session
+    if st.session_state.get("is_authenticated") and st.session_state.get("user_email"):
+        st.session_state["_portal_sso_checked"] = True
+        return
+
+    # Only check once per Streamlit session
     if st.session_state.get("_portal_sso_checked", False):
         return
 
-    # 1) Preferred: HMAC-based SSO
-    email = _qp_get("email")
-    lang = _qp_get("lang")
-    ts = _qp_get("ts")
-    token = _qp_get("token")
+    # 1) analyzer_session in URL -> verify locally -> allow (KEEP it in URL for refresh)
+    sess_tok = _qp_get(_QP_SESSION_KEY, "")
+    if sess_tok:
+        payload = verify_analyzer_session(sess_tok)
+        if payload:
+            tenant_from_payload = (payload.get("tenant") or "").strip()
+            token_epoch = _extract_epoch_from_session_token(sess_tok)
 
-    if email and token and ts:
-        ok, why = _verify_portal_sso(email=email, lang_raw=lang, ts=ts, token=token)
+            # ✅ ENFORCE revoke here (THIS is what makes old tokens die immediately)
+            _enforce_epoch_or_block(tenant_from_payload, token_epoch)
+
+            st.session_state["_portal_sso_checked"] = True
+            st.session_state["is_authenticated"] = True
+
+            st.session_state["user_email"] = (payload.get("email") or "").strip().lower()
+            st.session_state["email"] = st.session_state["user_email"]
+            st.session_state["tenant"] = tenant_from_payload
+            st.session_state["user_role"] = (payload.get("role") or "").strip() or "member"
+
+            # ✅ Load tenant AI settings (once per tenant)
+            if (
+                "tenant_ai_settings" not in st.session_state
+                or (st.session_state.get("tenant_ai_settings") or {}).get("tenant") != st.session_state["tenant"]
+            ):
+                st.session_state["tenant_ai_settings"] = load_tenant_ai_settings_from_supabase(
+                    st.session_state["tenant"]
+                )
+
+            if "company_id" in payload:
+                st.session_state["company_id"] = payload.get("company_id") or ""
+            if "analyzer_id" in payload:
+                st.session_state["analyzer_id"] = payload.get("analyzer_id") or ""
+
+            _apply_portal_lang(payload.get("lang") or _qp_get("lang", "en"))
+            return
+        # sess_tok exists but invalid/expired -> continue to Portal token path or block
+
+    # 2) portal_token -> call Portal /sso/verify (one-time) -> mint analyzer_session -> rewrite URL
+    portal_token = _qp_get("portal_token", "")
+    if portal_token:
+        ok, why, data = _portal_verify_via_api(portal_token)
         if not ok:
             st.session_state["_portal_sso_checked"] = True
             st.session_state["is_authenticated"] = False
             _render_portal_only_block(why)
 
-        # success
+        verified_email = (data.get("email") or "").strip().lower()
+        tenant = (data.get("tenant") or data.get("tenant_slug") or "").strip()
+        role = (data.get("role") or "").strip() or "member"
+
+        if not verified_email:
+            st.session_state["_portal_sso_checked"] = True
+            st.session_state["is_authenticated"] = False
+            _render_portal_only_block("Portal verify succeeded but email is missing")
+        if not tenant:
+            st.session_state["_portal_sso_checked"] = True
+            st.session_state["is_authenticated"] = False
+            _render_portal_only_block("Portal verify succeeded but tenant is missing")
+
+        st.session_state["_portal_sso_checked"] = True
+        st.session_state["is_authenticated"] = True
+        st.session_state["user_email"] = verified_email
+        st.session_state["email"] = verified_email
+        st.session_state["tenant"] = tenant
+        st.session_state["user_role"] = role
+
+        # ✅ Load tenant AI settings (once per tenant)
+        if (
+            "tenant_ai_settings" not in st.session_state
+            or (st.session_state.get("tenant_ai_settings") or {}).get("tenant") != st.session_state["tenant"]
+        ):
+            st.session_state["tenant_ai_settings"] = load_tenant_ai_settings_from_supabase(
+                st.session_state["tenant"]
+            )
+
+        if "company_id" in data:
+            st.session_state["company_id"] = data.get("company_id") or ""
+        if "analyzer_id" in data:
+            st.session_state["analyzer_id"] = data.get("analyzer_id") or ""
+
+        lang_raw = _qp_get("lang", "en")
+        _apply_portal_lang(lang_raw)
+
+        # ✅ IMPORTANT: embed current tenant epoch into the session token (so it can be revoked)
+        current_epoch = _get_epoch_strict(tenant)
+
+        # Mint refresh-safe analyzer_session
+        claims = {
+            "email": verified_email,
+            "tenant": tenant,
+            "role": role,
+            "company_id": data.get("company_id") or "",
+            "analyzer_id": data.get("analyzer_id") or "",
+            "lang": _normalize_lang(lang_raw),
+            "epoch": int(current_epoch),
+        }
+        session_token = mint_analyzer_session(claims)
+        if not session_token:
+            _render_portal_only_block(
+                "Cannot mint analyzer_session: missing ANALYZER_SESSION_SECRET (or PORTAL_SSO_SECRET)"
+            )
+
+        # Rewrite URL to keep only analyzer_session (so Refresh works, and portal_token disappears)
+        try:
+            st.query_params.clear()
+            st.query_params[_QP_SESSION_KEY] = session_token
+        except Exception:
+            try:
+                st.experimental_set_query_params(**{_QP_SESSION_KEY: session_token})
+            except Exception:
+                pass
+
+        # Clear sensitive keys from session_state (URL no longer has them)
+        for k in ["portal_token", "token", "ts"]:
+            try:
+                if k in st.session_state:
+                    st.session_state.pop(k, None)
+            except Exception:
+                pass
+
+        st.rerun()
+
+    # 3) Optional legacy HMAC mode (keep as-is)
+    email = _qp_get("email", "")
+    lang = _qp_get("lang", "en")
+    ts = _qp_get("ts", "")
+    token = _qp_get("token", "")
+
+    if email and token and ts:
+        ok, why = _verify_hmac_sso(email=email, lang_raw=lang, ts=ts, token=token)
+        if not ok:
+            st.session_state["_portal_sso_checked"] = True
+            st.session_state["is_authenticated"] = False
+            _render_portal_only_block(why)
+
         st.session_state["_portal_sso_checked"] = True
         st.session_state["is_authenticated"] = True
         st.session_state["user_email"] = email
-        # Keep your existing role logic; Portal can optionally pass role
-        role = _qp_get("role") or st.session_state.get("user_role") or "pro"
-        st.session_state["user_role"] = role
+        st.session_state["email"] = email
+        st.session_state["tenant"] = _qp_get("tenant", "")
+        st.session_state["user_role"] = _qp_get("role", "") or "member"
+
+        # ✅ Load tenant AI settings (best-effort)
+        if st.session_state.get("tenant"):
+            if (
+                "tenant_ai_settings" not in st.session_state
+                or (st.session_state.get("tenant_ai_settings") or {}).get("tenant") != st.session_state["tenant"]
+            ):
+                st.session_state["tenant_ai_settings"] = load_tenant_ai_settings_from_supabase(
+                    st.session_state["tenant"]
+                )
 
         _apply_portal_lang(lang)
-        # Hygiene: clear query params so token isn't left in the URL
-        _qp_clear_all()
-        st.rerun()
+        return
 
-    # 2) Transitional DEMO token (staging only)
-    portal_token = _qp_get("portal_token")
-    if portal_token and ALLOW_DEMO_PORTAL_TOKEN and portal_token == DEMO_EXPECTED_TOKEN:
+    # 4) demo token (keep as-is)
+    if ALLOW_DEMO_PORTAL_TOKEN and _qp_get("portal_token", "") == DEMO_EXPECTED_TOKEN:
         st.session_state["_portal_sso_checked"] = True
         st.session_state["is_authenticated"] = True
-        st.session_state["user_email"] = email or st.session_state.get("user_email") or "unknown"
-        st.session_state["user_role"] = st.session_state.get("user_role") or "pro"
-        _apply_portal_lang(lang)
-        _qp_clear_all()
-        st.rerun()
+        st.session_state["user_email"] = _qp_get("email", "") or "unknown"
+        st.session_state["email"] = st.session_state["user_email"]
+        st.session_state["tenant"] = _qp_get("tenant", "") or ""
+        st.session_state["user_role"] = _qp_get("role", "") or "demo"
 
-    # 3) No valid SSO -> block (Portal-only)
+        # ✅ Load tenant AI settings (best-effort)
+        if st.session_state.get("tenant"):
+            if (
+                "tenant_ai_settings" not in st.session_state
+                or (st.session_state.get("tenant_ai_settings") or {}).get("tenant") != st.session_state["tenant"]
+            ):
+                st.session_state["tenant_ai_settings"] = load_tenant_ai_settings_from_supabase(
+                    st.session_state["tenant"]
+                )
+
+        _apply_portal_lang(_qp_get("lang", "en"))
+        return
+
+    # 5) No valid SSO -> block
     st.session_state["_portal_sso_checked"] = True
     st.session_state["is_authenticated"] = False
     _render_portal_only_block("No valid Portal SSO parameters")
@@ -188,8 +798,9 @@ import base64
 
 
 import streamlit as st
-
 import streamlit.components.v1 as components
+import json
+import base64
 
 import pdfplumber
 
@@ -241,7 +852,6 @@ def ensure_pdf_font():
         PDF_FONT_NAME = "Helvetica"
     finally:
         PDF_FONT_REGISTERED = True
-
 
 
 
@@ -398,10 +1008,21 @@ def record_usage(user_email: str, framework_key: str, kind: str):
 
 
 def save_state_to_disk():
+    """
+    SECURITY NOTE:
+    Do NOT persist authentication identity to disk on a shared server.
+    user_state.json is shared across users in the same deployment.
+    Persist only review/session workflow state, NOT login identity.
+    """
     data = {
-        "user_email": st.session_state.get("user_email"),
-        "user_role": st.session_state.get("user_role"),
-        "is_authenticated": st.session_state.get("is_authenticated", False),
+        # ---- DO NOT persist auth identity ----
+        # "user_email": ...
+        # "user_role": ...
+        # "is_authenticated": ...
+        # "company_code": ...
+        # "_portal_sso_checked": ...
+
+        # ---- OK to persist workflow/UI state ----
         "lang": st.session_state.get("lang", "zh"),
         "zh_variant": st.session_state.get("zh_variant", "tw"),
         "usage_date": st.session_state.get("usage_date"),
@@ -412,7 +1033,6 @@ def save_state_to_disk():
         "framework_states": st.session_state.get("framework_states", {}),
         "selected_framework_key": st.session_state.get("selected_framework_key"),
         "current_doc_id": st.session_state.get("current_doc_id"),
-        "company_code": st.session_state.get("company_code"),
         "show_admin": st.session_state.get("show_admin", False),
 
         # Step 3 split references (更正2)
@@ -420,18 +1040,18 @@ def save_state_to_disk():
         "quote_current": st.session_state.get("quote_current"),
         "quote_history": st.session_state.get("quote_history", []),
         "quote_upload_nonce": st.session_state.get("quote_upload_nonce", 0),
-            "review_upload_nonce": st.session_state.get("review_upload_nonce", 0),
-            "upstream_upload_nonce": st.session_state.get("upstream_upload_nonce", 0),
+        "review_upload_nonce": st.session_state.get("review_upload_nonce", 0),
+        "upstream_upload_nonce": st.session_state.get("upstream_upload_nonce", 0),
         "quote_upload_finalized": st.session_state.get("quote_upload_finalized", False),
         "upstream_step6_done": st.session_state.get("upstream_step6_done", False),
         "upstream_step6_output": st.session_state.get("upstream_step6_output", ""),
         "quote_step6_done_current": st.session_state.get("quote_step6_done_current", False),
 
-        # Step 7 history (re-run when new quote refs are analyzed)
+        # Step 7 history
         "step7_history": st.session_state.get("step7_history", []),
         "integration_history": st.session_state.get("integration_history", []),
 
-        # Follow-up clear flag (fix StreamlitAPIException)
+        # Follow-up clear flag
         "_pending_clear_followup_key": st.session_state.get("_pending_clear_followup_key"),
     }
     try:
@@ -441,12 +1061,23 @@ def save_state_to_disk():
 
 
 def restore_state_from_disk():
+    """
+    SECURITY NOTE:
+    Never restore authentication identity from disk.
+    Only restore workflow/UI state.
+    """
     if not STATE_FILE.exists():
         return
     try:
         data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
     except Exception:
         return
+
+    # Strip any legacy auth keys that might exist from older files
+    for bad_key in ["user_email", "user_role", "is_authenticated", "company_code", "_portal_sso_checked"]:
+        if bad_key in data:
+            data.pop(bad_key, None)
+
     for k, v in data.items():
         if k not in st.session_state:
             st.session_state[k] = v
@@ -1475,8 +2106,103 @@ BRAND_TITLE_ZH = zh("零錯誤智能引擎", "零错误智能引擎")
 BRAND_TAGLINE_ZH = zh("一套 AI 強化的智能引擎，協助公司或組織進行風險分析、預防錯誤，並提升決策品質。", "一套 AI 强化的智能引擎，协助公司或组织进行风险分析、预防错误，并提升决策品质。")
 BRAND_SUBTITLE_ZH = zh("邱博士零錯誤團隊自 1987 年起領先研發並持續深化至今。", "邱博士零错误团队自 1987 年起领先研发并持续深化至今。")
 
-LOGO_PATH = "assets/errorfree_logo.png"
+# Always resolve logo path robustly (Railway/Streamlit working-dir can vary)
+APP_DIR = Path(__file__).parent if "__file__" in globals() else Path.cwd()
 
+def _find_logo_file() -> Path | None:
+    """
+    Try multiple candidate paths to find the logo file.
+    This prevents 'broken image' when Railway working directory differs.
+    """
+    candidates = [
+        APP_DIR / "assets" / "errorfree_logo.png",
+        Path.cwd() / "assets" / "errorfree_logo.png",
+        APP_DIR.parent / "assets" / "errorfree_logo.png",
+        APP_DIR / "static" / "assets" / "errorfree_logo.png",
+    ]
+    for p in candidates:
+        try:
+            if p.exists() and p.is_file():
+                return p
+        except Exception:
+            continue
+    return None
+
+def _normalize_png_bytes(raw: bytes) -> bytes:
+    """
+    Fix 'broken image' by re-decoding and re-encoding into a standard PNG (RGBA).
+    This avoids browser/Streamlit decode edge cases.
+    """
+    try:
+        from PIL import Image
+        from io import BytesIO
+
+        img = Image.open(BytesIO(raw))
+        img = img.convert("RGBA")  # force standard color mode
+
+        out = BytesIO()
+        img.save(out, format="PNG", optimize=True)
+        return out.getvalue()
+    except Exception:
+        # Fallback: keep original bytes
+        return raw
+
+def render_logo(width: int = 260):
+    """
+    Render logo with a safer pipeline:
+    - find file
+    - read bytes
+    - normalize bytes to standard PNG (RGBA)
+    - st.image(bytes)
+    """
+    try:
+        p = _find_logo_file()
+        if not p:
+            st.warning("Logo file not found: assets/errorfree_logo.png (please ensure it's included in Railway deploy)")
+            return
+
+        raw = p.read_bytes()
+
+        # If file is empty/corrupted, show a clear message
+        if not raw or len(raw) < 32:
+            st.warning("Logo file is empty or corrupted on server. Please re-upload assets/errorfree_logo.png and redeploy.")
+            return
+
+        safe_png = _normalize_png_bytes(raw)
+        st.image(safe_png, width=width)
+    except Exception as e:
+        st.warning(f"Logo render failed: {e}")
+
+# --- TEMP DEBUG (disabled) ---
+ # with st.sidebar.expander("Logo debug", expanded=False):
+#     p = _find_logo_file()
+#     st.write("APP_DIR =", str(APP_DIR))
+#     st.write("CWD =", str(Path.cwd()))
+#     st.write("LOGO =", str(p) if p else "(not found)")
+
+# =========================
+# Tenant namespace helper (D3)
+# =========================
+def tenant_namespace(*parts: str) -> str:
+    """
+    Build a tenant-scoped namespace path.
+    Example:
+      tenant_namespace("reviews", "drafts") -> "tenants/<tenant>/reviews/drafts"
+    """
+    tenant = (st.session_state.get("tenant") or "").strip()
+    if not tenant:
+        return "tenants/unknown"
+
+    safe_parts = []
+    for p in parts:
+        s = (p or "").strip().strip("/")
+        if s:
+            safe_parts.append(s)
+
+    if safe_parts:
+        return "tenants/" + tenant + "/" + "/".join(safe_parts)
+    return "tenants/" + tenant
+    
 # =========================
 # Portal-driven Language Lock + Logout UX
 # =========================
@@ -1539,31 +2265,45 @@ def apply_portal_language_lock():
         # raw 空或未知：不覆蓋既有 lang（保留你原本預設）
 
 
-def _redirect_to_portal():
+def render_logged_out_page():
     """
-    Portal-only behavior:
-    Logout should immediately return to Portal (NO logout landing UI).
+    Logout landing page (Portal-only):
+    - IMMEDIATELY redirect to Portal
+    - Do NOT show any logout UI (no sidebar, no buttons, no messages)
     """
-    portal_base = (os.getenv("PORTAL_BASE_URL", "") or "").strip().rstrip("/")
+    portal_base = (os.getenv("PORTAL_BASE_URL", "") or "").rstrip("/")
+    lang = st.session_state.get("lang", "en")
+    zhv = st.session_state.get("zh_variant", "tw")
+    is_zh = (lang == "zh")
+
+    # Build portal target URL
+    # (keep it simple & stable; Portal can decide the final landing page)
+    if is_zh:
+        lang_q = "zh-tw" if zhv == "tw" else "zh-cn"
+    else:
+        lang_q = "en"
+
     if not portal_base:
+        # Only if missing env var: we must show something (cannot redirect)
         st.error("PORTAL_BASE_URL is not set. Please set it in Railway Variables.")
         st.stop()
 
-    # 你可以改成 portal_base + "/"（只回首頁）
-    target = f"{portal_base}/catalog"
+    portal_url = f"{portal_base}/catalog?lang={lang_q}"
 
-    # Top-level redirect (works even if Streamlit is in an iframe)
+    # HARD redirect (top-level) with multiple fallbacks
+    import streamlit.components.v1 as components
     components.html(
         f"""
-<script>
-  (function() {{
-    try {{
-      window.top.location.href = "{target}";
-    }} catch (e) {{
-      window.location.href = "{target}";
-    }}
-  }})();
-</script>
+        <script>
+          (function() {{
+            try {{
+              window.top.location.replace("{portal_url}");
+            }} catch(e) {{
+              window.location.href = "{portal_url}";
+            }}
+          }})();
+        </script>
+        <meta http-equiv="refresh" content="0; url={portal_url}" />
         """,
         height=0,
     )
@@ -1573,48 +2313,42 @@ def _redirect_to_portal():
 def do_logout():
     """
     Portal-only logout:
-    - Clear session auth/state
-    - Immediately redirect back to Portal
-    - NO logout page
+    - Clear local session state
+    - Clear analyzer_session (URL + localStorage)
+    - IMMEDIATELY redirect to Portal
+    - MUST NOT show any signed-out page or internal login UI
     """
-    # Mark unauthenticated
+    # Clear auth
     st.session_state["is_authenticated"] = False
 
-    # Clear user-related fields
+    # Clear sensitive/session fields (tenant isolation hygiene)
     for k in [
         "user_email",
+        "email",
         "user_role",
+        "tenant",
+        "tenant_ai_settings",
+        "company_id",
+        "analyzer_id",
         "company_code",
         "selected_framework_key",
         "show_admin",
-        "framework_states",
-        "last_doc_text",
-        "last_doc_name",
-        "document_type",
-        "current_doc_id",
-        "upstream_reference",
-        "quote_current",
-        "quote_history",
-        "quote_upload_finalized",
-        "upstream_step6_done",
-        "upstream_step6_output",
-        "quote_step6_done_current",
-        "step7_history",
-        "integration_history",
-        "_pending_clear_followup_key",
+        "portal_token",
+        "token",
+        "ts",
+        "analyzer_session",
     ]:
-        if k in st.session_state:
-            st.session_state[k] = None
+        try:
+            if k in st.session_state:
+                st.session_state.pop(k, None)
+        except Exception:
+            pass
 
-    # Reset a few counters safely
-    st.session_state["quote_upload_nonce"] = int(st.session_state.get("quote_upload_nonce", 0) or 0) + 1
-    st.session_state["review_upload_nonce"] = int(st.session_state.get("review_upload_nonce", 0) or 0) + 1
-    st.session_state["upstream_upload_nonce"] = int(st.session_state.get("upstream_upload_nonce", 0) or 0) + 1
-
-    # Force Portal SSO to be required again
+    # Allow re-check on next entry (fresh Portal token)
     st.session_state["_portal_sso_checked"] = False
+    st.session_state["_lang_locked"] = True  # keep current language display consistent
 
-    # Clear query params (so we don't keep any token in URL)
+    # Clear query params (remove analyzer_session from URL too)
     try:
         st.query_params.clear()
     except Exception:
@@ -1623,23 +2357,32 @@ def do_logout():
         except Exception:
             pass
 
-    # Persist best-effort (optional; failure shouldn't block redirect)
+    # Clear browser localStorage analyzer_session (best-effort)
+    try:
+        import streamlit.components.v1 as components
+        components.html(
+            f"""
+<script>
+(function(){{
+  try {{
+    localStorage.removeItem({json.dumps(_BROWSER_LS_KEY)});
+  }} catch(e) {{}}
+}})();
+</script>
+            """,
+            height=0,
+        )
+    except Exception:
+        pass
+
+    # Persist (best-effort)
     try:
         save_state_to_disk()
     except Exception:
         pass
 
-    # Redirect immediately (NO logout UI)
-    _redirect_to_portal()
-
-    # Persist and show logout page
-    try:
-        save_state_to_disk()
-    except Exception:
-        pass
-
+    # Redirect immediately (no UI)
     render_logged_out_page()
-    st.stop()
 
 def language_selector():
     """
@@ -1648,6 +2391,23 @@ def language_selector():
     # 先套用 Portal lock
     apply_portal_language_lock()
 
+    # =========================
+    # Tenant AI Settings (safe debug / no secrets)
+    # =========================
+    tas = st.session_state.get("tenant_ai_settings") or {}
+    tenant_dbg = st.session_state.get("tenant") or ""
+    source = tas.get("source") or "unknown"
+    provider = tas.get("provider") or "(default)"
+    model = tas.get("model") or "(default)"
+
+    st.sidebar.caption(f"Tenant: {tenant_dbg}")
+    st.sidebar.caption(f"AI settings source: {source}")
+    st.sidebar.caption(f"Provider: {provider}")
+    st.sidebar.caption(f"Model: {model}")
+
+    # =========================
+    # Original language selector logic (keep as-is)
+    # =========================
     lang = st.session_state.get("lang", "zh")
     zhv = st.session_state.get("zh_variant", "tw")
 
@@ -1865,6 +2625,18 @@ def render_followup_history_chat(followup_history: List, lang: str):
                 if (not q) and (not a):
                     st.info("No content." if lang == "en" else zh("尚無內容。", "暂无内容。"))
 def _reset_whole_document():
+    """
+    Reset ONLY the current review session (uploaded documents + analysis states).
+
+    DO NOT:
+    - logout
+    - clear authentication
+    - force Portal SSO re-check
+
+    Because Reset Whole Document is for starting the next review round,
+    not for exiting the Analyzer page.
+    """
+    # --------- Clear analysis/session content ONLY ---------
     st.session_state.framework_states = {}
     st.session_state.last_doc_text = ""
     st.session_state.last_doc_name = ""
@@ -1877,6 +2649,9 @@ def _reset_whole_document():
     st.session_state.quote_history = []
     st.session_state.quote_upload_nonce = 0
 
+    # Also reset selection states so Step 2/Step 4 show FIRST option after reset
+    st.session_state.selected_framework_key = None
+
     # Clear Streamlit uploader widget states so UI is truly reset
     for _k in list(st.session_state.keys()):
         if _k.startswith("quote_uploader_"):
@@ -1885,13 +2660,26 @@ def _reset_whole_document():
             del st.session_state[_k]
         if _k.startswith("upstream_uploader_"):
             del st.session_state[_k]
+
+    # Clear selection widget keys to prevent UI from keeping old choices
+    for _k in [
+        "document_type_select",      # EN Step 2 selectbox key
+        "document_type_select_zh",   # ZH Step 2 selectbox key
+        "framework_selectbox",       # Step 4 selectbox key
+    ]:
+        if _k in st.session_state:
+            del st.session_state[_k]
+
     # also clear legacy single-key uploaders (older deployments)
     for _legacy in ["review_doc_uploader", "upstream_uploader"]:
         if _legacy in st.session_state:
             del st.session_state[_legacy]
+
+    # Bump nonces so file_uploader widgets are guaranteed fresh
     st.session_state["quote_upload_nonce"] = int(st.session_state.get("quote_upload_nonce", 0)) + 1
     st.session_state["review_upload_nonce"] = int(st.session_state.get("review_upload_nonce", 0)) + 1
     st.session_state["upstream_upload_nonce"] = int(st.session_state.get("upstream_upload_nonce", 0)) + 1
+
     st.session_state.quote_upload_finalized = False
     st.session_state.upstream_step6_done = False
     st.session_state.upstream_step6_output = ""
@@ -1901,9 +2689,15 @@ def _reset_whole_document():
 
     # Follow-up clear flag (fix)
     st.session_state._pending_clear_followup_key = None
-   
-    # Portal SSO: allow re-check on next entry
-    st.session_state["_portal_sso_checked"] = False
+
+    # --------- KEEP AUTH (Portal-only SSO session stays logged-in) ---------
+    # Do NOT change:
+    # - st.session_state["is_authenticated"]
+    # - st.session_state["user_email"]
+    # - st.session_state["user_role"]
+    # - st.session_state["_portal_sso_checked"]
+    # Do NOT clear query params here either (Reset is not logout).
+
     save_state_to_disk()
 
 
@@ -1962,7 +2756,7 @@ def main():
     try_portal_sso_login()
         # Sidebar (Portal language is locked; do not show mixed-language UI)
     with st.sidebar:
-        st.header("🧭 Error-Free® Analyzer")
+        st.header("🧭 " + ("Error-Free® Intelligence Engine" if st.session_state.get("lang", "en") == "en" else "零錯誤智能引擎"))
 
         ui_lang = st.session_state.get("lang", "en")
         ui_zhv = st.session_state.get("zh_variant", "tw")
@@ -1982,6 +2776,18 @@ def main():
             else:
                 st.markdown("**語言：** `zh-tw`（由 Portal 鎖定）")
 
+                # --- Tenant AI settings (safe debug / no secrets) ---
+        tas = st.session_state.get("tenant_ai_settings") or {}
+        tenant_dbg = st.session_state.get("tenant") or ""
+        source = tas.get("source") or "unknown"
+        provider = tas.get("provider") or "(default)"
+        model = tas.get("model") or "(default)"
+
+        st.caption(f"Tenant: {tenant_dbg}")
+        st.caption(f"AI settings source: {source}")
+        st.caption(f"Provider: {provider}")
+        st.caption(f"Model: {model}")
+
         # Account section (only if authenticated)
         if st.session_state.get("is_authenticated"):
             st.markdown("---")
@@ -1999,10 +2805,18 @@ def main():
     if not st.session_state.is_authenticated:
         lang = st.session_state.lang
 
-        if Path(LOGO_PATH).exists():
-            st.image(LOGO_PATH, width=260)
+        render_logo(260)
 
-        title = BRAND_TITLE_ZH if lang == "zh" else BRAND_TITLE_EN
+             # Homepage title (match Catalog)
+        if lang == "zh":
+            title = (
+                "AI化零錯誤多輪文件審查/零錯誤文件隱患排查（預防文件審查錯誤）"
+                if st.session_state.get("zh_variant", "tw") == "tw"
+                else "AI化零错误多轮文件审查/零错误文件隐患排查（预防文件审查错误）"
+            )
+        else:
+            title = "AI-Enhanced Error-Free® Multi-Pass Technical Reviews"
+
         tagline = BRAND_TAGLINE_ZH if lang == "zh" else BRAND_TAGLINE_EN
         subtitle = BRAND_SUBTITLE_ZH if lang == "zh" else BRAND_SUBTITLE_EN
 
@@ -2159,10 +2973,18 @@ def main():
 
     lang = st.session_state.lang
 
-    if Path(LOGO_PATH).exists():
-        st.image(LOGO_PATH, width=260)
+    render_logo(260)
 
-    st.title(BRAND_TITLE_ZH if lang == "zh" else BRAND_TITLE_EN)
+        # Homepage title (match Catalog)
+    if lang == "zh":
+        _home_title = (
+            "AI化零錯誤多輪文件審查/零錯誤文件隱患排查（預防文件審查錯誤）"
+            if st.session_state.get("zh_variant", "tw") == "tw"
+            else "AI化零错误多轮文件审查/零错误文件隐患排查（预防文件审查错误）"
+        )
+    else:
+        _home_title = "AI-Enhanced Error-Free® Multi-Pass Technical Reviews"
+    st.title(_home_title)
     st.write(BRAND_TAGLINE_ZH if lang == "zh" else BRAND_TAGLINE_EN)
     st.caption(BRAND_SUBTITLE_ZH if lang == "zh" else BRAND_SUBTITLE_EN)
     st.markdown("---")
