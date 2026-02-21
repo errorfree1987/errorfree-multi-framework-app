@@ -156,6 +156,50 @@ def _save_pending_review_to_supabase():
     if inserted:
         st.session_state["_last_saved_review_fp"] = fp
         st.session_state["_last_saved_review_id"] = inserted.get("id")
+def fetch_tenant_reviews_from_supabase(tenant: str, limit: int = 20) -> list[dict]:
+    """
+    Server-side only. Reads public.tenant_reviews filtered by tenant.
+    Uses SUPABASE_URL + SUPABASE_SERVICE_KEY (service_role).
+    Returns a list of rows (dict).
+    """
+    tenant = (tenant or "").strip() or "unknown"
+
+    supabase_url = (os.getenv("SUPABASE_URL", "") or "").strip().rstrip("/")
+    service_key = (os.getenv("SUPABASE_SERVICE_KEY", "") or "").strip()
+    if not supabase_url or not service_key:
+        return []
+
+    endpoint = f"{supabase_url}/rest/v1/tenant_reviews"
+    headers = {
+        "apikey": service_key,
+        "Authorization": f"Bearer {service_key}",
+        "Content-Type": "application/json",
+    }
+
+    params = {
+        "tenant": f"eq.{tenant}",
+        "order": "created_at.desc",
+        "limit": str(int(limit)),
+        # keep payload small (no report_md here)
+        "select": "id,created_at,framework_key,document_name,download_filename,created_by",
+    }
+
+    try:
+        resp = requests.get(endpoint, headers=headers, params=params, timeout=12)
+        if resp.status_code != 200:
+            st.session_state["_last_reviews_read_error"] = {
+                "status": resp.status_code,
+                "body": resp.text[:500],
+            }
+            return []
+        data = resp.json()
+        return data if isinstance(data, list) else []
+    except Exception as e:
+        st.session_state["_last_reviews_read_error"] = {
+            "status": "exception",
+            "type": type(e).__name__,
+        }
+        return []
 
 
 # ===== Error-Free® Portal-only SSO (Portal is the ONLY entry) =====
@@ -2910,6 +2954,21 @@ def main():
     # (Step 13 already added tenant_namespace() helper)
     st.sidebar.caption(f"Namespace: {tenant_namespace()}")
     st.sidebar.caption(f"Reviews path: {tenant_namespace('reviews')}")
+        # D3-B Step9: Tenant review history (Supabase)
+    with st.sidebar.expander("Review history (latest 20)", expanded=False):
+        tenant = (st.session_state.get("tenant") or "unknown").strip() or "unknown"
+        rows = fetch_tenant_reviews_from_supabase(tenant, limit=20)
+
+        if rows:
+            try:
+                st.dataframe(rows, use_container_width=True)
+            except Exception:
+                st.write(rows)
+        else:
+            st.caption("No history yet (or not readable).")
+
+        if st.session_state.get("_last_reviews_read_error"):
+            st.caption(f"Read error: {st.session_state.get('_last_reviews_read_error')}")
 
     # Account section (only if authenticated)
     if st.session_state.get("is_authenticated"):
