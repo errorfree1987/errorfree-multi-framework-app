@@ -522,13 +522,76 @@ def _portal_verify_via_api(portal_token: str) -> (bool, str, dict):
 
 def try_portal_sso_login():
     """
-    Portal-only SSO entry guard (refresh-safe version).
+    Portal-only SSO entry guard (refresh-safe version) + tenant revoke (epoch).
 
     ✅ 核心策略：
     - 第一次由 Portal 帶 portal_token 進來 -> Portal /sso/verify 成功後
-      立刻 mint analyzer_session，並把 URL 改成只保留 ?analyzer_session=...
-    - Refresh 時 URL 還在 -> 直接用 analyzer_session 放行
+      mint analyzer_session，並把 URL 改成只保留 ?analyzer_session=...
+    - Refresh 時 URL 還在 -> 用 analyzer_session 放行
+    - ✅ Revoke：比對 tenant_session_epoch.epoch，不一致立刻拒絕（舊 token 立即失效）
     """
+
+    def _extract_epoch_from_session_token(tok: str) -> int:
+        """Read epoch from the signed session token payload (best-effort)."""
+        try:
+            if not tok or "." not in tok:
+                return 0
+            payload_b64 = tok.split(".", 1)[0]
+            payload = json.loads(_b64url_decode(payload_b64).decode("utf-8"))
+            return int(payload.get("epoch", 0) or 0)
+        except Exception:
+            return 0
+
+    def _get_epoch_strict(tenant: str) -> int:
+        """
+        STRICT epoch fetch: must return an int.
+        If cannot fetch epoch (env missing / HTTP error), we BLOCK (fail-closed),
+        so revoke is always enforceable.
+        """
+        tenant = (tenant or "").strip()
+        if not tenant:
+            return 0
+
+        supabase_url = (os.getenv("SUPABASE_URL", "") or "").strip().rstrip("/")
+        service_key = (os.getenv("SUPABASE_SERVICE_KEY", "") or "").strip()
+
+        if not supabase_url or not service_key:
+            _render_portal_only_block("Epoch check unavailable: missing SUPABASE_URL / SUPABASE_SERVICE_KEY")
+
+        endpoint = f"{supabase_url}/rest/v1/tenant_session_epoch"
+        params = {"select": "epoch", "tenant": f"eq.{tenant}", "limit": "1"}
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Accept": "application/json",
+        }
+
+        try:
+            r = requests.get(endpoint, params=params, headers=headers, timeout=10)
+        except Exception as e:
+            _render_portal_only_block(f"Epoch check failed: {e}")
+
+        if r.status_code != 200:
+            _render_portal_only_block(f"Epoch check HTTP {r.status_code}: {(r.text or '')[:120]}")
+
+        try:
+            rows = r.json() or []
+        except Exception:
+            _render_portal_only_block("Epoch check failed: invalid JSON")
+
+        if not rows:
+            return 0
+
+        try:
+            return int(rows[0].get("epoch", 0) or 0)
+        except Exception:
+            return 0
+
+    def _enforce_epoch_or_block(tenant: str, token_epoch: int):
+        """If epoch mismatch => revoked => block immediately."""
+        current_epoch = _get_epoch_strict(tenant)
+        if int(token_epoch) != int(current_epoch):
+            _render_portal_only_block("Session revoked (tenant epoch mismatch). Please re-enter from Portal.")
 
     # 0) Already authenticated in this Streamlit session
     if st.session_state.get("is_authenticated") and st.session_state.get("user_email"):
@@ -544,12 +607,18 @@ def try_portal_sso_login():
     if sess_tok:
         payload = verify_analyzer_session(sess_tok)
         if payload:
+            tenant_from_payload = (payload.get("tenant") or "").strip()
+            token_epoch = _extract_epoch_from_session_token(sess_tok)
+
+            # ✅ ENFORCE revoke here (THIS is what makes old tokens die immediately)
+            _enforce_epoch_or_block(tenant_from_payload, token_epoch)
+
             st.session_state["_portal_sso_checked"] = True
             st.session_state["is_authenticated"] = True
 
             st.session_state["user_email"] = (payload.get("email") or "").strip().lower()
             st.session_state["email"] = st.session_state["user_email"]
-            st.session_state["tenant"] = (payload.get("tenant") or "").strip()
+            st.session_state["tenant"] = tenant_from_payload
             st.session_state["user_role"] = (payload.get("role") or "").strip() or "member"
 
             # ✅ Load tenant AI settings (once per tenant)
@@ -616,6 +685,9 @@ def try_portal_sso_login():
         lang_raw = _qp_get("lang", "en")
         _apply_portal_lang(lang_raw)
 
+        # ✅ IMPORTANT: embed current tenant epoch into the session token (so it can be revoked)
+        current_epoch = _get_epoch_strict(tenant)
+
         # Mint refresh-safe analyzer_session
         claims = {
             "email": verified_email,
@@ -624,6 +696,7 @@ def try_portal_sso_login():
             "company_id": data.get("company_id") or "",
             "analyzer_id": data.get("analyzer_id") or "",
             "lang": _normalize_lang(lang_raw),
+            "epoch": int(current_epoch),
         }
         session_token = mint_analyzer_session(claims)
         if not session_token:
