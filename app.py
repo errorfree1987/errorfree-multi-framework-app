@@ -2757,7 +2757,12 @@ def main():
         # Sidebar (Portal language is locked; do not show mixed-language UI)
     with st.sidebar:
     st.header(
-        "🧭 " + ("Error-Free® Intelligence Engine" if st.session_state.get("lang", "en") == "en" else "零錯誤智能引擎")
+        "🧭 "
+        + (
+            "Error-Free® Intelligence Engine"
+            if st.session_state.get("lang", "en") == "en"
+            else "零錯誤智能引擎"
+        )
     )
 
     ui_lang = st.session_state.get("lang", "en")
@@ -2801,7 +2806,9 @@ def main():
 
         email = st.session_state.get("user_email", "")
         if email:
-            st.markdown(f"Email: [{email}](mailto:{email})" if not is_zh else f"Email：[{email}](mailto:{email})")
+            st.markdown(
+                f"Email: [{email}](mailto:{email})" if not is_zh else f"Email：[{email}](mailto:{email})"
+            )
 
         if st.button("Logout" if not is_zh else "登出"):
             do_logout()
