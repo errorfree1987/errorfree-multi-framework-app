@@ -86,6 +86,78 @@ def load_tenant_ai_settings_from_supabase(tenant: str) -> dict:
             "source": f"exception:{type(e).__name__}",
         }
 
+# =========================
+# Tenant Reviews (D3) — Supabase history storage (server-side)
+# =========================
+
+def insert_tenant_review_to_supabase(row: dict) -> dict | None:
+    """
+    Server-side only. Inserts one row into public.tenant_reviews.
+    Requires Railway env:
+    - SUPABASE_URL
+    - SUPABASE_SERVICE_KEY (service_role key; DO NOT expose to frontend)
+    """
+    supabase_url = (os.getenv("SUPABASE_URL", "") or "").strip().rstrip("/")
+    service_key = (os.getenv("SUPABASE_SERVICE_KEY", "") or "").strip()
+
+    if not supabase_url or not service_key:
+        return None
+
+    endpoint = f"{supabase_url}/rest/v1/tenant_reviews"
+    headers = {
+        "apikey": service_key,
+        "Authorization": f"Bearer {service_key}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+
+    # never send internal helper keys to DB
+    row = dict(row or {})
+    row.pop("_fingerprint", None)
+
+    try:
+        resp = requests.post(endpoint, headers=headers, json=row, timeout=12)
+        if resp.status_code not in (200, 201):
+            # keep app running; caller can decide whether to retry
+            st.session_state["_last_reviews_write_error"] = {
+                "status": resp.status_code,
+                "body": resp.text[:500],
+            }
+            return None
+
+        data = resp.json()
+        if isinstance(data, list) and data:
+            return data[0]
+        if isinstance(data, dict):
+            return data
+        return None
+    except Exception as e:
+        st.session_state["_last_reviews_write_error"] = {
+            "status": "exception",
+            "type": type(e).__name__,
+        }
+        return None
+
+
+def _save_pending_review_to_supabase():
+    """
+    Called on download click (best-effort).
+    Uses st.session_state["_pending_tenant_review_row"] prepared right before rendering the download button.
+    """
+    pending = st.session_state.get("_pending_tenant_review_row")
+    if not pending:
+        return
+
+    fp = (pending.get("_fingerprint") or "").strip()
+    if fp and st.session_state.get("_last_saved_review_fp") == fp:
+        return  # dedupe same report within the session
+
+    inserted = insert_tenant_review_to_supabase(pending)
+    if inserted:
+        st.session_state["_last_saved_review_fp"] = fp
+        st.session_state["_last_saved_review_id"] = inserted.get("id")
+
+
 # ===== Error-Free® Portal-only SSO (Portal is the ONLY entry) =====
 # Analyzer MUST NOT show any internal login UI when Portal SSO is enforced.
 #
@@ -3930,16 +4002,61 @@ def main():
                     base_filename = f"Error-Free® IER {framework_key} {now_ts}" + (" +Q&A" if include_qa else "") + ".docx"
                     filename = tenant_namespace("downloads", base_filename).replace("/", "__")
 
+                    # --- Prepare one canonical history row (saved on click, best-effort) ---
+                    tenant = (st.session_state.get("tenant") or "unknown").strip() or "unknown"
+                    email = (st.session_state.get("user_email") or "").strip().lower() or None
+                    doc_name = st.session_state.get("last_doc_name") or None
+                    doc_text = st.session_state.get("last_doc_text") or ""
+                    doc_sha = hashlib.sha256(doc_text.encode("utf-8")).hexdigest() if doc_text else None
 
-                    # Download (DOCX) — use Streamlit native download_button (supports browser save-location prompt).
-                    st.download_button(
-                        label=("Download" if lang == "en" else zh("開始下載", "开始下载")),
-                        data=data,
-                        file_name=filename,
-                        mime=mime,
-                        key=tenant_namespace("ui", f"download_{framework_key}_{now_ts}").replace("/", "__"),
-                    )
+                    report_sha = hashlib.sha256(report.encode("utf-8")).hexdigest()
+                    fp = report_sha[:16]
 
+                    st.session_state["_pending_tenant_review_row"] = {
+                        "_fingerprint": fp,
+                        "tenant": tenant,
+                        "created_by": email,
+                        "framework_key": selected_key,
+                        "document_name": doc_name,
+                        "document_sha256": doc_sha,
+                        "report_md": report,
+                        "qa_json": (current_state.get("followup_history") or []) if include_qa else None,
+                        "download_filename": filename,
+                        "meta": {
+                            "lang": lang,
+                            "zh_variant": st.session_state.get("zh_variant"),
+                            "include_qa": bool(include_qa),
+                            "report_sha256": report_sha,
+                            "ai_provider": (st.session_state.get("tenant_ai_settings") or {}).get("provider"),
+                            "ai_model": (st.session_state.get("tenant_ai_settings") or {}).get("model"),
+                            "ai_source": (st.session_state.get("tenant_ai_settings") or {}).get("source"),
+                        },
+                    }
+
+                    # Download (DOCX) — use Streamlit native download_button
+                    try:
+                        st.download_button(
+                            label=("Download" if lang == "en" else zh("開始下載", "开始下载")),
+                            data=data,
+                            file_name=filename,
+                            mime=mime,
+                            key=tenant_namespace("ui", f"download_{framework_key}_{now_ts}").replace("/", "__"),
+                            on_click=_save_pending_review_to_supabase,
+                        )
+                    except TypeError:
+                        # Older Streamlit: download_button may not support on_click
+                        st.download_button(
+                            label=("Download" if lang == "en" else zh("開始下載", "开始下载")),
+                            data=data,
+                            file_name=filename,
+                            mime=mime,
+                            key=tenant_namespace("ui", f"download_{framework_key}_{now_ts}").replace("/", "__"),
+                        )
+                        st.button(
+                            ("Record this download in history" if lang == "en" else zh("將本次下載寫入歷史紀錄", "将本次下载写入历史记录")),
+                            on_click=_save_pending_review_to_supabase,
+                            key=tenant_namespace("ui", f"record_download_{framework_key}_{now_ts}").replace("/", "__"),
+                        )
 
                     st.caption(
                         "Tip: If you want a 'Save As' location prompt, enable 'Ask where to save each file' in your browser settings."
