@@ -15,8 +15,8 @@ def load_tenant_ai_settings_from_supabase(tenant: str) -> dict:
     """
     Server-side only. Reads public.tenant_ai_settings by tenant.
     Requires Railway env:
-      - SUPABASE_URL
-      - SUPABASE_SERVICE_KEY   (service_role key; DO NOT expose to frontend)
+    - SUPABASE_URL
+    - SUPABASE_SERVICE_KEY   (service_role key; DO NOT expose to frontend)
     """
     supabase_url = os.getenv("SUPABASE_URL", "").strip()
     service_key = os.getenv("SUPABASE_SERVICE_KEY", "").strip()
@@ -235,10 +235,10 @@ def _get_tenant_epoch_from_supabase(tenant: str) -> int | None:
     """
     Read tenant_session_epoch.epoch for a tenant.
     Returns:
-      - int epoch (>=0) if query succeeds (even if row missing -> 0)
-      - None if cannot check (missing env / request error)
+    - int epoch (>=0) if query succeeds (even if row missing -> 0)
+    - None if cannot check (missing env / request error)
     Security/availability tradeoff:
-      - If None -> we skip epoch check (best-effort), so system won't lock everyone out on transient DB issues.
+    - If None -> we skip epoch check (best-effort), so system won't lock everyone out on transient DB issues.
     """
     tenant = (tenant or "").strip()
     if not tenant:
@@ -365,9 +365,9 @@ def _store_session_to_browser(session_token: str):
         f"""
 <script>
 (function(){{
-  try {{
+try {{
     localStorage.setItem({json.dumps(_BROWSER_LS_KEY)}, {json.dumps(session_token)});
-  }} catch(e) {{}}
+}} catch(e) {{}}
 }})();
 </script>
         """,
@@ -384,7 +384,7 @@ def _inject_restore_session_js():
         f"""
 <script>
 (function(){{
-  try {{
+try {{
     const k = {json.dumps(_BROWSER_LS_KEY)};
     const qpKey = {json.dumps(_QP_SESSION_KEY)};
     const t = localStorage.getItem(k);
@@ -396,7 +396,7 @@ def _inject_restore_session_js():
 
     u.searchParams.set(qpKey, t);
     window.location.replace(u.toString());
-  }} catch(e) {{}}
+}} catch(e) {{}}
 }})();
 </script>
         """,
@@ -480,7 +480,7 @@ def _portal_verify_via_api(portal_token: str) -> (bool, str, dict):
     """
     Call Portal /sso/verify
     Expect response JSON like:
-      { "status":"ok", "email":"...", "company_id":"...", "analyzer_id":"..." }
+    { "status":"ok", "email":"...", "company_id":"...", "analyzer_id":"..." }
     """
     if not portal_token:
         return False, "Missing portal_token", {}
@@ -526,7 +526,7 @@ def try_portal_sso_login():
 
     ✅ 核心策略：
     - 第一次由 Portal 帶 portal_token 進來 -> Portal /sso/verify 成功後
-      mint analyzer_session，並把 URL 改成只保留 ?analyzer_session=...
+    mint analyzer_session，並把 URL 改成只保留 ?analyzer_session=...
     - Refresh 時 URL 還在 -> 用 analyzer_session 放行
     - ✅ Revoke：比對 tenant_session_epoch.epoch，不一致立刻拒絕（舊 token 立即失效）
     """
@@ -1508,19 +1508,19 @@ Cross-check process (high level):
 1) Obtain review document + framework + prompts + original results
 2) Re-perform the original identification analysis (without referring to original)
 3) Compare original vs cross-check results to classify:
-   - Matching items
-   - Similar matching items
-   - I-only non-matching items
-   - C-only non-matching items
+- Matching items
+- Similar matching items
+- I-only non-matching items
+- C-only non-matching items
 4) Validate similar matching items (re-analyze risk level)
 5) Validate non-matching I-only items (determine correctness; explain why one analysis is wrong)
 6) Validate non-matching C-only items (determine correctness; explain why one analysis is wrong)
 7) Prepare report of results with summary tables:
-   - Table 1: Matching items (same risk)
-   - Table 2: Similar matching items (different risk)
-   - Table 3: I-only non-matching items (include which is correct + why)
-   - Table 4: C-only non-matching items (include which is correct + why)
-   - Table 5: Final validated list (after validation)
+- Table 1: Matching items (same risk)
+- Table 2: Similar matching items (different risk)
+- Table 3: I-only non-matching items (include which is correct + why)
+- Table 4: C-only non-matching items (include which is correct + why)
+- Table 5: Final validated list (after validation)
 """.strip()
 
 
@@ -2174,7 +2174,7 @@ def render_logo(width: int = 260):
         st.warning(f"Logo render failed: {e}")
 
 # --- TEMP DEBUG (disabled) ---
- # with st.sidebar.expander("Logo debug", expanded=False):
+# with st.sidebar.expander("Logo debug", expanded=False):
 #     p = _find_logo_file()
 #     st.write("APP_DIR =", str(APP_DIR))
 #     st.write("CWD =", str(Path.cwd()))
@@ -2187,7 +2187,7 @@ def tenant_namespace(*parts: str) -> str:
     """
     Build a tenant-scoped namespace path.
     Example:
-      tenant_namespace("reviews", "drafts") -> "tenants/<tenant>/reviews/drafts"
+    tenant_namespace("reviews", "drafts") -> "tenants/<tenant>/reviews/drafts"
     """
     tenant = (st.session_state.get("tenant") or "").strip()
     if not tenant:
@@ -2202,7 +2202,7 @@ def tenant_namespace(*parts: str) -> str:
     if safe_parts:
         return "tenants/" + tenant + "/" + "/".join(safe_parts)
     return "tenants/" + tenant
-    
+
 # =========================
 # Portal-driven Language Lock + Logout UX
 # =========================
@@ -2295,13 +2295,13 @@ def render_logged_out_page():
     components.html(
         f"""
         <script>
-          (function() {{
+        (function() {{
             try {{
-              window.top.location.replace("{portal_url}");
+            window.top.location.replace("{portal_url}");
             }} catch(e) {{
-              window.location.href = "{portal_url}";
+            window.location.href = "{portal_url}";
             }}
-          }})();
+        }})();
         </script>
         <meta http-equiv="refresh" content="0; url={portal_url}" />
         """,
@@ -2364,9 +2364,9 @@ def do_logout():
             f"""
 <script>
 (function(){{
-  try {{
+try {{
     localStorage.removeItem({json.dumps(_BROWSER_LS_KEY)});
-  }} catch(e) {{}}
+}} catch(e) {{}}
 }})();
 </script>
             """,
@@ -2452,37 +2452,37 @@ def inject_ui_css():
 <style>
 /* Make analysis step titles match RESULTS step titles */
 .stMarkdown h2, .stSubheader, .stHeader {
-  font-size: 24px !important;
+font-size: 24px !important;
 }
 
 /* Strong "RESULTS" banner */
 .ef-results-banner {
-  padding: 14px 16px;
-  border-radius: 12px;
-  border: 1px solid rgba(49, 51, 63, 0.20);
-  background: rgba(49, 51, 63, 0.04);
-  margin: 12px 0 14px 0;
+padding: 14px 16px;
+border-radius: 12px;
+border: 1px solid rgba(49, 51, 63, 0.20);
+background: rgba(49, 51, 63, 0.04);
+margin: 12px 0 14px 0;
 }
 .ef-results-banner .title {
-  font-size: 28px;
-  font-weight: 800;
-  letter-spacing: 0.5px;
-  margin-bottom: 4px;
+font-size: 28px;
+font-weight: 800;
+letter-spacing: 0.5px;
+margin-bottom: 4px;
 }
 .ef-results-banner .subtitle {
-  font-size: 14px;
-  opacity: 0.80;
+font-size: 14px;
+opacity: 0.80;
 }
 
 /* Normalize our Step headers (we render as markdown h3 inside a wrapper) */
 .ef-step-title {
-  font-size: 24px;
-  font-weight: 800;
-  margin: 4px 0 6px 0;
+font-size: 24px;
+font-weight: 800;
+margin: 4px 0 6px 0;
 }
 
 /* Keep analysis content headings from becoming larger than the Step title.
-   (LLM outputs often include markdown H1/H2 which Streamlit renders huge.) */
+(LLM outputs often include markdown H1/H2 which Streamlit renders huge.) */
 div[data-testid="stExpander"] .stMarkdown h1 { font-size: 22px; }
 div[data-testid="stExpander"] .stMarkdown h2 { font-size: 20px; }
 div[data-testid="stExpander"] .stMarkdown h3 { font-size: 18px; }
@@ -2492,36 +2492,36 @@ div[data-testid="stExpander"] .stMarkdown h6 { font-size: 12px; }
 
 /* Make expander header look cleaner */
 div[data-testid="stExpander"] details summary p {
-  font-weight: 700;
+font-weight: 700;
 }
 
 /* Large, obvious "running" indicator (separate from Streamlit's tiny top-right icon) */
 .ef-running {
-  margin: 10px 0 14px 0;
-  padding: 14px 16px;
-  border-radius: 12px;
-  border: 1px solid rgba(255, 75, 75, 0.25);
-  background: rgba(255, 75, 75, 0.06);
+margin: 10px 0 14px 0;
+padding: 14px 16px;
+border-radius: 12px;
+border: 1px solid rgba(255, 75, 75, 0.25);
+background: rgba(255, 75, 75, 0.06);
 }
 .ef-running .row { display: flex; align-items: center; gap: 12px; }
 .ef-running .label { font-size: 16px; font-weight: 800; }
 .ef-spinner {
-  width: 22px; height: 22px;
-  border-radius: 999px;
-  border: 3px solid rgba(49, 51, 63, 0.20);
-  border-top-color: rgba(255, 75, 75, 0.80);
-  animation: efspin 0.9s linear infinite;
+width: 22px; height: 22px;
+border-radius: 999px;
+border: 3px solid rgba(49, 51, 63, 0.20);
+border-top-color: rgba(255, 75, 75, 0.80);
+animation: efspin 0.9s linear infinite;
 }
 @keyframes efspin { to { transform: rotate(360deg); } }
 
 /* Download link styled like a button (avoids 404s from reverse-proxy paths) */
 .ef-download-btn {
-  display: inline-block;
-  padding: 10px 16px;
-  border-radius: 10px;
-  border: 1px solid rgba(49, 51, 63, 0.25);
-  text-decoration: none !important;
-  font-weight: 700;
+display: inline-block;
+padding: 10px 16px;
+border-radius: 10px;
+border: 1px solid rgba(49, 51, 63, 0.25);
+text-decoration: none !important;
+font-weight: 700;
 }
 </style>
         """,
@@ -2539,7 +2539,7 @@ def build_data_download_link(data: bytes, filename: str, mime: str, label: str) 
     b64 = base64.b64encode(data).decode("ascii")
     # Note: onclick returns false to prevent navigation.
     return f"""<a class='ef-download-btn' href='#' onclick="(function(){{
-  try {{
+try {{
     const b64 = '{b64}';
     const byteChars = atob(b64);
     const byteNums = new Array(byteChars.length);
@@ -2554,10 +2554,10 @@ def build_data_download_link(data: bytes, filename: str, mime: str, label: str) 
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }} catch (e) {{
+}} catch (e) {{
     console.error('download failed', e);
-  }}
-  return false;
+}}
+return false;
 }})();" >{label}</a>"""
 
 
@@ -2568,10 +2568,10 @@ def show_running_banner(text: str):
     ph.markdown(
         f"""
 <div class="ef-running">
-  <div class="row">
+<div class="row">
     <div class="ef-spinner"></div>
     <div class="label">{text}</div>
-  </div>
+</div>
 </div>
         """,
         unsafe_allow_html=True,
@@ -2747,71 +2747,59 @@ def main():
     if st.session_state.selected_framework_key is None and FRAMEWORKS:
         st.session_state.selected_framework_key = list(FRAMEWORKS.keys())[0]
 
-   doc_tracking = load_doc_tracking()
+    doc_tracking = load_doc_tracking()
+        # -------------------------
+    # Portal SSO MUST run early
+    # -------------------------
+    # Critical: run SSO right after session defaults are ready,
+    # and BEFORE any login UI is rendered.
+    try_portal_sso_login()
+        # Sidebar (Portal language is locked; do not show mixed-language UI)
+    with st.sidebar:
+        st.header("🧭 " + ("Error-Free® Intelligence Engine" if st.session_state.get("lang", "en") == "en" else "零錯誤智能引擎"))
 
-# -------------------------
-# Portal SSO MUST run early
-# -------------------------
-# Critical: run SSO right after session defaults are ready,
-# and BEFORE any login UI is rendered.
-try_portal_sso_login()
+        ui_lang = st.session_state.get("lang", "en")
+        ui_zhv = st.session_state.get("zh_variant", "tw")
+        is_zh = (ui_lang == "zh")
 
-# -------------------------
-# Sidebar (NO "with st.sidebar:" to avoid indentation bombs)
-# -------------------------
-ui_lang = st.session_state.get("lang", "en")
-ui_zhv = st.session_state.get("zh_variant", "tw")
-is_zh = (ui_lang == "zh")
+        # Caption (no mixed language)
+        st.caption("Portal-only SSO (single entry via Portal)" if not is_zh else "Portal-only SSO（單一入口：Portal）")
 
-st.sidebar.header("🧭 " + ("Error-Free® Intelligence Engine" if ui_lang == "en" else "零錯誤智能引擎"))
+        st.markdown("---")
 
-# Caption (no mixed language)
-st.sidebar.caption("Portal-only SSO (single entry via Portal)" if not is_zh else "Portal-only SSO（單一入口：Portal）")
-st.sidebar.markdown("---")
+        # Language display
+        if not is_zh:
+            st.markdown(f"**Language:** `{ui_lang}` (locked by Portal)")
+        else:
+            if ui_zhv == "cn":
+                st.markdown("**語言：** `zh-cn`（由 Portal 鎖定）")
+            else:
+                st.markdown("**語言：** `zh-tw`（由 Portal 鎖定）")
 
-# Language display
-if not is_zh:
-    st.sidebar.markdown(f"**Language:** `{ui_lang}` (locked by Portal)")
-else:
-    if ui_zhv == "cn":
-        st.sidebar.markdown("**語言：** `zh-cn`（由 Portal 鎖定）")
-    else:
-        st.sidebar.markdown("**語言：** `zh-tw`（由 Portal 鎖定）")
+                # --- Tenant AI settings (safe debug / no secrets) ---
+        tas = st.session_state.get("tenant_ai_settings") or {}
+        tenant_dbg = st.session_state.get("tenant") or ""
+        source = tas.get("source") or "unknown"
+        provider = tas.get("provider") or "(default)"
+        model = tas.get("model") or "(default)"
 
-# --- Tenant AI settings (safe debug / no secrets) ---
-tas = st.session_state.get("tenant_ai_settings") or {}
-tenant_dbg = st.session_state.get("tenant") or ""
-source = tas.get("source") or "unknown"
-provider = tas.get("provider") or "(default)"
-model = tas.get("model") or "(default)"
+        st.caption(f"Tenant: {tenant_dbg}")
+        st.caption(f"AI settings source: {source}")
+        st.caption(f"Provider: {provider}")
+        st.caption(f"Model: {model}")
 
-st.sidebar.caption(f"Tenant: {tenant_dbg}")
-st.sidebar.caption(f"AI settings source: {source}")
-st.sidebar.caption(f"Provider: {provider}")
-st.sidebar.caption(f"Model: {model}")
+        # Account section (only if authenticated)
+        if st.session_state.get("is_authenticated"):
+            st.markdown("---")
+            st.subheader("Account" if not is_zh else ("帳號資訊" if ui_zhv == "tw" else "账号信息"))
 
-# --- Tenant namespace verification (D3) ---
-# (requires Step 13 tenant_namespace() helper already added)
-try:
-    st.sidebar.caption(f"Namespace: {tenant_namespace()}")
-    st.sidebar.caption(f"Reviews path: {tenant_namespace('reviews')}")
-except Exception:
-    # If helper is missing for any reason, do not break the app
-    st.sidebar.caption("Namespace: (tenant_namespace helper not available)")
+            email = st.session_state.get("user_email", "")
+            if email:
+                st.markdown(f"Email: [{email}](mailto:{email})" if not is_zh else f"Email：[{email}](mailto:{email})")
 
-# Account section (only if authenticated)
-if st.session_state.get("is_authenticated"):
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Account" if not is_zh else ("帳號資訊" if ui_zhv == "tw" else "账号信息"))
+            if st.button("Logout" if not is_zh else "登出"):
+                do_logout()
 
-    email = st.session_state.get("user_email", "")
-    if email:
-        st.sidebar.markdown(f"Email: [{email}](mailto:{email})" if not is_zh else f"Email：[{email}](mailto:{email})")
-
-    if st.sidebar.button("Logout" if not is_zh else "登出"):
-        do_logout()
-
-# ======= Login screen =======
 
     # ======= Login screen =======
     if not st.session_state.is_authenticated:
@@ -2819,7 +2807,7 @@ if st.session_state.get("is_authenticated"):
 
         render_logo(260)
 
-             # Homepage title (match Catalog)
+            # Homepage title (match Catalog)
         if lang == "zh":
             title = (
                 "AI化零錯誤多輪文件審查/零錯誤文件隱患排查（預防文件審查錯誤）"
@@ -3770,8 +3758,8 @@ if st.session_state.get("is_authenticated"):
     st.markdown(
         f"""
 <div class="ef-results-banner">
-  <div class="title">{'RESULTS' if lang == 'en' else zh('結果總覽', '结果总览')}</div>
-  <div class="subtitle">{'All outputs are grouped below by steps.' if lang == 'en' else zh('所有輸出依步驟整理在此區，點選可展開 / 收起。', '所有输出依步骤整理在此区，点选可展开 / 收起。')}</div>
+<div class="title">{'RESULTS' if lang == 'en' else zh('結果總覽', '结果总览')}</div>
+<div class="subtitle">{'All outputs are grouped below by steps.' if lang == 'en' else zh('所有輸出依步驟整理在此區，點選可展開 / 收起。', '所有输出依步骤整理在此区，点选可展开 / 收起。')}</div>
 </div>
         """,
         unsafe_allow_html=True,
@@ -3899,7 +3887,7 @@ if st.session_state.get("is_authenticated"):
                         mime=mime,
                         key=f"download_{framework_key}_{now_ts}",
                     )
-                    
+
 
                     st.caption(
                         "Tip: If you want a 'Save As' location prompt, enable 'Ask where to save each file' in your browser settings."
