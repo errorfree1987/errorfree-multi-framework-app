@@ -3911,8 +3911,9 @@ def main():
                     mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
                     now_ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                    framework_key = (selected_key or "unknown").replace("/", "-")
-                    filename = f"Error-Free® IER {framework_key} {now_ts}" + (" +Q&A" if include_qa else "") + ".docx"
+                    framework_key = (selected_key or "unknown").replace("/", "__")
+                    base_filename = f"Error-Free® IER {framework_key} {now_ts}" + (" +Q&A" if include_qa else "") + ".docx"
+                    filename = tenant_namespace("downloads", base_filename).replace("/", "__")
 
 
                     # Download (DOCX) — use Streamlit native download_button (supports browser save-location prompt).
