@@ -2955,21 +2955,44 @@ def main():
     st.sidebar.caption(f"Namespace: {tenant_namespace()}")
     st.sidebar.caption(f"Reviews path: {tenant_namespace('reviews')}")
         # D3-B Step9: Tenant review history (Supabase)
-    with st.sidebar.expander("Review history (latest 20)", expanded=False):
+        # D3-B Step10: Tenant review history (Supabase) — compact sidebar UI
+    st.sidebar.caption("Review history")
+    st.sidebar.caption("Latest 20")
+
+    show_history = st.sidebar.checkbox(
+        "Show",
+        value=False,
+        key=tenant_namespace("ui", "show_review_history").replace("/", "__"),
+    )
+
+    if show_history:
         tenant = (st.session_state.get("tenant") or "unknown").strip() or "unknown"
         rows = fetch_tenant_reviews_from_supabase(tenant, limit=20)
 
-        if rows:
-            try:
-                st.dataframe(rows, use_container_width=True)
-            except Exception:
-                st.write(rows)
+        if not rows:
+            st.sidebar.caption("No history yet (or not readable).")
         else:
-            st.caption("No history yet (or not readable).")
+            for r in rows:
+                created_at = (r.get("created_at") or "")
+                created_at = created_at.replace("T", " ")[:19] if created_at else "-"
+
+                fw = r.get("framework_key") or "-"
+                doc = r.get("document_name") or "-"
+                dl = r.get("download_filename") or ""
+                short_dl = dl.split("__")[-1] if dl else "-"
+
+                rid = (r.get("id") or "")
+                rid8 = rid[:8] if rid else "-"
+
+                st.sidebar.markdown(
+                    f"- `{created_at}` **{fw}**  \n"
+                    f"  {doc}  \n"
+                    f"  {short_dl}  · `{rid8}`"
+                )
 
         if st.session_state.get("_last_reviews_read_error"):
-            st.caption(f"Read error: {st.session_state.get('_last_reviews_read_error')}")
-
+            st.sidebar.caption(f"Read error: {st.session_state.get('_last_reviews_read_error')}")
+            
     # Account section (only if authenticated)
     if st.session_state.get("is_authenticated"):
         st.sidebar.markdown("---")
