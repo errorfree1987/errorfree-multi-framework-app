@@ -2145,22 +2145,41 @@ def do_logout():
     """
     Portal-only logout:
     - Clear local session state
+    - Clear analyzer_session (URL + localStorage)
     - IMMEDIATELY redirect to Portal
     - MUST NOT show any signed-out page or internal login UI
     """
     # Clear auth
     st.session_state["is_authenticated"] = False
 
-    # Clear user fields
-    for k in ["user_email", "user_role", "company_code", "selected_framework_key", "show_admin"]:
-        if k in st.session_state:
-            st.session_state[k] = None
+    # Clear sensitive/session fields (tenant isolation hygiene)
+    for k in [
+        "user_email",
+        "email",
+        "user_role",
+        "tenant",
+        "tenant_ai_settings",
+        "company_id",
+        "analyzer_id",
+        "company_code",
+        "selected_framework_key",
+        "show_admin",
+        "portal_token",
+        "token",
+        "ts",
+        "analyzer_session",
+    ]:
+        try:
+            if k in st.session_state:
+                st.session_state.pop(k, None)
+        except Exception:
+            pass
 
     # Allow re-check on next entry (fresh Portal token)
     st.session_state["_portal_sso_checked"] = False
     st.session_state["_lang_locked"] = True  # keep current language display consistent
 
-    # Clear query params
+    # Clear query params (remove analyzer_session from URL too)
     try:
         st.query_params.clear()
     except Exception:
@@ -2169,7 +2188,25 @@ def do_logout():
         except Exception:
             pass
 
-    # Persist
+    # Clear browser localStorage analyzer_session (best-effort)
+    try:
+        import streamlit.components.v1 as components
+        components.html(
+            f"""
+<script>
+(function(){{
+  try {{
+    localStorage.removeItem({json.dumps(_BROWSER_LS_KEY)});
+  }} catch(e) {{}}
+}})();
+</script>
+            """,
+            height=0,
+        )
+    except Exception:
+        pass
+
+    # Persist (best-effort)
     try:
         save_state_to_disk()
     except Exception:
