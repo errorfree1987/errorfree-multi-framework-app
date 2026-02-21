@@ -1057,7 +1057,18 @@ def record_usage(user_email: str, framework_key: str, kind: str):
     data[user_email] = user_entry
     save_usage_stats(data)
 
+def _user_state_file() -> Path:
+    """
+    D3-B: user_state MUST be tenant-scoped AND user-scoped, otherwise 1000 users
+    in the same tenant will overwrite each other's persisted state.
+    """
+    uid = (st.session_state.get("user_email") or "").strip().lower()
+    if not uid:
+        # fallback to other stable identifiers if email not ready yet
+        uid = (st.session_state.get("analyzer_id") or st.session_state.get("analyzer_session") or "anon").strip()
 
+    h = hashlib.sha256(uid.encode("utf-8")).hexdigest()[:12]
+    return _tenant_data_file(f"user_state_{h}.json")
 def save_state_to_disk():
     """
     SECURITY NOTE:
@@ -1110,7 +1121,7 @@ def save_state_to_disk():
         "_pending_clear_followup_key": st.session_state.get("_pending_clear_followup_key"),
     }
     try:
-        f = _tenant_data_file("user_state.json")
+        f = _user_state_file()
         f.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
@@ -1122,7 +1133,7 @@ def restore_state_from_disk():
     Never restore authentication identity from disk.
     Only restore workflow/UI state.
     """
-    f = _tenant_data_file("user_state.json")
+    f = _user_state_file()
     if not f.exists():
         return
     try:
