@@ -2825,7 +2825,7 @@ def main():
 
         if st.button("Logout" if not is_zh else "登出"):
             do_logout()
-
+            
     # ======= Login screen =======
     if not st.session_state.is_authenticated:
         lang = st.session_state.lang
