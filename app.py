@@ -2755,8 +2755,10 @@ def main():
     # and BEFORE any login UI is rendered.
     try_portal_sso_login()
         # Sidebar (Portal language is locked; do not show mixed-language UI)
-    with st.sidebar:
-    st.header(
+   def render_sidebar_panel():
+    sb = st.sidebar
+
+    sb.header(
         "🧭 "
         + (
             "Error-Free® Intelligence Engine"
@@ -2769,62 +2771,60 @@ def main():
     ui_zhv = st.session_state.get("zh_variant", "tw")
     is_zh = (ui_lang == "zh")
 
-    # Caption (no mixed language)
-    st.caption(
+    sb.caption(
         "Portal-only SSO (single entry via Portal)"
         if not is_zh
         else "Portal-only SSO（單一入口：Portal）"
     )
 
-    st.markdown("---")
+    sb.markdown("---")
 
     # Language display (locked by Portal)
     if not is_zh:
-        st.markdown(f"**Language:** `{ui_lang}` (locked by Portal)")
+        sb.markdown(f"**Language:** `{ui_lang}` (locked by Portal)")
     else:
         if ui_zhv == "cn":
-            st.markdown("**語言：** `zh-cn`（由 Portal 鎖定）")
+            sb.markdown("**語言：** `zh-cn`（由 Portal 鎖定）")
         else:
-            st.markdown("**語言：** `zh-tw`（由 Portal 鎖定）")
+            sb.markdown("**語言：** `zh-tw`（由 Portal 鎖定）")
 
-    st.markdown("---")
+    sb.markdown("---")
 
-    # =========================
-    # Tenant namespace (D3) - verification display (safe)
-    # =========================
+    # Tenant namespace (D3) verification (safe)
     tenant_dbg = st.session_state.get("tenant") or ""
-    st.caption(f"Tenant: {tenant_dbg}")
-    st.caption(f"Namespace (reviews): {tenant_namespace('reviews')}")
+    sb.caption(f"Tenant: {tenant_dbg}")
+    sb.caption(f"Namespace (reviews): {tenant_namespace('reviews')}")
 
-    st.markdown("---")
+    sb.markdown("---")
 
-    # =========================
-    # Tenant AI settings (D4) - safe debug (no secrets)
-    # =========================
+    # Tenant AI settings (D4) safe debug (no secrets)
     tas = st.session_state.get("tenant_ai_settings") or {}
     source = tas.get("source") or "unknown"
     provider = tas.get("provider") or "(default)"
     model = tas.get("model") or "(default)"
 
-    st.caption(f"AI settings source: {source}")
-    st.caption(f"Provider: {provider}")
-    st.caption(f"Model: {model}")
+    sb.caption(f"AI settings source: {source}")
+    sb.caption(f"Provider: {provider}")
+    sb.caption(f"Model: {model}")
 
-    # Account section (only if authenticated)
+    # Account section
     if st.session_state.get("is_authenticated"):
-        st.markdown("---")
-        st.subheader("Account" if not is_zh else ("帳號資訊" if ui_zhv == "tw" else "账号信息"))
+        sb.markdown("---")
+        sb.subheader("Account" if not is_zh else ("帳號資訊" if ui_zhv == "tw" else "账号信息"))
 
         email = st.session_state.get("user_email", "")
         if email:
-            st.markdown(
+            sb.markdown(
                 f"Email: [{email}](mailto:{email})"
                 if not is_zh
                 else f"Email：[{email}](mailto:{email})"
             )
 
-        if st.button("Logout" if not is_zh else "登出"):
+        if sb.button("Logout" if not is_zh else "登出"):
             do_logout()
+
+
+render_sidebar_panel()
             
     # ======= Login screen =======
     if not st.session_state.is_authenticated:
