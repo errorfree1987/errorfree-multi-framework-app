@@ -2957,7 +2957,7 @@ def main():
         # D3-B Step9: Tenant review history (Supabase)
         # D3-B Step12: Tenant review history ( Latest 20 ) — checkbox on same row + colored badges
         # Header: put checkbox right next to the title (not flush-right)
-    tcol, cbcol, _spacer = st.sidebar.columns([20, 2, 1])
+    tcol, cbcol, _spacer = st.sidebar.columns([12, 1, 0.01])
     with tcol:
         st.caption("Review\u00A0history\u00A0(Latest\u00A020)")
     with cbcol:
