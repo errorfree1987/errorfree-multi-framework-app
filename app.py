@@ -2955,9 +2955,8 @@ def main():
     st.sidebar.caption(f"Namespace: {tenant_namespace()}")
     st.sidebar.caption(f"Reviews path: {tenant_namespace('reviews')}")
         # D3-B Step9: Tenant review history (Supabase)
-        # D3-B Step12: Tenant review history ( Latest 20 ) — checkbox on same row + colored badges
-        # Header: put checkbox right next to the title (not flush-right)
-    # Toggle by clicking the title button (no checkbox; stable in narrow sidebar)
+# Toggle by clicking the title button (no checkbox; stable in narrow sidebar)
+
 if "show_review_history" not in st.session_state:
     st.session_state["show_review_history"] = False
 
@@ -2969,34 +2968,33 @@ if st.sidebar.button(
 
 show_history = bool(st.session_state.get("show_review_history"))
 
-    if show_history:
-        tenant = (st.session_state.get("tenant") or "unknown").strip() or "unknown"
-        rows = fetch_tenant_reviews_from_supabase(tenant, limit=20)
+if show_history:
+    tenant = (st.session_state.get("tenant") or "unknown").strip() or "unknown"
+    rows = fetch_tenant_reviews_from_supabase(tenant, limit=20)
 
-        if not rows:
-            st.sidebar.caption("No history yet (or not readable).")
-        else:
-            for r in rows:
-                created_at = (r.get("created_at") or "")
-                created_at = created_at.replace("T", " ")[:19] if created_at else "-"
+    if not rows:
+        st.sidebar.caption("No history yet (or not readable).")
+    else:
+        for r in rows:
+            created_at = (r.get("created_at") or "")
+            created_at = created_at.replace("T", " ")[:19] if created_at else "--"
 
-                fw = r.get("framework_key") or "-"
-                doc = r.get("document_name") or "-"
-                dl = r.get("download_filename") or ""
-                short_dl = dl.split("__")[-1] if dl else "-"
+            fw = r.get("framework_key") or "--"
+            doc = r.get("document_name") or "--"
+            dl = r.get("download_filename") or ""
+            short_dl = dl.split("__")[-1] if dl else "--"
 
-                rid = (r.get("id") or "")
-                rid8 = rid[:8] if rid else "-"
+            rid = (r.get("id") or "")
+            rid8 = rid[:8] if rid else "--"
 
-                # Markdown + backticks => colored "badge" look like before
-                st.sidebar.markdown(
-                    f"- `{created_at}` **{fw}**  \n"
-                    f"  {doc}  \n"
-                    f"  {short_dl} · `{rid8}`"
-                )
+            st.sidebar.markdown(
+                f"- `{created_at}` **{fw}**  \n"
+                f"  {doc}  \n"
+                f"  {short_dl} · `{rid8}`"
+            )
 
-        if st.session_state.get("_last_reviews_read_error"):
-            st.sidebar.caption(f"Read error: {st.session_state.get('_last_reviews_read_error')}")
+    if st.session_state.get("_last_reviews_read_error"):
+        st.sidebar.caption(f"Read error: {st.session_state.get('_last_reviews_read_error')}")
             
     # Account section (only if authenticated)
     if st.session_state.get("is_authenticated"):
