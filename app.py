@@ -2955,25 +2955,18 @@ def main():
     st.sidebar.caption(f"Namespace: {tenant_namespace()}")
     st.sidebar.caption(f"Reviews path: {tenant_namespace('reviews')}")
         # D3-B Step9: Tenant review history (Supabase)
-        # D3-B Step12: Tenant review history (Latest 20) — SINGLE LINE header + checkbox
-title_col, cb_col, _spacer = st.sidebar.columns([14, 1, 6])
-
-with title_col:
-    st.sidebar.markdown(
-        '<div style="font-size:0.85rem; color:rgba(49,51,63,0.60); '
-        'white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">'
-        'Review history (Latest 20)'
-        '</div>',
-        unsafe_allow_html=True,
-    )
-
-with cb_col:
-    show_history = st.checkbox(
-        "review_history_toggle",
-        value=False,
-        label_visibility="collapsed",
-        key=tenant_namespace("ui", "show_review_history").replace("/", "__"),
-    )
+        # D3-B Step12: Tenant review history ( Latest 20 ) — checkbox on same row + colored badges
+        # Header: put checkbox right next to the title (not flush-right)
+    tcol, cbcol, _spacer = st.sidebar.columns([11, 2, 17])
+    with tcol:
+        st.caption("Review history ( Latest 20 )")
+    with cbcol:
+        show_history = st.checkbox(
+            "review_history_toggle",
+            value=False,
+            label_visibility="collapsed",
+            key=tenant_namespace("ui", "show_review_history").replace("/", "__"),
+        )
 
     if show_history:
         tenant = (st.session_state.get("tenant") or "unknown").strip() or "unknown"
