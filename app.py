@@ -2957,16 +2957,17 @@ def main():
         # D3-B Step9: Tenant review history (Supabase)
         # D3-B Step12: Tenant review history ( Latest 20 ) — checkbox on same row + colored badges
         # Header: put checkbox right next to the title (not flush-right)
-    tcol, cbcol, _spacer = st.sidebar.columns([12, 1, 0.01])
-    with tcol:
-        st.caption("Review\u00A0history\u00A0(Latest\u00A020)")
-    with cbcol:
-        show_history = st.checkbox(
-            "review_history_toggle",
-            value=False,
-            label_visibility="collapsed",
-            key=tenant_namespace("ui", "show_review_history").replace("/", "__"),
-        )
+    # Toggle by clicking the title button (no checkbox; stable in narrow sidebar)
+if "show_review_history" not in st.session_state:
+    st.session_state["show_review_history"] = False
+
+if st.sidebar.button(
+    "Review\u00A0history\u00A0(Latest\u00A020)",
+    key=tenant_namespace("ui", "toggle_review_history").replace("/", "__"),
+):
+    st.session_state["show_review_history"] = not st.session_state["show_review_history"]
+
+show_history = bool(st.session_state.get("show_review_history"))
 
     if show_history:
         tenant = (st.session_state.get("tenant") or "unknown").strip() or "unknown"
