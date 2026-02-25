@@ -630,11 +630,26 @@ def _portal_verify_via_api(portal_token: str) -> (bool, str, dict):
     except Exception:
         return False, "Portal verify: invalid JSON response", {}
 
-    status = str(data.get("status", "")).lower()
-    if status not in ("ok", "success", "200", "true"):
-        return False, f"Portal verify returned non-ok: {data}", data
+    # Normalize payload:
+# Portal may return either:
+#  A) {"status":"ok", ...fields...}
+#  B) {"status":"ok", "info": {...fields...}}
+status = str(data.get("status", "")).lower()
+if status not in ("ok", "success", "200", "true"):
+    return False, f"Portal verify returned non-ok: {data}", data
 
-    return True, "OK", data
+info = data.get("info") if isinstance(data.get("info"), dict) else data
+
+# Ensure tenant_epoch is an int (default 0)
+try:
+    info["tenant_epoch"] = int(info.get("tenant_epoch") or 0)
+except Exception:
+    info["tenant_epoch"] = 0
+
+# (Optional) keep tenant as string
+info["tenant"] = str(info.get("tenant") or "")
+
+return True, "OK", info
 
 def try_portal_sso_login():
     """
