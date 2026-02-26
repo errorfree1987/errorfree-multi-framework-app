@@ -725,11 +725,17 @@ def try_portal_sso_login():
             _render_portal_only_block("Session revoked (tenant epoch mismatch). Please re-enter from Portal.")
 
     # 0) Already authenticated in this Streamlit session
+    #    We STILL enforce epoch-based revoke here using stored tenant/epoch,
+    #    so that bumping tenant_session_epoch immediately invalidates old sessions.
     if st.session_state.get("is_authenticated") and st.session_state.get("user_email"):
+        tenant = (st.session_state.get("tenant") or "").strip()
+        stored_epoch = st.session_state.get("session_epoch", None)
+        if tenant and stored_epoch is not None:
+            _enforce_epoch_or_block(tenant, int(stored_epoch))
         st.session_state["_portal_sso_checked"] = True
         return
 
-    # Only check once per Streamlit session
+    # Only check once per Streamlit session (for non-authenticated visitors)
     if st.session_state.get("_portal_sso_checked", False):
         return
 
@@ -739,7 +745,19 @@ def try_portal_sso_login():
         payload = verify_analyzer_session(sess_tok)
         if payload:
             tenant_from_payload = (payload.get("tenant") or "").strip()
-            token_epoch = _extract_epoch_from_session_token(sess_tok)
+            # Use epoch from verified payload to avoid any mismatch in claim name/type.
+            try:
+                token_epoch = int(payload.get("epoch", 0) or 0)
+            except Exception:
+                token_epoch = 0
+
+            # Optional debug: show tenant / token_epoch / current_epoch
+            if _qp_get("debug_epoch", "") == "1":
+                current_epoch_dbg = _get_epoch_strict(tenant_from_payload)
+                st.sidebar.caption(
+                    f"[debug_epoch] tenant={tenant_from_payload} "
+                    f"token_epoch={token_epoch} current_epoch={current_epoch_dbg}"
+                )
 
             # ✅ ENFORCE revoke here (THIS is what makes old tokens die immediately)
             _enforce_epoch_or_block(tenant_from_payload, token_epoch)
@@ -751,6 +769,8 @@ def try_portal_sso_login():
             st.session_state["email"] = st.session_state["user_email"]
             st.session_state["tenant"] = tenant_from_payload
             st.session_state["user_role"] = (payload.get("role") or "").strip() or "member"
+            # Remember epoch for future strict checks even when already authenticated
+            st.session_state["session_epoch"] = token_epoch
 
             # ✅ Load tenant AI settings (once per tenant)
             if (
@@ -798,6 +818,8 @@ def try_portal_sso_login():
         st.session_state["email"] = verified_email
         st.session_state["tenant"] = tenant
         st.session_state["user_role"] = role
+        # Remember epoch for future strict checks even when already authenticated
+        st.session_state["session_epoch"] = int(current_epoch)
 
         # ✅ Load tenant AI settings (once per tenant)
         if (
