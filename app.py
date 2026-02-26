@@ -752,7 +752,7 @@ def try_portal_sso_login():
                 token_epoch = 0
 
             # Optional debug: show tenant / token_epoch / current_epoch
-            if _qp_get("debug_epoch", "") == "1":
+            if _qp_get("debug_epoch", "") != "":
                 current_epoch_dbg = _get_epoch_strict(tenant_from_payload)
                 st.sidebar.caption(
                     f"[debug_epoch] tenant={tenant_from_payload} "
