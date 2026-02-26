@@ -812,6 +812,10 @@ def try_portal_sso_login():
             st.session_state["is_authenticated"] = False
             _render_portal_only_block("Portal verify succeeded but tenant is missing")
 
+        # Fetch current tenant epoch once (strict) and reuse it for both
+        # session_state bookkeeping and minted analyzer_session.
+        current_epoch = _get_epoch_strict(tenant)
+
         st.session_state["_portal_sso_checked"] = True
         st.session_state["is_authenticated"] = True
         st.session_state["user_email"] = verified_email
@@ -837,9 +841,6 @@ def try_portal_sso_login():
 
         lang_raw = _qp_get("lang", "en")
         _apply_portal_lang(lang_raw)
-
-        # ✅ IMPORTANT: embed current tenant epoch into the session token (so it can be revoked)
-        current_epoch = _get_epoch_strict(tenant)
 
         # Mint refresh-safe analyzer_session
         claims = {
