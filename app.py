@@ -727,13 +727,16 @@ def try_portal_sso_login():
     # 0) Already authenticated in this Streamlit session
     #    We STILL enforce epoch-based revoke here using stored tenant/epoch,
     #    so that bumping tenant_session_epoch immediately invalidates old sessions.
+    #    If we don't have a stored epoch yet (older sessions), we fall through
+    #    to the analyzer_session / portal_token logic below so that epoch can
+    #    be initialized from the token / DB.
     if st.session_state.get("is_authenticated") and st.session_state.get("user_email"):
         tenant = (st.session_state.get("tenant") or "").strip()
         stored_epoch = st.session_state.get("session_epoch", None)
         if tenant and stored_epoch is not None:
             _enforce_epoch_or_block(tenant, int(stored_epoch))
-        st.session_state["_portal_sso_checked"] = True
-        return
+            st.session_state["_portal_sso_checked"] = True
+            return
 
     # Only check once per Streamlit session (for non-authenticated visitors)
     if st.session_state.get("_portal_sso_checked", False):
