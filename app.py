@@ -423,8 +423,8 @@ def mint_analyzer_session(claims: dict) -> str:
 def verify_analyzer_session(token: str) -> dict | None:
     """
     Verify signature + exp + required fields.
-    Then (best-effort) verify tenant epoch matches Supabase.
-    If epoch mismatches -> revoked -> reject.
+    Epoch check is performed separately by _enforce_epoch_or_block to provide
+    specific revoke messaging (instead of generic "No valid Portal SSO" error).
     """
     if not token or "." not in token:
         return None
@@ -457,19 +457,12 @@ def verify_analyzer_session(token: str) -> dict | None:
     if not email or not tenant or not role:
         return None
 
-    # Epoch check (best-effort)
+    # Include epoch in payload (for later check by _enforce_epoch_or_block)
     try:
-        token_epoch = int(payload.get("epoch", 0) or 0)
+        payload["epoch"] = int(payload.get("epoch", 0) or 0)
     except Exception:
-        token_epoch = 0
+        payload["epoch"] = 0
 
-    current_epoch = _get_tenant_epoch_from_supabase(tenant)
-    if current_epoch is not None:
-        if token_epoch != int(current_epoch):
-            # revoked / rotated
-            return None
-
-    payload["epoch"] = token_epoch
     return payload
 
 
