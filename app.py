@@ -380,8 +380,12 @@ def _check_tenant_and_member_access(tenant: str, email: str) -> tuple[bool, str]
             if rows:
                 tenant_data = rows[0]
                 
+                # Debug: Print tenant data (will be visible in logs)
+                print(f"[DEBUG] Tenant check for '{tenant}': {tenant_data}")
+                
                 # Check is_active
                 if not tenant_data.get("is_active", True):
+                    print(f"[DEBUG] Tenant '{tenant}' is_active=False, denying access")
                     return False, "tenant_inactive"
                 
                 # Check trial_end (if set)
@@ -390,12 +394,20 @@ def _check_tenant_and_member_access(tenant: str, email: str) -> tuple[bool, str]
                     from datetime import datetime, timezone
                     try:
                         trial_end = datetime.fromisoformat(trial_end_str.replace('Z', '+00:00'))
-                        if trial_end < datetime.now(timezone.utc):
+                        now = datetime.now(timezone.utc)
+                        print(f"[DEBUG] Tenant '{tenant}' trial_end={trial_end}, now={now}, expired={trial_end < now}")
+                        if trial_end < now:
                             return False, "trial_expired"
-                    except Exception:
+                    except Exception as e:
+                        print(f"[DEBUG] Failed to parse trial_end for '{tenant}': {e}")
                         pass  # If parsing fails, allow access
-    except Exception:
+            else:
+                print(f"[DEBUG] Tenant '{tenant}' not found in tenants table")
+        else:
+            print(f"[DEBUG] Supabase tenants query failed with status {resp.status_code}")
+    except Exception as e:
         # Network error or API down - fail open (allow)
+        print(f"[DEBUG] Exception in tenant check: {type(e).__name__}: {e}")
         pass
     
     # 2. Check member status
