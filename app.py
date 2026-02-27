@@ -492,6 +492,169 @@ def _log_audit_event(action: str, tenant: str, email: str, result: str, deny_rea
         pass
 
 
+def _check_usage_cap(tenant: str, usage_type: str) -> tuple[bool, int, int, str]:
+    """
+    Phase A2-2: Check if tenant has reached usage cap for today.
+    Returns (allow: bool, cap: int, current_usage: int, message: str)
+    
+    Args:
+        tenant: tenant slug
+        usage_type: 'review' or 'download'
+    
+    Returns:
+        (True, cap, usage, "") if under limit or no cap set
+        (False, cap, usage, "message") if cap reached
+    """
+    supabase_url = (os.getenv("SUPABASE_URL", "") or "").strip().rstrip("/")
+    service_key = (os.getenv("SUPABASE_SERVICE_KEY", "") or "").strip()
+    
+    if not supabase_url or not service_key:
+        # Fail open if env not configured
+        return True, 0, 0, ""
+    
+    headers = {
+        "apikey": service_key,
+        "Authorization": f"Bearer {service_key}",
+        "Accept": "application/json",
+    }
+    
+    try:
+        # 1. Get tenant_id from slug
+        tenant_endpoint = f"{supabase_url}/rest/v1/tenants"
+        tenant_params = {
+            "select": "id",
+            "slug": f"eq.{tenant}",
+            "limit": "1",
+        }
+        resp = requests.get(tenant_endpoint, params=tenant_params, headers=headers, timeout=10)
+        if resp.status_code != 200:
+            return True, 0, 0, ""
+        
+        rows = resp.json() or []
+        if not rows:
+            return True, 0, 0, ""
+        
+        tenant_id = rows[0].get("id")
+        
+        # 2. Get usage cap
+        caps_endpoint = f"{supabase_url}/rest/v1/tenant_usage_caps"
+        caps_params = {
+            "select": "daily_review_cap,daily_download_cap",
+            "tenant_id": f"eq.{tenant_id}",
+            "limit": "1",
+        }
+        resp = requests.get(caps_endpoint, params=caps_params, headers=headers, timeout=10)
+        if resp.status_code != 200:
+            return True, 0, 0, ""
+        
+        caps_rows = resp.json() or []
+        if not caps_rows:
+            # No cap set - unlimited
+            return True, 0, 0, ""
+        
+        caps_data = caps_rows[0]
+        cap = caps_data.get(f"daily_{usage_type}_cap")
+        
+        if cap is None or cap == 0:
+            # No cap or cap=0 (unlimited for None, blocked for 0)
+            if cap == 0:
+                return False, 0, 0, f"Your organization's {usage_type} access has been disabled. Please contact your administrator."
+            return True, 0, 0, ""
+        
+        # 3. Get today's usage count
+        from datetime import datetime, timezone
+        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        usage_endpoint = f"{supabase_url}/rest/v1/tenant_usage_events"
+        usage_params = {
+            "select": "quantity",
+            "tenant_id": f"eq.{tenant_id}",
+            "usage_type": f"eq.{usage_type}",
+            "created_at": f"gte.{today_start.isoformat()}",
+        }
+        resp = requests.get(usage_endpoint, params=usage_params, headers=headers, timeout=10)
+        if resp.status_code != 200:
+            return True, cap, 0, ""
+        
+        usage_rows = resp.json() or []
+        current_usage = sum(row.get("quantity", 1) for row in usage_rows)
+        
+        # 4. Check if cap reached
+        if current_usage >= cap:
+            message = f"Daily {usage_type} limit reached ({current_usage}/{cap}). Please try again tomorrow or contact support to upgrade."
+            return False, cap, current_usage, message
+        
+        # Under limit
+        return True, cap, current_usage, ""
+        
+    except Exception as e:
+        print(f"[DEBUG] Exception in usage cap check: {type(e).__name__}: {e}")
+        # Fail open on error
+        return True, 0, 0, ""
+
+
+def _record_usage_event(tenant: str, email: str, usage_type: str, quantity: int = 1, context: dict = None):
+    """
+    Phase A2-2: Record usage event to tenant_usage_events table.
+    Best-effort (silent fail if env not configured or network error).
+    
+    Args:
+        tenant: tenant slug
+        email: user email
+        usage_type: 'review' or 'download'
+        quantity: number of units (default 1)
+        context: optional JSON context
+    """
+    supabase_url = (os.getenv("SUPABASE_URL", "") or "").strip().rstrip("/")
+    service_key = (os.getenv("SUPABASE_SERVICE_KEY", "") or "").strip()
+    
+    if not supabase_url or not service_key:
+        return
+    
+    try:
+        # 1. Get tenant_id from slug
+        tenant_endpoint = f"{supabase_url}/rest/v1/tenants"
+        tenant_params = {
+            "select": "id",
+            "slug": f"eq.{tenant}",
+            "limit": "1",
+        }
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Accept": "application/json",
+        }
+        resp = requests.get(tenant_endpoint, params=tenant_params, headers=headers, timeout=10)
+        if resp.status_code != 200:
+            return
+        
+        rows = resp.json() or []
+        if not rows:
+            return
+        
+        tenant_id = rows[0].get("id")
+        
+        # 2. Insert usage event
+        usage_endpoint = f"{supabase_url}/rest/v1/tenant_usage_events"
+        headers["Content-Type"] = "application/json"
+        headers["Prefer"] = "return=minimal"
+        
+        payload = {
+            "tenant_id": tenant_id,
+            "email": email,
+            "usage_type": usage_type,
+            "quantity": quantity,
+        }
+        
+        if context:
+            payload["context"] = context
+        
+        requests.post(usage_endpoint, json=payload, headers=headers, timeout=10)
+    except Exception:
+        # Silent fail
+        pass
+
+
 def _get_tenant_epoch_from_supabase(tenant: str) -> int | None:
     """
     Read tenant_session_epoch.epoch for a tenant.
@@ -3133,6 +3296,29 @@ def main():
     # Critical: run SSO right after session defaults are ready,
     # and BEFORE any login UI is rendered.
     try_portal_sso_login()
+    
+    # -------------------------
+    # Phase A2-2: Analyzer launch logging + caps check
+    # -------------------------
+    if st.session_state.get("is_authenticated"):
+        tenant = st.session_state.get("tenant", "")
+        email = st.session_state.get("user_email", "")
+        
+        # Only log once per session (use a flag to avoid repeated logs on every rerun)
+        if "_analyzer_launch_logged" not in st.session_state:
+            # Log analyzer launch
+            _log_audit_event(
+                action="analyzer_launch",
+                tenant=tenant,
+                email=email,
+                result="success",
+                context={
+                    "source": "main_app",
+                    "session_epoch": st.session_state.get("session_epoch", 0)
+                }
+            )
+            st.session_state["_analyzer_launch_logged"] = True
+    
     # Sidebar (Portal language is locked; do not show mixed-language UI)
     ui_lang = st.session_state.get("lang", "en")
     ui_zhv = st.session_state.get("zh_variant", "tw")
@@ -3742,6 +3928,34 @@ def main():
         elif not st.session_state.get("document_type"):
             st.error("Please select a document type first (Step 2)." if lang == "en" else zh("請先選擇文件類型（Step 2）", "请先选择文件类型（Step 2）"))
         else:
+            # Phase A2-2: Check usage cap before proceeding
+            tenant = st.session_state.get("tenant", "")
+            email = st.session_state.get("user_email", "")
+            
+            allow, cap, current_usage, cap_message = _check_usage_cap(tenant, "review")
+            
+            if not allow:
+                # Cap reached - show error and log denial
+                st.error(cap_message)
+                _log_audit_event(
+                    action="review_denied",
+                    tenant=tenant,
+                    email=email,
+                    result="denied",
+                    deny_reason="usage_cap_reached",
+                    context={"cap": cap, "current_usage": current_usage, "usage_type": "review"}
+                )
+                save_state_to_disk()
+                st.stop()
+            
+            # Show usage status if cap is set
+            if cap > 0:
+                remaining = cap - current_usage
+                if remaining <= 5:
+                    st.warning(f"⚠️ Daily review limit: {current_usage}/{cap} used. {remaining} remaining.")
+                else:
+                    st.info(f"📊 Daily review usage: {current_usage}/{cap}")
+            
             banner = show_running_banner(
                 "Analyzing... (main only)" if lang == "en" else zh("分析中...（僅主文件）", "分析中...（仅主文件）")
             )
@@ -3758,6 +3972,16 @@ def main():
 
             current_state["step5_done"] = True
             current_state["step5_output"] = clean_report_text(main_analysis_text)
+            
+            # Phase A2-2: Record usage event
+            _record_usage_event(
+                tenant=tenant,
+                email=email,
+                usage_type="review",
+                quantity=1,
+                context={"framework": selected_key, "step": "step5_main_analysis"}
+            )
+            
             save_state_to_disk()
             record_usage(user_email, selected_key, "analysis")
             st.success("Step 5 completed. Main analysis generated." if lang == "en" else zh("步驟五完成！已產出主文件第一份分析。", "步骤五完成！已产出主文件第一份分析。"))
