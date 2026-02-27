@@ -347,6 +347,139 @@ def _sign_payload(payload_b64: str, secret: str) -> str:
     return hmac.new(secret.encode("utf-8"), payload_b64.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
+def _check_tenant_and_member_access(tenant: str, email: str) -> tuple[bool, str]:
+    """
+    Phase A2 Enforcement: Check tenant and member access.
+    Returns (allow: bool, deny_reason: str)
+    deny_reason examples: tenant_inactive, trial_expired, member_inactive, member_not_found
+    """
+    supabase_url = (os.getenv("SUPABASE_URL", "") or "").strip().rstrip("/")
+    service_key = (os.getenv("SUPABASE_SERVICE_KEY", "") or "").strip()
+    
+    if not supabase_url or not service_key:
+        # Fail open (allow) if env not configured - avoid breaking existing deployments
+        return True, ""
+    
+    headers = {
+        "apikey": service_key,
+        "Authorization": f"Bearer {service_key}",
+        "Accept": "application/json",
+    }
+    
+    # 1. Check tenant status
+    try:
+        tenant_endpoint = f"{supabase_url}/rest/v1/tenants"
+        tenant_params = {
+            "select": "slug,is_active,status,trial_end",
+            "slug": f"eq.{tenant}",
+            "limit": "1",
+        }
+        resp = requests.get(tenant_endpoint, params=tenant_params, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            rows = resp.json() or []
+            if rows:
+                tenant_data = rows[0]
+                
+                # Check is_active
+                if not tenant_data.get("is_active", True):
+                    return False, "tenant_inactive"
+                
+                # Check trial_end (if set)
+                trial_end_str = tenant_data.get("trial_end")
+                if trial_end_str:
+                    from datetime import datetime, timezone
+                    try:
+                        trial_end = datetime.fromisoformat(trial_end_str.replace('Z', '+00:00'))
+                        if trial_end < datetime.now(timezone.utc):
+                            return False, "trial_expired"
+                    except Exception:
+                        pass  # If parsing fails, allow access
+    except Exception:
+        # Network error or API down - fail open (allow)
+        pass
+    
+    # 2. Check member status
+    try:
+        # First get tenant_id from slug
+        tenant_endpoint = f"{supabase_url}/rest/v1/tenants"
+        tenant_params = {
+            "select": "id",
+            "slug": f"eq.{tenant}",
+            "limit": "1",
+        }
+        resp = requests.get(tenant_endpoint, params=tenant_params, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            rows = resp.json() or []
+            if rows:
+                tenant_id = rows[0].get("id")
+                
+                # Check member
+                member_endpoint = f"{supabase_url}/rest/v1/tenant_members"
+                member_params = {
+                    "select": "is_active",
+                    "tenant_id": f"eq.{tenant_id}",
+                    "email": f"eq.{email}",
+                    "limit": "1",
+                }
+                resp = requests.get(member_endpoint, params=member_params, headers=headers, timeout=10)
+                if resp.status_code == 200:
+                    members = resp.json() or []
+                    if not members:
+                        # Member not found in tenant_members - allow (not all tenants may have members table populated yet)
+                        return True, ""
+                    
+                    member_data = members[0]
+                    if not member_data.get("is_active", True):
+                        return False, "member_inactive"
+    except Exception:
+        # Network error or API down - fail open (allow)
+        pass
+    
+    return True, ""
+
+
+def _log_audit_event(action: str, tenant: str, email: str, result: str, deny_reason: str = "", context: dict = None, actor_email: str = None):
+    """
+    Phase A2: Log audit event to Supabase audit_events table.
+    Best-effort (silent fail if env not configured or network error).
+    """
+    supabase_url = (os.getenv("SUPABASE_URL", "") or "").strip().rstrip("/")
+    service_key = (os.getenv("SUPABASE_SERVICE_KEY", "") or "").strip()
+    
+    if not supabase_url or not service_key:
+        return  # Silent fail if not configured
+    
+    try:
+        endpoint = f"{supabase_url}/rest/v1/audit_events"
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal",
+        }
+        
+        payload = {
+            "action": action,
+            "tenant_slug": tenant,
+            "email": email,
+            "result": result,
+        }
+        
+        if deny_reason:
+            payload["deny_reason"] = deny_reason
+        
+        if context:
+            payload["context"] = context
+        
+        if actor_email:
+            payload["actor_email"] = actor_email
+        
+        requests.post(endpoint, json=payload, headers=headers, timeout=10)
+    except Exception:
+        # Silent fail - don't break the app if audit logging fails
+        pass
+
+
 def _get_tenant_epoch_from_supabase(tenant: str) -> int | None:
     """
     Read tenant_session_epoch.epoch for a tenant.
@@ -808,6 +941,31 @@ def try_portal_sso_login():
             st.session_state["is_authenticated"] = False
             _render_portal_only_block("Portal verify succeeded but tenant is missing")
 
+        # Phase A2 Enforcement: Check tenant and member access
+        allow, deny_reason = _check_tenant_and_member_access(tenant, verified_email)
+        if not allow:
+            # Log denial
+            _log_audit_event(
+                action="sso_verify",
+                tenant=tenant,
+                email=verified_email,
+                result="denied",
+                deny_reason=deny_reason,
+                context={"source": "portal_sso"}
+            )
+            
+            # Block access with specific message
+            st.session_state["_portal_sso_checked"] = True
+            st.session_state["is_authenticated"] = False
+            
+            deny_messages = {
+                "tenant_inactive": "Access denied: Your organization's account is currently inactive. Please contact your administrator.",
+                "trial_expired": "Access denied: Your trial period has expired. Please contact support to upgrade your account.",
+                "member_inactive": "Access denied: Your account has been deactivated. Please contact your administrator.",
+            }
+            message = deny_messages.get(deny_reason, f"Access denied: {deny_reason}")
+            _render_portal_only_block(message)
+
         # Fetch current tenant epoch once (strict) and reuse it for both
         # session_state bookkeeping and minted analyzer_session.
         current_epoch = _get_epoch_strict(tenant)
@@ -820,6 +978,15 @@ def try_portal_sso_login():
         st.session_state["user_role"] = role
         # Remember epoch for future strict checks even when already authenticated
         st.session_state["session_epoch"] = int(current_epoch)
+
+        # Phase A2: Log successful verification
+        _log_audit_event(
+            action="sso_verify",
+            tenant=tenant,
+            email=verified_email,
+            result="success",
+            context={"source": "portal_sso", "epoch": int(current_epoch)}
+        )
 
         # ✅ Load tenant AI settings (once per tenant)
         if (
