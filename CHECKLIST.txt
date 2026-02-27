@@ -1,0 +1,141 @@
+✅ Epoch Revoke 驗收檢查清單
+=====================================
+
+日期：_______________
+測試人員：_______________
+環境：□ 本地開發  □ Railway 生產環境
+租戶：_______________
+
+
+## 前置檢查
+
+□ Supabase 連線正常
+□ 環境變數已設定（SUPABASE_URL, SUPABASE_SERVICE_KEY）
+□ 測試租戶存在於 tenant_session_epoch 表
+□ 已讀過 README_TESTING.md 或 test_epoch_revoke.md
+
+
+## 測試執行
+
+### Phase 1: 取得舊 Token
+□ 從 Portal 正常登入（租戶: _______）
+□ 進入 Analyzer 並加上 &debug_epoch=1
+□ 記錄當前 epoch: _______
+□ 確認 debug 顯示 token_epoch=current_epoch（相等）
+□ 複製完整 URL 並保存
+
+舊 URL: _________________________________________________
+
+
+### Phase 2: Bump Epoch
+□ 執行 SQL: UPDATE tenant_session_epoch SET epoch = epoch + 1 WHERE tenant = '______';
+□ 確認新 epoch: _______（應比舊 epoch 大 1）
+
+
+### Phase 3: 驗證撤權（核心測試）
+□ 開啟新的無痕視窗/私密瀏覽
+□ 直接貼上 Phase 1 保存的舊 URL
+□ ✅ 看到錯誤訊息：「請從 Error-Free® Portal 進入...」
+□ ✅ Reason 顯示：「Session revoked (tenant epoch mismatch). Please re-enter from Portal.」
+□ ✅ Debug 顯示：token_epoch=_______ current_epoch=_______ (不相等)
+□ ❌ 不是顯示：「No valid Portal SSO parameters」（舊錯誤）
+
+
+### Phase 4: 驗證新 Token 仍可用
+□ 回到 Portal
+□ 重新點擊進入 Analyzer
+□ ✅ 成功進入（正常顯示 Analyzer 介面）
+□ 加上 &debug_epoch=1
+□ ✅ Debug 顯示 token_epoch=current_epoch（相等，都是新 epoch）
+
+
+### Phase 5: 邊界測試（可選但建議）
+
+#### 5A. 過期 Token
+□ 使用一個過期的 analyzer_session URL
+□ ✅ 顯示 generic「No valid Portal SSO parameters」
+□ ✅ 不是顯示 epoch mismatch 訊息
+
+#### 5B. 簽章錯誤 Token
+□ 複製一個 URL，手動修改 token 最後幾個字元
+□ ✅ 顯示 generic「No valid Portal SSO parameters」
+□ ✅ 不是顯示 epoch mismatch 訊息
+
+#### 5C. 連續 Bump
+□ 連續執行 3 次 UPDATE epoch = epoch + 1
+□ ✅ 所有舊 token 都被拒絕
+□ ✅ 新 token 可正常使用
+
+
+## 安全性確認
+
+□ ✅ 簽章驗證仍正常運作（錯誤簽章被拒絕）
+□ ✅ 過期驗證仍正常運作（過期 token 被拒絕）
+□ ✅ 必填欄位驗證仍正常（缺 email/tenant/role 被拒絕）
+□ ✅ Epoch mismatch 會立刻 block（strict, fail-closed）
+□ ✅ 不同錯誤類型顯示不同訊息（epoch vs generic）
+
+
+## 程式碼檢查
+
+□ app.py 的 verify_analyzer_session() 已移除內部 epoch 檢查
+□ epoch 值仍保存在 payload 中（payload["epoch"]）
+□ _enforce_epoch_or_block() 使用 _get_epoch_strict()（fail-closed）
+□ 沒有 linter 錯誤
+□ Git diff 確認只修改了 verify_analyzer_session()
+
+
+## 最終驗收（必須全部通過）
+
+□ ✅ 舊 token (epoch < current) 被拒絕
+□ ✅ 錯誤訊息顯示「Session revoked (tenant epoch mismatch)」
+□ ✅ Debug 顯示 token_epoch ≠ current_epoch
+□ ✅ 新 token (epoch = current) 可正常訪問
+□ ✅ 過期 token 顯示 generic error（不是 epoch 訊息）
+□ ✅ 簽章錯誤 token 顯示 generic error（不是 epoch 訊息）
+□ ✅ 所有安全檢查保持運作
+□ ✅ UX 改善：錯誤訊息更精確
+
+
+## 部署準備
+
+□ 所有測試項目通過
+□ 已記錄測試結果
+□ 準備提交程式碼
+
+提交方式：
+□ 使用 ./commit_and_deploy.sh（推薦）
+□ 手動 git add/commit/push
+
+
+## 生產環境驗收（部署後）
+
+□ Railway 部署成功
+□ 在生產環境重新執行 Phase 1-4
+□ ✅ 結果與測試環境一致
+□ 無異常錯誤或警告
+
+
+## 測試結果
+
+整體狀態：
+□ ✅ 全部通過（可部署）
+□ ⚠️ 部分失敗（需修復）
+□ ❌ 測試失敗（需重新檢查）
+
+
+## 備註
+
+問題/異常/備註：
+_________________________________________________________________
+_________________________________________________________________
+_________________________________________________________________
+_________________________________________________________________
+
+
+## 簽核
+
+測試人員：_______________ 日期：_______________
+審核人員：_______________ 日期：_______________
+
+完成！✅
