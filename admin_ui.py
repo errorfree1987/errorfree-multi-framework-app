@@ -88,6 +88,34 @@ def _log_audit_event(action: str, result: str, actor_email: str = "admin",
         pass
 
 # ==========================================
+# Query Parameter 工具函數
+# ==========================================
+def get_query_param(key: str, default: str = "") -> str:
+    """從 URL query parameters 獲取值"""
+    try:
+        params = st.query_params
+        value = params.get(key, default)
+        if isinstance(value, list):
+            return value[0] if value else default
+        return str(value) if value else default
+    except:
+        return default
+
+def set_query_param(key: str, value: str):
+    """設定 URL query parameter"""
+    try:
+        st.query_params[key] = value
+    except:
+        pass
+
+def clear_query_params():
+    """清除所有 query parameters"""
+    try:
+        st.query_params.clear()
+    except:
+        pass
+
+# ==========================================
 # 登入驗證函數
 # ==========================================
 def check_password():
@@ -95,33 +123,40 @@ def check_password():
     檢查密碼是否正確
     使用環境變數 ADMIN_PASSWORD
     
-    使用 session token 保持登入狀態（即使重新整理）
+    使用 URL query parameter 保持登入狀態（即使重新整理）
     """
-    import secrets
     
-    def generate_session_token():
+    def generate_session_token(password: str) -> str:
         """生成安全的 session token"""
-        return secrets.token_urlsafe(32)
+        # Token 格式：{timestamp}.{hash}
+        timestamp = str(int(datetime.utcnow().timestamp()))
+        combined = f"{password}{timestamp}"
+        token_hash = hashlib.sha256(combined.encode()).hexdigest()[:32]
+        return f"{timestamp}.{token_hash}"
     
-    def verify_session_token(token):
+    def verify_session_token(token: str, password: str) -> bool:
         """驗證 session token"""
-        admin_password = os.getenv("ADMIN_PASSWORD", "").strip()
-        if not admin_password:
+        if not token or "." not in token:
             return False
         
-        # 使用密碼的 hash 作為驗證基礎
-        expected_token_base = hashlib.sha256(admin_password.encode()).hexdigest()
-        
-        # 簡單驗證：檢查 token 是否包含預期的 hash 前綴
-        if token and len(token) > 32:
-            try:
-                # Token 格式：{hash_prefix}.{random_part}
-                token_parts = token.split(".")
-                if len(token_parts) == 2 and token_parts[0] == expected_token_base[:16]:
-                    return True
-            except:
-                pass
-        return False
+        try:
+            parts = token.split(".")
+            if len(parts) != 2:
+                return False
+            
+            timestamp_str, token_hash = parts
+            
+            # 驗證 token 格式
+            if not timestamp_str.isdigit() or len(token_hash) != 32:
+                return False
+            
+            # 重新計算 hash 驗證
+            combined = f"{password}{timestamp_str}"
+            expected_hash = hashlib.sha256(combined.encode()).hexdigest()[:32]
+            
+            return hmac.compare_digest(token_hash, expected_hash)
+        except:
+            return False
     
     def password_entered():
         """驗證輸入的密碼"""
@@ -135,14 +170,15 @@ def check_password():
         
         if hmac.compare_digest(entered_password, admin_password):
             # 生成 session token
-            token_hash = hashlib.sha256(admin_password.encode()).hexdigest()[:16]
-            random_part = secrets.token_urlsafe(16)
-            session_token = f"{token_hash}.{random_part}"
+            session_token = generate_session_token(admin_password)
             
+            # 設定 session state
             st.session_state["authenticated"] = True
             st.session_state["admin_email"] = "admin@errorfree.com"
             st.session_state["login_time"] = datetime.utcnow().isoformat()
-            st.session_state["session_token"] = session_token
+            
+            # 設定 URL query parameter（這會保留在重新整理後）
+            set_query_param("session", session_token)
             
             # 清除密碼輸入
             if "password_input" in st.session_state:
@@ -158,7 +194,7 @@ def check_password():
                 context={"source": "admin_ui", "timestamp": st.session_state["login_time"]}
             )
             
-            # 重新運行以更新 URL
+            # 重新運行以更新 UI
             st.rerun()
         else:
             st.session_state["authenticated"] = False
@@ -173,14 +209,15 @@ def check_password():
                 context={"source": "admin_ui", "timestamp": datetime.utcnow().isoformat()}
             )
 
-    # 檢查 session state 中的登入狀態
+    # 先檢查 session state
     if st.session_state.get("authenticated", False):
-        # 已在 session state 中登入
         return True
     
-    # 檢查 session token（用於重新整理後恢復登入狀態）
-    session_token = st.session_state.get("session_token", "")
-    if session_token and verify_session_token(session_token):
+    # 檢查 URL query parameter 中的 session token
+    admin_password = os.getenv("ADMIN_PASSWORD", "").strip()
+    session_token = get_query_param("session", "")
+    
+    if session_token and admin_password and verify_session_token(session_token, admin_password):
         # Token 有效，恢復登入狀態
         st.session_state["authenticated"] = True
         st.session_state["admin_email"] = "admin@errorfree.com"
@@ -223,6 +260,9 @@ def logout():
         actor_email=actor_email,
         context={"source": "admin_ui", "timestamp": datetime.utcnow().isoformat()}
     )
+    
+    # 清除 URL query parameters
+    clear_query_params()
     
     # 清除所有 session state
     keys_to_clear = list(st.session_state.keys())
