@@ -15,10 +15,15 @@
 - ✅ 完整審計追蹤
 - ✅ 基本用量控制
 
-### 中期目標（Phase B）：2 週內完成 MVP Admin UI
-- 🔄 讓非工程 CS/OPS 也能安全操作
-- 🔄 降低誤操作風險
-- 🔄 提升操作效率
+### 中期目標（Phase B）：混合模式開發（3-4 週）
+- **Week 1-2**: MVP Admin UI (Streamlit) - 快速迭代驗證
+  - 🔄 讓非工程 CS/OPS 也能安全操作
+  - 🔄 快速根據反饋調整
+  - 🔄 降低誤操作風險
+- **Week 3-4**: 完美 UI (Next.js) - 穩定後提升品質
+  - 🔄 企業級 UI/UX
+  - 🔄 視覺化和圖表
+  - 🔄 響應式設計
 
 ### 長期目標（Mode B BYOK）：企業級並行
 - ⏳ BYOK onboarding + key rotation
@@ -125,11 +130,21 @@
 
 ---
 
-## 🔄 進行中項目（Phase B: 2 週 MVP Admin UI）
+## 🔄 進行中項目（Phase B: 混合模式 Admin UI）
 
-### Phase B0: 定位與範圍（規劃中）
+### Phase B0: 開發策略（已確認 - 2026-02-27）
 
-**目標**：讓非工程 CS/OPS 也能安全操作
+**策略**：混合模式（MVP → 完美 UI）
+
+**時間規劃**：
+- **Week 1-2 (3-5 天實作 + 5-9 天迭代)**：MVP Admin UI (Streamlit)
+  - 快速開發所有核心功能
+  - 根據使用反饋快速調整
+  - 驗證工作流程和需求
+- **Week 3-4 (10-14 天)**：完美 UI (Next.js)
+  - 需求已穩定，專注 UI/UX
+  - 加入視覺化、圖表、響應式設計
+  - 企業級品質
 
 **範圍**：
 - ✅ 只做「營運必需」功能
@@ -137,159 +152,216 @@
 - ✅ 所有寫入操作必寫 audit
 - ✅ Guardrails（防止誤操作）
 
+**技術棧**：
+- **Phase B1 (MVP)**: Streamlit + Supabase
+- **Phase B2 (完美版)**: Next.js + Tailwind CSS + shadcn/ui + Supabase
+
 ---
 
-### Phase B1: 登入/權限（預計 1-2 天）
+### Phase B1: 登入/權限
+
+#### B1.1 MVP 版本（預計 0.5-1 天）
 
 **任務**：
-- [ ] Admin UI 登入機制
-  - 選項 1：走 Portal-only SSO（推薦，複用現有）
-  - 選項 2：獨立 admin login
-- [ ] RBAC 角色定義
-  - `admin`：全權操作
-  - `ops`：可操作但受 guardrail 限制
-- [ ] 權限檢查邏輯
-- [ ] 所有操作記錄 actor_email
+- [ ] 簡單密碼保護（環境變數 ADMIN_PASSWORD）
+- [ ] 或使用 Streamlit secrets 管理
+- [ ] Session 狀態管理
+- [ ] 登出功能
 
 **技術方案**：
-- 使用 Streamlit（快速原型）
-- 或 Next.js + Supabase Auth（更完整）
+- Streamlit `st.text_input(type="password")`
+- `st.session_state` 管理登入狀態
 
 **驗收標準**：
-- [ ] Admin 可登入並看到儀表板
-- [ ] Ops 可登入但受限於特定操作
+- [ ] 輸入正確密碼可進入
+- [ ] 重新整理不需要重新登入（session 持久）
+- [ ] 可登出
+
+#### B1.2 完美版本（預計 1-2 天）
+
+**任務**：
+- [ ] Next.js + Supabase Auth
+- [ ] RBAC 角色定義（admin / ops）
+- [ ] 權限檢查中介層
+- [ ] 所有操作記錄 actor_email
+
+**驗收標準**：
+- [ ] Admin/Ops 分別登入
+- [ ] Ops 受限於特定操作
 - [ ] 所有操作記錄到 audit_events
 
 ---
 
-### Phase B2: Tenant 管理（預計 0.5-1 天）
+### Phase B2: Tenant 管理
+
+#### B2.1 MVP 版本（預計 0.5-1 天）
 
 **任務**：
-- [ ] 租戶列表（顯示狀態、試用期、成員數）
-- [ ] 建立新租戶（表單，含 trial 設定）
-- [ ] Trial 延期/轉正
-- [ ] 停用/啟用租戶
-- [ ] 查看租戶詳情
-  - 近 24h/7d 活躍用戶
-  - Review/下載量
-  - 最後活動時間
-- [ ] 快速入口：一鍵進 tenant 詳情、查看 audit
+- [ ] 租戶列表（st.dataframe，顯示基本資訊）
+- [ ] 建立新租戶（st.form）
+- [ ] Trial 延期（st.date_input + SQL UPDATE）
+- [ ] 停用/啟用租戶（st.button + SQL UPDATE）
+- [ ] 基本統計（成員數、今日用量）
 
 **UI 元件**：
-- 租戶列表表格（可排序、篩選）
-- 租戶詳情頁
-- 操作按鈕（延期、轉正、停用）
+- `st.dataframe()` - 租戶列表
+- `st.form()` - 建立租戶表單
+- `st.expander()` - 租戶詳情
 
 **驗收標準**：
-- [ ] 可建立新租戶並設定 trial
+- [ ] 可建立新租戶
 - [ ] 可延長試用期
 - [ ] 可停用/啟用租戶
-- [ ] 可查看租戶使用狀況
+
+#### B2.2 完美版本（預計 1-2 天）
+
+**任務**：
+- [ ] 美化表格（shadcn/ui DataTable）
+- [ ] 搜尋/篩選/排序
+- [ ] 視覺化（圖表顯示用量趨勢）
+- [ ] 租戶詳情頁（完整儀表板）
+- [ ] 快速操作（右鍵選單）
+
+**驗收標準**：
+- [ ] 可快速搜尋租戶
+- [ ] 圖表顯示 7 天用量趨勢
+- [ ] 響應式設計
 
 ---
 
-### Phase B3: Users 批量管理（預計 0.5-1 天）
+### Phase B3: Users 批量管理
+
+#### B3.1 MVP 版本（預計 0.5-1 天）
 
 **任務**：
 - [ ] 成員列表（按租戶篩選）
-- [ ] 批量新增成員
-  - 匯入/貼上 email 清單（30-100+）
-  - 設定預設 role
-- [ ] 批量停用/啟用
-- [ ] 角色設定（tenant_admin / user）
-- [ ] 搜尋功能
-  - 依 email 查租戶
-  - 查看狀態、最後活動
+- [ ] 批量新增成員（st.text_area 貼上 email）
+- [ ] 批量停用/啟用（checkbox 選擇 + 批量操作）
+- [ ] 角色設定（dropdown）
 
 **UI 元件**：
-- 文字框（貼上 email 清單）
-- 批量操作按鈕
-- 成員列表表格
+- `st.text_area()` - 貼上 email 清單
+- `st.multiselect()` - 批量選擇
+- `st.dataframe()` - 成員列表
 
 **驗收標準**：
 - [ ] 可貼上 30+ email 並批量新增
 - [ ] 可批量停用/啟用成員
+
+#### B3.2 完美版本（預計 1 天）
+
+**任務**：
+- [ ] CSV 上傳（拖拽）
+- [ ] 進度條（批量處理時）
+- [ ] 成功/失敗詳情
+- [ ] 搜尋功能（模糊搜尋）
+
+**驗收標準**：
+- [ ] 可上傳 CSV（100+ email）
+- [ ] 顯示處理進度
 - [ ] 可搜尋成員
 
 ---
 
-### Phase B4: 一鍵撤權（預計 0.5 天）
+### Phase B4: 一鍵撤權
+
+#### B4.1 MVP 版本（預計 0.5 天）
 
 **任務**：
 - [ ] Per-tenant revoke 按鈕
-- [ ] Guardrails
-  - Ops 需二次確認（輸入 tenant slug）
-  - 或「原因必填」
-  - 速率限制（同一 tenant 10 分鐘最多撤權 1 次）
-- [ ] 撤權結果顯示
-  - 目前 epoch
-  - 上次撤權時間
-  - 受影響 session（估算）
+- [ ] 二次確認（st.text_input 輸入 tenant slug）
+- [ ] 撤權結果顯示（當前 epoch）
+- [ ] 記錄到 audit_events
 
 **UI 元件**：
-- 撤權按鈕（紅色，醒目）
-- 確認對話框
-- 結果顯示
+- `st.button(type="primary")` - 紅色撤權按鈕
+- `st.text_input()` - 確認輸入
+- `st.success()` - 結果顯示
 
 **驗收標準**：
-- [ ] Admin 可一鍵撤權
-- [ ] Ops 需二次確認或填原因
+- [ ] 需輸入 tenant slug 才能撤權
+- [ ] 撤權成功顯示新 epoch
+- [ ] 記錄到 audit_events
+
+#### B4.2 完美版本（預計 0.5 天）
+
+**任務**：
+- [ ] 動畫效果（倒數計時）
+- [ ] 速率限制（10 分鐘內不可重複）
+- [ ] 受影響 session 估算
+- [ ] 撤權歷史（時間線）
+
+**驗收標準**：
 - [ ] 速率限制有效
-- [ ] 撤權記錄到 audit_events
+- [ ] 顯示受影響 session 數量
 
 ---
 
-### Phase B5: Audit log（預計 0.5 天）
+### Phase B5: Audit log
+
+#### B5.1 MVP 版本（預計 0.5 天）
 
 **任務**：
-- [ ] Audit log 列表（可篩選）
-  - Tenant
-  - Email
-  - Action
-  - Time range
-  - Result
-- [ ] 重要事件高亮
-  - `verify`
-  - `deny_reason`
-  - `revoke`
-  - `member_change`
-  - `trial_end_change`
-  - `entitlement_change`
+- [ ] Audit log 列表（st.dataframe）
+- [ ] 基本篩選（tenant, action, result）
+- [ ] 時間範圍（today / 7 days / 30 days）
+- [ ] 詳情展開（st.json 顯示 context）
 
 **UI 元件**：
-- 篩選器（下拉選單、日期選擇器）
-- 事件列表表格
-- 詳情展開（顯示 context JSON）
+- `st.selectbox()` - 篩選器
+- `st.dataframe()` - 事件列表
+- `st.json()` - Context 詳情
 
 **驗收標準**：
-- [ ] 可按 tenant/email/action 篩選
+- [ ] 可按 tenant/action 篩選
 - [ ] 可選擇時間範圍
-- [ ] 可查看事件詳情
+- [ ] 可查看 context JSON
+
+#### B5.2 完美版本（預計 1 天）
+
+**任務**：
+- [ ] 時間線視圖（類似 GitHub Activity）
+- [ ] 高級篩選（多選、模糊搜尋）
+- [ ] 顏色編碼（成功/失敗）
+- [ ] 匯出功能（CSV）
+
+**驗收標準**：
+- [ ] 時間線視圖美觀
+- [ ] 可匯出篩選結果
 
 ---
 
-### Phase B6: 基本限流/成本設定入口（預計 0.5 天）
+### Phase B6: 基本限流/成本設定入口
+
+#### B6.1 MVP 版本（預計 0.5 天）
 
 **任務**：
-- [ ] Per-tenant cap 設定
-  - 每日 review/download
-  - 單次最大檔案大小
-  - 最大輪次
-- [ ] 超限處理策略設定
-  - Block
-  - Degrade
-  - Require admin approval
-- [ ] UI 顯示今日用量 vs cap
+- [ ] Per-tenant cap 設定（st.number_input）
+- [ ] 保存按鈕（SQL UPDATE）
+- [ ] 顯示今日用量（數字）
+- [ ] 用量百分比（st.progress）
 
 **UI 元件**：
-- Caps 設定表單
-- 用量儀表板（進度條）
-- 保存按鈕
+- `st.number_input()` - Cap 設定
+- `st.progress()` - 用量進度條
+- `st.button()` - 保存
 
 **驗收標準**：
 - [ ] 可調整 caps
 - [ ] 可查看即時用量
 - [ ] 設定立即生效
+
+#### B6.2 完美版本（預計 1 天）
+
+**任務**：
+- [ ] 圖表顯示（折線圖、餅圖）
+- [ ] 7 天用量趨勢
+- [ ] 超限警告（自動通知）
+- [ ] 批量設定（多個租戶）
+
+**驗收標準**：
+- [ ] 圖表美觀
+- [ ] 可批量調整 caps
 
 ---
 
@@ -390,12 +462,14 @@ errorfree-multi-framework-app/
 - ✅ **Phase A1**: 100% (7/7 表)
 - ✅ **Phase A2**: 100% (2/2 子項)
 - ✅ **Phase A3**: 100% (Runbook 完成)
-- 🔄 **Phase B**: 0% (0/6 子項)
+- 🔄 **Phase B (MVP)**: 0% (0/6 子項)
+- ⏳ **Phase B (完美版)**: 0% (0/6 子項)
 - ⏳ **Phase C**: 0% (0/3 子項)
 
 ### 整體進度
-- **Mode A (1 週 MVP)**: ✅ **100% 完成**
-- **Phase B (2 週 Admin UI)**: 🔄 **進行中**
+- **Mode A (1 週 MVP)**: ✅ **100% 完成** (2026-02-27)
+- **Phase B1 (MVP Admin UI)**: 🔄 **準備開始** (Week 1-2)
+- **Phase B2 (完美 Admin UI)**: ⏳ **未開始** (Week 3-4)
 - **Mode B BYOK (長期)**: ⏳ **未開始**
 
 ---
