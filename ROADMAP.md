@@ -202,24 +202,39 @@
 
 ### Phase B2: Tenant 管理
 
-#### B2.1 MVP 版本（預計 0.5-1 天）
+#### B2.1 MVP 版本（已完成 - 2026-03-01）
 
 **任務**：
-- [ ] 租戶列表（st.dataframe，顯示基本資訊）
-- [ ] 建立新租戶（st.form）
-- [ ] Trial 延期（st.date_input + SQL UPDATE）
-- [ ] 停用/啟用租戶（st.button + SQL UPDATE）
-- [ ] 基本統計（成員數、今日用量）
+- ✅ 租戶列表（st.dataframe，顯示基本資訊）
+- ✅ 建立新租戶（st.form）
+- ✅ Trial 延期（st.date_input + SQL UPDATE）
+- ✅ 停用/啟用租戶（st.button + SQL UPDATE）
+- ✅ 基本統計（成員數、今日用量、epoch）
 
 **UI 元件**：
-- `st.dataframe()` - 租戶列表
-- `st.form()` - 建立租戶表單
+- `st.tabs()` - 分離列表和建立
 - `st.expander()` - 租戶詳情
+- `st.form()` - 建立租戶表單
+- `st.metric()` - 顯示統計
+
+**實作內容**：
+- 完整的 CRUD 操作
+- Supabase REST API 整合
+- 自動初始化（epoch, caps）
+- 表單驗證
+- 錯誤處理
+- Audit logging
 
 **驗收標準**：
-- [ ] 可建立新租戶
-- [ ] 可延長試用期
-- [ ] 可停用/啟用租戶
+- ✅ 可建立新租戶
+- ✅ 可延長試用期
+- ✅ 可停用/啟用租戶
+- ✅ 統計資訊正確顯示
+- ✅ 所有操作記錄到 audit_events
+
+**相關檔案**：
+- `admin_ui.py` - 修改 show_tenants() 函數
+- `README_PHASE_B2_1.md` - 詳細實作說明和驗收方式
 
 #### B2.2 完美版本（預計 1-2 天）
 
@@ -473,15 +488,17 @@ errorfree-multi-framework-app/
 - ✅ **Phase A1**: 100% (7/7 表)
 - ✅ **Phase A2**: 100% (2/2 子項)
 - ✅ **Phase A3**: 100% (Runbook 完成)
-- 🔄 **Phase B1 (MVP 登入)**: 100% (1/1 子項完成)
-- 🔄 **Phase B2-B6 (MVP)**: 0% (0/5 子項)
+- ✅ **Phase B1 (MVP 登入)**: 100% (1/1 子項完成)
+- ✅ **Phase B2.1 (MVP Tenant)**: 100% (1/1 子項完成)
+- 🔄 **Phase B3-B6 (MVP)**: 0% (0/4 子項)
 - ⏳ **Phase B (完美版)**: 0% (0/6 子項)
 - ⏳ **Phase C**: 0% (0/3 子項)
 
 ### 整體進度
 - **Mode A (1 週 MVP)**: ✅ **100% 完成** (2026-02-27)
 - **Phase B1.1 (MVP Admin 登入)**: ✅ **100% 完成** (2026-02-28)
-- **Phase B2-B6 (MVP Admin UI)**: 🔄 **準備開始** (Week 1-2)
+- **Phase B2.1 (MVP Tenant 管理)**: ✅ **100% 完成** (2026-03-01)
+- **Phase B3-B6 (MVP Admin UI)**: 🔄 **準備開始** (Week 1-2)
 - **Phase B (完美 Admin UI)**: ⏳ **未開始** (Week 3-4)
 - **Mode B BYOK (長期)**: ⏳ **未開始**
 
@@ -542,6 +559,13 @@ errorfree-multi-framework-app/
 ---
 
 ## 📝 變更日誌
+
+### 2026-03-01
+- ✅ 完成 Phase B2.1 (MVP Tenant 管理)
+- 📝 實作租戶列表、建立、延期、停用/啟用功能
+- 📝 新增統計資訊（成員數、今日用量、epoch）
+- 📝 新增 `README_PHASE_B2_1.md`（實作說明）
+- 📝 更新 ROADMAP.md
 
 ### 2026-02-28
 - ✅ 完成 Phase B1.1 (MVP Admin UI - 登入/權限)
