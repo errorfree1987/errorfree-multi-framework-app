@@ -160,22 +160,30 @@
 
 ### Phase B1: 登入/權限
 
-#### B1.1 MVP 版本（預計 0.5-1 天）
+#### B1.1 MVP 版本（已完成 - 2026-02-28）
 
 **任務**：
-- [ ] 簡單密碼保護（環境變數 ADMIN_PASSWORD）
-- [ ] 或使用 Streamlit secrets 管理
-- [ ] Session 狀態管理
-- [ ] 登出功能
+- ✅ 簡單密碼保護（環境變數 ADMIN_PASSWORD）
+- ✅ Session 狀態管理
+- ✅ 登出功能
+- ✅ 記錄所有登入/登出到 audit_events
+- ✅ 獨立的 Admin UI（`admin_ui.py`）
 
 **技術方案**：
 - Streamlit `st.text_input(type="password")`
 - `st.session_state` 管理登入狀態
+- `hmac.compare_digest()` 防止時序攻擊
 
 **驗收標準**：
-- [ ] 輸入正確密碼可進入
-- [ ] 重新整理不需要重新登入（session 持久）
-- [ ] 可登出
+- ✅ 輸入正確密碼可進入
+- ✅ 重新整理不需要重新登入（session 持久）
+- ✅ 可登出
+- ✅ 所有操作記錄到 audit_events
+
+**相關檔案**：
+- `admin_ui.py` - Admin UI 主程式
+- `README_PHASE_B1_1.md` - 詳細實作說明和驗收方式
+- `RAILWAY_DEPLOY_ADMIN.md` - Railway 部署指南
 
 #### B1.2 完美版本（預計 1-2 天）
 
@@ -407,9 +415,12 @@
 
 ```
 errorfree-multi-framework-app/
-├── app.py                              # 主程式（已修改：A2-1, A2-2）
+├── app.py                              # 主程式（Analyzer）
+├── admin_ui.py                         # Admin UI（Phase B1.1）✨
 ├── README_PHASE_A2_1.md                # Phase A2-1 實作說明
 ├── README_PHASE_A2_2.md                # Phase A2-2 實作說明
+├── README_PHASE_B1_1.md                # Phase B1.1 實作說明 ✨
+├── RAILWAY_DEPLOY_ADMIN.md             # Railway 部署指南 ✨
 ├── phase_a1_database_setup.sql         # Phase A1 完整 SQL
 ├── RUNBOOK_MODE_A_OPERATIONS.sql       # Phase A3 完整 runbook (927 行)
 ├── QUICK_REFERENCE_MODE_A.md           # Phase A3 快速參考卡
@@ -462,14 +473,16 @@ errorfree-multi-framework-app/
 - ✅ **Phase A1**: 100% (7/7 表)
 - ✅ **Phase A2**: 100% (2/2 子項)
 - ✅ **Phase A3**: 100% (Runbook 完成)
-- 🔄 **Phase B (MVP)**: 0% (0/6 子項)
+- 🔄 **Phase B1 (MVP 登入)**: 100% (1/1 子項完成)
+- 🔄 **Phase B2-B6 (MVP)**: 0% (0/5 子項)
 - ⏳ **Phase B (完美版)**: 0% (0/6 子項)
 - ⏳ **Phase C**: 0% (0/3 子項)
 
 ### 整體進度
 - **Mode A (1 週 MVP)**: ✅ **100% 完成** (2026-02-27)
-- **Phase B1 (MVP Admin UI)**: 🔄 **準備開始** (Week 1-2)
-- **Phase B2 (完美 Admin UI)**: ⏳ **未開始** (Week 3-4)
+- **Phase B1.1 (MVP Admin 登入)**: ✅ **100% 完成** (2026-02-28)
+- **Phase B2-B6 (MVP Admin UI)**: 🔄 **準備開始** (Week 1-2)
+- **Phase B (完美 Admin UI)**: ⏳ **未開始** (Week 3-4)
 - **Mode B BYOK (長期)**: ⏳ **未開始**
 
 ---
@@ -529,6 +542,12 @@ errorfree-multi-framework-app/
 ---
 
 ## 📝 變更日誌
+
+### 2026-02-28
+- ✅ 完成 Phase B1.1 (MVP Admin UI - 登入/權限)
+- 📝 新增 `admin_ui.py`（獨立的 Admin UI）
+- 📝 新增 `README_PHASE_B1_1.md`（實作說明）
+- 📝 新增 `RAILWAY_DEPLOY_ADMIN.md`（部署指南）
 
 ### 2026-02-27
 - ✅ 完成 Phase A1 (資料庫結構)
