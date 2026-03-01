@@ -383,17 +383,445 @@ def show_dashboard():
     """)
 
 def show_tenants():
-    """租戶管理（Phase B2 實作）"""
+    """租戶管理（Phase B2.1 實作）"""
     st.header("🏢 Tenant Management")
-    st.info("🚧 Coming in Phase B2 - Tenant Management")
-    st.markdown("""
-    **Planned features:**
-    - View all tenants (list with search/filter)
-    - Create new tenant
-    - Extend trial period
-    - Enable/disable tenant
-    - View tenant details and statistics
-    """)
+    
+    # 檢查 Supabase 連線
+    supabase_url, service_key = get_supabase_client()
+    if not supabase_url or not service_key:
+        st.error("⚠️ Supabase not configured")
+        return
+    
+    # 建立 tabs
+    tab1, tab2 = st.tabs(["📋 Tenant List", "➕ Create New Tenant"])
+    
+    # ==========================================
+    # Tab 1: 租戶列表
+    # ==========================================
+    with tab1:
+        st.subheader("All Tenants")
+        
+        # 獲取所有租戶
+        try:
+            endpoint = f"{supabase_url}/rest/v1/tenants"
+            headers = {
+                "apikey": service_key,
+                "Authorization": f"Bearer {service_key}",
+                "Accept": "application/json"
+            }
+            params = {
+                "select": "id,slug,name,display_name,status,trial_start,trial_end,is_active,created_at",
+                "order": "created_at.desc"
+            }
+            
+            resp = requests.get(endpoint, headers=headers, params=params, timeout=10)
+            
+            if resp.status_code == 200:
+                tenants = resp.json()
+                
+                if not tenants:
+                    st.info("No tenants found. Create your first tenant in the 'Create New Tenant' tab.")
+                else:
+                    st.success(f"✅ Found {len(tenants)} tenant(s)")
+                    
+                    # 顯示租戶列表
+                    for tenant in tenants:
+                        with st.expander(f"**{tenant['slug']}** - {tenant['name']}", expanded=False):
+                            show_tenant_details(tenant, supabase_url, service_key)
+            else:
+                st.error(f"Failed to fetch tenants: HTTP {resp.status_code}")
+                
+        except Exception as e:
+            st.error(f"Error fetching tenants: {str(e)}")
+    
+    # ==========================================
+    # Tab 2: 建立新租戶
+    # ==========================================
+    with tab2:
+        st.subheader("Create New Tenant")
+        
+        with st.form("create_tenant_form"):
+            st.markdown("### Basic Information")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                slug = st.text_input(
+                    "Tenant Slug *",
+                    help="Unique identifier (lowercase, no spaces, e.g., 'acme-corp')"
+                )
+                name = st.text_input(
+                    "Name *",
+                    help="Company name (e.g., 'Acme Corporation')"
+                )
+            
+            with col2:
+                display_name = st.text_input(
+                    "Display Name",
+                    help="Optional display name (defaults to Name if empty)"
+                )
+                trial_days = st.number_input(
+                    "Trial Days",
+                    min_value=1,
+                    max_value=365,
+                    value=30,
+                    help="Number of days for trial period"
+                )
+            
+            st.markdown("### Default Settings")
+            
+            col3, col4 = st.columns(2)
+            
+            with col3:
+                daily_review_cap = st.number_input(
+                    "Daily Review Cap",
+                    min_value=0,
+                    value=50,
+                    help="Daily review limit (0 = disabled, leave empty for unlimited)"
+                )
+            
+            with col4:
+                daily_download_cap = st.number_input(
+                    "Daily Download Cap",
+                    min_value=0,
+                    value=20,
+                    help="Daily download limit (0 = disabled, leave empty for unlimited)"
+                )
+            
+            submitted = st.form_submit_button("🚀 Create Tenant", type="primary")
+            
+            if submitted:
+                # 驗證輸入
+                if not slug or not name:
+                    st.error("❌ Slug and Name are required")
+                elif not slug.replace("-", "").replace("_", "").isalnum():
+                    st.error("❌ Slug must contain only letters, numbers, hyphens, and underscores")
+                elif slug != slug.lower():
+                    st.error("❌ Slug must be lowercase")
+                else:
+                    # 建立租戶
+                    create_tenant(
+                        slug=slug,
+                        name=name,
+                        display_name=display_name or name,
+                        trial_days=trial_days,
+                        daily_review_cap=daily_review_cap if daily_review_cap > 0 else None,
+                        daily_download_cap=daily_download_cap if daily_download_cap > 0 else None,
+                        supabase_url=supabase_url,
+                        service_key=service_key
+                    )
+
+
+def show_tenant_details(tenant: dict, supabase_url: str, service_key: str):
+    """顯示租戶詳情和操作按鈕"""
+    
+    # 基本資訊
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown("**Status**")
+        status_color = "🟢" if tenant['is_active'] else "🔴"
+        st.write(f"{status_color} {tenant['status']}")
+    
+    with col2:
+        st.markdown("**Trial Period**")
+        trial_start = tenant.get('trial_start', '')[:10] if tenant.get('trial_start') else 'N/A'
+        trial_end = tenant.get('trial_end', '')[:10] if tenant.get('trial_end') else 'N/A'
+        st.write(f"{trial_start} → {trial_end}")
+    
+    with col3:
+        st.markdown("**Created**")
+        created = tenant.get('created_at', '')[:10] if tenant.get('created_at') else 'N/A'
+        st.write(created)
+    
+    st.markdown("---")
+    
+    # 統計資訊
+    stats_col1, stats_col2, stats_col3 = st.columns(3)
+    
+    with stats_col1:
+        # 獲取成員數
+        member_count = get_tenant_member_count(tenant['id'], supabase_url, service_key)
+        st.metric("Members", member_count)
+    
+    with stats_col2:
+        # 獲取今日用量
+        today_usage = get_tenant_today_usage(tenant['id'], supabase_url, service_key)
+        st.metric("Today's Usage", today_usage)
+    
+    with stats_col3:
+        # 獲取 epoch
+        epoch = get_tenant_epoch(tenant['slug'], supabase_url, service_key)
+        st.metric("Epoch", epoch)
+    
+    st.markdown("---")
+    
+    # 操作按鈕
+    col_op1, col_op2, col_op3 = st.columns(3)
+    
+    with col_op1:
+        # Trial 延期
+        with st.form(f"extend_trial_{tenant['id']}"):
+            st.markdown("**Extend Trial**")
+            extend_days = st.number_input("Add Days", min_value=1, max_value=365, value=30, key=f"extend_{tenant['id']}")
+            if st.form_submit_button("📅 Extend", type="secondary"):
+                extend_tenant_trial(tenant, extend_days, supabase_url, service_key)
+    
+    with col_op2:
+        # 停用/啟用
+        if tenant['is_active']:
+            if st.button(f"🔴 Disable Tenant", key=f"disable_{tenant['id']}", type="secondary"):
+                toggle_tenant_status(tenant, False, supabase_url, service_key)
+        else:
+            if st.button(f"🟢 Enable Tenant", key=f"enable_{tenant['id']}", type="primary"):
+                toggle_tenant_status(tenant, True, supabase_url, service_key)
+    
+    with col_op3:
+        st.markdown("**Quick Actions**")
+        if st.button(f"🔄 View Full Details", key=f"details_{tenant['id']}"):
+            st.info(f"Tenant ID: `{tenant['id']}`\n\nSlug: `{tenant['slug']}`")
+
+
+def get_tenant_member_count(tenant_id: str, supabase_url: str, service_key: str) -> int:
+    """獲取租戶成員數量"""
+    try:
+        endpoint = f"{supabase_url}/rest/v1/tenant_members"
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Accept": "application/json"
+        }
+        params = {
+            "tenant_id": f"eq.{tenant_id}",
+            "select": "id"
+        }
+        resp = requests.get(endpoint, headers=headers, params=params, timeout=5)
+        if resp.status_code == 200:
+            return len(resp.json())
+    except:
+        pass
+    return 0
+
+
+def get_tenant_today_usage(tenant_id: str, supabase_url: str, service_key: str) -> int:
+    """獲取租戶今日用量"""
+    try:
+        endpoint = f"{supabase_url}/rest/v1/tenant_usage_events"
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Accept": "application/json"
+        }
+        # 今日 00:00 UTC
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).date().isoformat()
+        
+        params = {
+            "tenant_id": f"eq.{tenant_id}",
+            "usage_type": "eq.review",
+            "created_at": f"gte.{today}T00:00:00Z",
+            "select": "id"
+        }
+        resp = requests.get(endpoint, headers=headers, params=params, timeout=5)
+        if resp.status_code == 200:
+            return len(resp.json())
+    except:
+        pass
+    return 0
+
+
+def get_tenant_epoch(tenant_slug: str, supabase_url: str, service_key: str) -> int:
+    """獲取租戶 epoch"""
+    try:
+        endpoint = f"{supabase_url}/rest/v1/tenant_session_epoch"
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Accept": "application/json"
+        }
+        params = {
+            "tenant": f"eq.{tenant_slug}",
+            "select": "epoch"
+        }
+        resp = requests.get(endpoint, headers=headers, params=params, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data:
+                return data[0].get('epoch', 0)
+    except:
+        pass
+    return 0
+
+
+def create_tenant(slug: str, name: str, display_name: str, trial_days: int,
+                  daily_review_cap: int, daily_download_cap: int,
+                  supabase_url: str, service_key: str):
+    """建立新租戶"""
+    from datetime import datetime, timedelta, timezone
+    
+    try:
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=representation"
+        }
+        
+        # 1. 建立租戶
+        tenant_payload = {
+            "slug": slug,
+            "name": name,
+            "display_name": display_name,
+            "status": "trial",
+            "trial_start": datetime.now(timezone.utc).isoformat(),
+            "trial_end": (datetime.now(timezone.utc) + timedelta(days=trial_days)).isoformat(),
+            "is_active": True
+        }
+        
+        endpoint = f"{supabase_url}/rest/v1/tenants"
+        resp = requests.post(endpoint, json=tenant_payload, headers=headers, timeout=10)
+        
+        if resp.status_code != 201:
+            st.error(f"❌ Failed to create tenant: HTTP {resp.status_code}")
+            st.code(resp.text)
+            return
+        
+        tenant_data = resp.json()[0]
+        tenant_id = tenant_data['id']
+        
+        st.success(f"✅ Tenant created: {slug}")
+        
+        # 2. 初始化 epoch
+        epoch_payload = {"tenant": slug, "epoch": 0}
+        endpoint = f"{supabase_url}/rest/v1/tenant_session_epoch"
+        resp = requests.post(endpoint, json=epoch_payload, headers=headers, timeout=5)
+        
+        if resp.status_code == 201:
+            st.success("✅ Epoch initialized")
+        
+        # 3. 設定 usage caps
+        caps_payload = {
+            "tenant_id": tenant_id,
+            "daily_review_cap": daily_review_cap,
+            "daily_download_cap": daily_download_cap
+        }
+        endpoint = f"{supabase_url}/rest/v1/tenant_usage_caps"
+        resp = requests.post(endpoint, json=caps_payload, headers=headers, timeout=5)
+        
+        if resp.status_code == 201:
+            st.success("✅ Usage caps configured")
+        
+        # 4. 記錄 audit event
+        _log_audit_event(
+            action="tenant_created",
+            tenant=slug,
+            result="success",
+            actor_email=st.session_state.get("admin_email", "admin"),
+            context={
+                "tenant_id": tenant_id,
+                "trial_days": trial_days,
+                "daily_review_cap": daily_review_cap,
+                "daily_download_cap": daily_download_cap
+            }
+        )
+        
+        st.success("🎉 Tenant setup complete!")
+        st.balloons()
+        
+        # 重新載入頁面
+        st.rerun()
+        
+    except Exception as e:
+        st.error(f"❌ Error creating tenant: {str(e)}")
+        _log_audit_event(
+            action="tenant_created",
+            tenant=slug,
+            result="error",
+            actor_email=st.session_state.get("admin_email", "admin"),
+            context={"error": str(e)}
+        )
+
+
+def extend_tenant_trial(tenant: dict, extend_days: int, supabase_url: str, service_key: str):
+    """延長租戶試用期"""
+    from datetime import datetime, timedelta
+    
+    try:
+        # 計算新的結束日期
+        current_end = datetime.fromisoformat(tenant['trial_end'].replace('Z', '+00:00'))
+        new_end = current_end + timedelta(days=extend_days)
+        
+        # 更新租戶
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {"trial_end": new_end.isoformat()}
+        endpoint = f"{supabase_url}/rest/v1/tenants?id=eq.{tenant['id']}"
+        resp = requests.patch(endpoint, json=payload, headers=headers, timeout=10)
+        
+        if resp.status_code in [200, 204]:
+            st.success(f"✅ Trial extended by {extend_days} days")
+            st.info(f"New end date: {new_end.date()}")
+            
+            # 記錄 audit event
+            _log_audit_event(
+                action="tenant_trial_extended",
+                tenant=tenant['slug'],
+                result="success",
+                actor_email=st.session_state.get("admin_email", "admin"),
+                context={
+                    "extend_days": extend_days,
+                    "new_trial_end": new_end.isoformat()
+                }
+            )
+            
+            st.rerun()
+        else:
+            st.error(f"❌ Failed to extend trial: HTTP {resp.status_code}")
+            
+    except Exception as e:
+        st.error(f"❌ Error: {str(e)}")
+
+
+def toggle_tenant_status(tenant: dict, new_status: bool, supabase_url: str, service_key: str):
+    """切換租戶啟用/停用狀態"""
+    try:
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "is_active": new_status,
+            "status": "trial" if new_status else "suspended"
+        }
+        
+        endpoint = f"{supabase_url}/rest/v1/tenants?id=eq.{tenant['id']}"
+        resp = requests.patch(endpoint, json=payload, headers=headers, timeout=10)
+        
+        if resp.status_code in [200, 204]:
+            action_text = "enabled" if new_status else "disabled"
+            st.success(f"✅ Tenant {action_text}")
+            
+            # 記錄 audit event
+            _log_audit_event(
+                action=f"tenant_{'enabled' if new_status else 'disabled'}",
+                tenant=tenant['slug'],
+                result="success",
+                actor_email=st.session_state.get("admin_email", "admin"),
+                context={"new_status": new_status}
+            )
+            
+            st.rerun()
+        else:
+            st.error(f"❌ Failed to update status: HTTP {resp.status_code}")
+            
+    except Exception as e:
+        st.error(f"❌ Error: {str(e)}")
 
 def show_members():
     """成員管理（Phase B3 實作）"""
