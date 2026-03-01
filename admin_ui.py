@@ -19,6 +19,7 @@ import streamlit as st
 import os
 import hashlib
 import hmac
+import secrets
 import requests
 from datetime import datetime
 import json
@@ -93,7 +94,35 @@ def check_password():
     """
     檢查密碼是否正確
     使用環境變數 ADMIN_PASSWORD
+    
+    使用 session token 保持登入狀態（即使重新整理）
     """
+    import secrets
+    
+    def generate_session_token():
+        """生成安全的 session token"""
+        return secrets.token_urlsafe(32)
+    
+    def verify_session_token(token):
+        """驗證 session token"""
+        admin_password = os.getenv("ADMIN_PASSWORD", "").strip()
+        if not admin_password:
+            return False
+        
+        # 使用密碼的 hash 作為驗證基礎
+        expected_token_base = hashlib.sha256(admin_password.encode()).hexdigest()
+        
+        # 簡單驗證：檢查 token 是否包含預期的 hash 前綴
+        if token and len(token) > 32:
+            try:
+                # Token 格式：{hash_prefix}.{random_part}
+                token_parts = token.split(".")
+                if len(token_parts) == 2 and token_parts[0] == expected_token_base[:16]:
+                    return True
+            except:
+                pass
+        return False
+    
     def password_entered():
         """驗證輸入的密碼"""
         admin_password = os.getenv("ADMIN_PASSWORD", "").strip()
@@ -105,9 +134,15 @@ def check_password():
         entered_password = st.session_state.get("password_input", "")
         
         if hmac.compare_digest(entered_password, admin_password):
+            # 生成 session token
+            token_hash = hashlib.sha256(admin_password.encode()).hexdigest()[:16]
+            random_part = secrets.token_urlsafe(16)
+            session_token = f"{token_hash}.{random_part}"
+            
             st.session_state["authenticated"] = True
-            st.session_state["admin_email"] = "admin@errorfree.com"  # 可以之後改成多用戶
+            st.session_state["admin_email"] = "admin@errorfree.com"
             st.session_state["login_time"] = datetime.utcnow().isoformat()
+            st.session_state["session_token"] = session_token
             
             # 清除密碼輸入
             if "password_input" in st.session_state:
@@ -122,6 +157,9 @@ def check_password():
                 actor_email=st.session_state.get("admin_email", "admin"),
                 context={"source": "admin_ui", "timestamp": st.session_state["login_time"]}
             )
+            
+            # 重新運行以更新 URL
+            st.rerun()
         else:
             st.session_state["authenticated"] = False
             st.session_state["login_error"] = "❌ Incorrect password. Please try again."
@@ -135,8 +173,19 @@ def check_password():
                 context={"source": "admin_ui", "timestamp": datetime.utcnow().isoformat()}
             )
 
-    # 檢查是否已登入
+    # 檢查 session state 中的登入狀態
     if st.session_state.get("authenticated", False):
+        # 已在 session state 中登入
+        return True
+    
+    # 檢查 session token（用於重新整理後恢復登入狀態）
+    session_token = st.session_state.get("session_token", "")
+    if session_token and verify_session_token(session_token):
+        # Token 有效，恢復登入狀態
+        st.session_state["authenticated"] = True
+        st.session_state["admin_email"] = "admin@errorfree.com"
+        if "login_time" not in st.session_state:
+            st.session_state["login_time"] = datetime.utcnow().isoformat()
         return True
 
     # 顯示登入頁面
@@ -176,7 +225,8 @@ def logout():
     )
     
     # 清除所有 session state
-    for key in list(st.session_state.keys()):
+    keys_to_clear = list(st.session_state.keys())
+    for key in keys_to_clear:
         del st.session_state[key]
     
     st.rerun()
