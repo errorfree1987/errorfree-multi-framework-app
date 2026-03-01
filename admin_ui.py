@@ -180,7 +180,7 @@ def check_password():
             # 設定 URL query parameter（這會保留在重新整理後）
             set_query_param("session", session_token)
             
-            # 清除密碼輸入
+            # 清除密碼輸入和錯誤訊息
             if "password_input" in st.session_state:
                 del st.session_state["password_input"]
             if "login_error" in st.session_state:
@@ -194,8 +194,8 @@ def check_password():
                 context={"source": "admin_ui", "timestamp": st.session_state["login_time"]}
             )
             
-            # 重新運行以更新 UI
-            st.rerun()
+            # 移除 st.rerun()，讓 Streamlit 自動重新運行
+            # Streamlit 會在 callback 結束後自動重新運行
         else:
             st.session_state["authenticated"] = False
             st.session_state["login_error"] = "❌ Incorrect password. Please try again."
