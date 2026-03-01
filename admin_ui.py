@@ -659,6 +659,9 @@ def create_tenant(slug: str, name: str, display_name: str, trial_days: int,
     """建立新租戶"""
     from datetime import datetime, timedelta, timezone
     
+    # 使用 session state 來追蹤成功訊息
+    success_messages = []
+    
     try:
         headers = {
             "apikey": service_key,
@@ -689,7 +692,7 @@ def create_tenant(slug: str, name: str, display_name: str, trial_days: int,
         tenant_data = resp.json()[0]
         tenant_id = tenant_data['id']
         
-        st.success(f"✅ Tenant created: {slug}")
+        success_messages.append(f"✅ Tenant created: {slug}")
         
         # 2. 初始化 epoch
         epoch_payload = {"tenant": slug, "epoch": 0}
@@ -697,7 +700,7 @@ def create_tenant(slug: str, name: str, display_name: str, trial_days: int,
         resp = requests.post(endpoint, json=epoch_payload, headers=headers, timeout=5)
         
         if resp.status_code == 201:
-            st.success("✅ Epoch initialized")
+            success_messages.append("✅ Epoch initialized")
         
         # 3. 設定 usage caps
         caps_payload = {
@@ -709,7 +712,7 @@ def create_tenant(slug: str, name: str, display_name: str, trial_days: int,
         resp = requests.post(endpoint, json=caps_payload, headers=headers, timeout=5)
         
         if resp.status_code == 201:
-            st.success("✅ Usage caps configured")
+            success_messages.append("✅ Usage caps configured")
         
         # 4. 記錄 audit event
         _log_audit_event(
@@ -725,10 +728,20 @@ def create_tenant(slug: str, name: str, display_name: str, trial_days: int,
             }
         )
         
+        # 顯示所有成功訊息
+        for msg in success_messages:
+            st.success(msg)
+        
         st.success("🎉 Tenant setup complete!")
         st.balloons()
         
-        # 重新載入頁面
+        # 使用 session state 來觸發 tab 切換
+        st.session_state["tenant_created"] = True
+        st.session_state["switch_to_list_tab"] = True
+        
+        # 延遲重新載入，讓用戶看到成功訊息
+        import time
+        time.sleep(2)
         st.rerun()
         
     except Exception as e:
@@ -778,6 +791,9 @@ def extend_tenant_trial(tenant: dict, extend_days: int, supabase_url: str, servi
                 }
             )
             
+            # 延遲重新載入，讓用戶看到成功訊息
+            import time
+            time.sleep(2)
             st.rerun()
         else:
             st.error(f"❌ Failed to extend trial: HTTP {resp.status_code}")
@@ -816,6 +832,9 @@ def toggle_tenant_status(tenant: dict, new_status: bool, supabase_url: str, serv
                 context={"new_status": new_status}
             )
             
+            # 延遲重新載入，讓用戶看到成功訊息
+            import time
+            time.sleep(1.5)
             st.rerun()
         else:
             st.error(f"❌ Failed to update status: HTTP {resp.status_code}")
