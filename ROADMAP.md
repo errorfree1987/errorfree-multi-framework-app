@@ -202,39 +202,66 @@
 
 ### Phase B2: Tenant 管理
 
-#### B2.1 MVP 版本（已完成 - 2026-03-01）
+#### B2.1 MVP 版本（已完成 - 2026-03-02）✅
 
 **任務**：
 - ✅ 租戶列表（st.dataframe，顯示基本資訊）
-- ✅ 建立新租戶（st.form）
-- ✅ Trial 延期（st.date_input + SQL UPDATE）
+- ✅ 建立新租戶（st.form，自動清空）
+- ✅ **Trial 延期**（兩種模式）⭐
+  - ✅ Extend (Add Days) - 快速加天數
+  - ✅ Set End Date - 日曆選擇器（可縮短或延長）
 - ✅ 停用/啟用租戶（st.button + SQL UPDATE）
+- ✅ 刪除租戶（cascading delete，需確認 slug）
 - ✅ 基本統計（成員數、今日用量、epoch）
 
 **UI 元件**：
 - `st.tabs()` - 分離列表和建立
 - `st.expander()` - 租戶詳情
-- `st.form()` - 建立租戶表單
+- `st.form()` - 建立租戶表單（clear_on_submit=True）
 - `st.metric()` - 顯示統計
+- `st.radio()` - 選擇 trial 管理模式
+- `st.date_input()` - 日曆選擇器（精確設定日期）
 
 **實作內容**：
 - 完整的 CRUD 操作
 - Supabase REST API 整合
 - 自動初始化（epoch, caps）
-- 表單驗證
-- 錯誤處理
+- 表單驗證和自動清空
+- 錯誤處理和成功訊息延遲顯示
 - Audit logging
+- 靈活的試用期管理（延長/縮短/精確設定）
+
+**關鍵功能升級**（2026-03-02）：
+1. **靈活試用期管理**⭐
+   - 可縮短試用期（修正誤操作）
+   - 可設定精確日期（商業需求變更）
+   - 智能反饋訊息（自動判斷延長/縮短）
+   - 新 audit event：`tenant_trial_date_updated`
+
+2. **表單自動清空**
+   - 新增 `clear_on_submit=True`
+   - 成功後顯示提示訊息
+   - 防止重複提交錯誤
+
+3. **成功訊息顯示修正**
+   - `time.sleep()` 延遲重載
+   - 確保用戶看到反饋訊息
 
 **驗收標準**：
-- ✅ 可建立新租戶
-- ✅ 可延長試用期
+- ✅ 可建立新租戶（表單自動清空）
+- ✅ 可延長試用期（兩種方式）
+- ✅ 可縮短試用期（新功能）⭐
 - ✅ 可停用/啟用租戶
+- ✅ 可刪除租戶（需確認）
 - ✅ 統計資訊正確顯示
 - ✅ 所有操作記錄到 audit_events
+- ✅ 成功訊息正確顯示
 
 **相關檔案**：
-- `admin_ui.py` - 修改 show_tenants() 函數
+- `admin_ui.py` - 完整實作（show_tenants, create_tenant, delete_tenant, update_tenant_trial_date）
 - `README_PHASE_B2_1.md` - 詳細實作說明和驗收方式
+- `TEST_B2_1_v2.md` - 完整測試指南（含修正後功能）
+- `TEST_TRIAL_DATE_FEATURE.md` - 試用期靈活調整功能測試指南
 
 #### B2.2 完美版本（預計 1-2 天）
 
@@ -497,7 +524,7 @@ errorfree-multi-framework-app/
 ### 整體進度
 - **Mode A (1 週 MVP)**: ✅ **100% 完成** (2026-02-27)
 - **Phase B1.1 (MVP Admin 登入)**: ✅ **100% 完成** (2026-02-28)
-- **Phase B2.1 (MVP Tenant 管理)**: ✅ **100% 完成** (2026-03-01)
+- **Phase B2.1 (MVP Tenant 管理)**: ✅ **100% 完美完成** (2026-03-02) ⭐
 - **Phase B3-B6 (MVP Admin UI)**: 🔄 **準備開始** (Week 1-2)
 - **Phase B (完美 Admin UI)**: ⏳ **未開始** (Week 3-4)
 - **Mode B BYOK (長期)**: ⏳ **未開始**
@@ -560,17 +587,39 @@ errorfree-multi-framework-app/
 
 ## 📝 變更日誌
 
+### 2026-03-02 ⭐
+- ✅ **完美完成 Phase B2.1** (MVP Tenant 管理)
+- 📝 新增靈活試用期管理功能
+  - Extend (Add Days) - 快速延長
+  - Set End Date - 日曆選擇器（可縮短或延長）
+- 📝 新增 `update_tenant_trial_date()` 函數
+- 📝 新增 `tenant_trial_date_updated` audit event
+- 📝 UI 重新組織（4 欄 → 2 欄，更清晰）
+- 📝 智能反饋訊息（自動判斷延長/縮短）
+- 📝 新增 `TEST_TRIAL_DATE_FEATURE.md`（試用期調整測試指南）
+- 🎯 解決關鍵問題：
+  - 可以修正誤操作（錯誤輸入天數）
+  - 可以應對商業需求變更（縮短試用期）
+  - 可以精確設定日期（日曆選擇器）
+
 ### 2026-03-01
-- ✅ 完成 Phase B2.1 (MVP Tenant 管理)
+- ✅ 完成 Phase B2.1 基礎（MVP Tenant 管理）
 - 📝 實作租戶列表、建立、延期、停用/啟用功能
 - 📝 新增統計資訊（成員數、今日用量、epoch）
+- 📝 新增表單自動清空功能
+- 📝 新增刪除租戶功能（cascading delete）
+- 📝 修正成功訊息顯示（time.sleep）
 - 📝 新增 `README_PHASE_B2_1.md`（實作說明）
+- 📝 新增 `TEST_B2_1_v2.md`（完整測試指南）
 - 📝 更新 ROADMAP.md
 
 ### 2026-02-28
 - ✅ 完成 Phase B1.1 (MVP Admin UI - 登入/權限)
 - 📝 新增 `admin_ui.py`（獨立的 Admin UI）
+- 📝 URL query parameter 實作 session persistence
+- 📝 修正 Streamlit rerun warning
 - 📝 新增 `README_PHASE_B1_1.md`（實作說明）
+- 📝 新增 `SESSION_PERSISTENCE_FIX.md`（session 修正文件）
 - 📝 新增 `RAILWAY_DEPLOY_ADMIN.md`（部署指南）
 
 ### 2026-02-27
@@ -579,6 +628,7 @@ errorfree-multi-framework-app/
 - ✅ 完成 Phase A2-2 (Usage Caps Enforcement)
 - ✅ 完成 Phase A3 (Runbook 固定化)
 - 📝 建立本 ROADMAP
+- 📝 新增 `README_PHASE_A2_1.md`, `README_PHASE_A2_2.md`, `QUICK_REFERENCE_MODE_A.md`
 
 ### 未來更新
 - 請在完成每個 Phase B 子項後更新進度
@@ -586,4 +636,4 @@ errorfree-multi-framework-app/
 
 ---
 
-**最後更新**: 2026-02-27 | **維護者**: Amanda Chiu
+**最後更新**: 2026-03-02 | **維護者**: Amanda Chiu
