@@ -281,22 +281,53 @@
 
 ### Phase B3: Users 批量管理
 
-#### B3.1 MVP 版本（預計 0.5-1 天）
+#### B3.1 MVP 版本（已完成 - 2026-03-02）✅
 
 **任務**：
-- [ ] 成員列表（按租戶篩選）
-- [ ] 批量新增成員（st.text_area 貼上 email）
-- [ ] 批量停用/啟用（checkbox 選擇 + 批量操作）
-- [ ] 角色設定（dropdown）
+- ✅ 成員列表（按租戶篩選）
+- ✅ 批量新增成員（st.text_area 貼上 email，支援 30+）
+- ✅ 批量停用/啟用（checkbox 選擇 + 批量操作）
+- ✅ 角色設定（dropdown）
+- ✅ 手動單個新增成員
+- ✅ 重複 email 處理
 
 **UI 元件**：
+- `st.tabs()` - 3 個分頁（Member List / Batch Add / Batch Operations）
 - `st.text_area()` - 貼上 email 清單
-- `st.multiselect()` - 批量選擇
-- `st.dataframe()` - 成員列表
+- `st.multiselect()` - 批量選擇成員
+- `st.expander()` - 成員詳情展開
+- `st.selectbox()` - 租戶篩選器、角色選擇
+- `st.metric()` - 統計資訊（Total / Active / Inactive）
+
+**實作內容**：
+- 3 個主要頁面函數
+- 9 個 helper functions
+- Email 驗證和清理（lowercase, trim, @ validation）
+- 重複 email 處理（HTTP 409 → warning）
+- 成功動畫（st.balloons）
+- 錯誤處理完善
+- Audit logging（6 種操作）
+
+**關鍵功能**：
+1. **批量新增** - 貼上 email 清單，一鍵新增
+2. **批量操作** - 多選成員，批量 enable/disable
+3. **按租戶篩選** - 查看特定租戶或所有租戶的成員
+4. **角色管理** - 更改成員角色（user/admin）
+5. **統計資訊** - 即時顯示成員數量和狀態
 
 **驗收標準**：
-- [ ] 可貼上 30+ email 並批量新增
-- [ ] 可批量停用/啟用成員
+- ✅ 可貼上 30+ email 並批量新增
+- ✅ 可批量停用/啟用成員
+- ✅ 可按租戶篩選查看
+- ✅ 可更改成員角色
+- ✅ 重複 email 有警告提示
+- ✅ 統計資訊正確顯示
+- ✅ 所有操作記錄到 audit_events
+
+**相關檔案**：
+- `admin_ui.py` - 完整實作（show_members 及 9 個 helper functions）
+- `README_PHASE_B3_1.md` - 詳細實作說明（10 個測試用例）
+- `QUICK_TEST_B3_1.md` - 快速測試指南（5-10 分鐘）
 
 #### B3.2 完美版本（預計 1 天）
 
@@ -517,7 +548,8 @@ errorfree-multi-framework-app/
 - ✅ **Phase A3**: 100% (Runbook 完成)
 - ✅ **Phase B1 (MVP 登入)**: 100% (1/1 子項完成)
 - ✅ **Phase B2.1 (MVP Tenant)**: 100% (1/1 子項完成)
-- 🔄 **Phase B3-B6 (MVP)**: 0% (0/4 子項)
+- ✅ **Phase B3.1 (MVP Members)**: 100% (1/1 子項完成)
+- 🔄 **Phase B4-B6 (MVP)**: 0% (0/3 子項)
 - ⏳ **Phase B (完美版)**: 0% (0/6 子項)
 - ⏳ **Phase C**: 0% (0/3 子項)
 
@@ -525,7 +557,8 @@ errorfree-multi-framework-app/
 - **Mode A (1 週 MVP)**: ✅ **100% 完成** (2026-02-27)
 - **Phase B1.1 (MVP Admin 登入)**: ✅ **100% 完成** (2026-02-28)
 - **Phase B2.1 (MVP Tenant 管理)**: ✅ **100% 完美完成** (2026-03-02) ⭐
-- **Phase B3-B6 (MVP Admin UI)**: 🔄 **準備開始** (Week 1-2)
+- **Phase B3.1 (MVP Members 管理)**: ✅ **100% 完成** (2026-03-02) ⭐
+- **Phase B4-B6 (MVP Admin UI)**: 🔄 **準備開始** (Week 1-2)
 - **Phase B (完美 Admin UI)**: ⏳ **未開始** (Week 3-4)
 - **Mode B BYOK (長期)**: ⏳ **未開始**
 
@@ -587,7 +620,24 @@ errorfree-multi-framework-app/
 
 ## 📝 變更日誌
 
-### 2026-03-02 ⭐
+### 2026-03-02 ⭐ Phase B3.1 完成
+- ✅ 完成 Phase B3.1 (MVP Members 批量管理)
+- 📝 實作成員列表、批量新增、批量操作功能
+- 📝 新增 3 個主要頁面（Member List / Batch Add / Batch Operations）
+- 📝 新增 9 個 helper functions
+- 📝 支援批量新增 30+ email（貼上清單）
+- 📝 支援批量 enable/disable 成員
+- 📝 新增角色管理功能（user/admin）
+- 📝 新增按租戶篩選功能
+- 📝 新增 `README_PHASE_B3_1.md`（完整實作指南，10 個測試用例）
+- 📝 新增 `QUICK_TEST_B3_1.md`（快速測試指南，5-10 分鐘）
+- 🎯 關鍵功能：
+  - Email 驗證和清理（lowercase, trim, @ validation）
+  - 重複 email 處理（HTTP 409 → warning）
+  - 成功動畫（st.balloons）
+  - 6 種 audit events（batch_added, enabled, disabled, role_updated 等）
+
+### 2026-03-02 ⭐ Phase B2.1 完美完成
 - ✅ **完美完成 Phase B2.1** (MVP Tenant 管理)
 - 📝 新增靈活試用期管理功能
   - Extend (Add Days) - 快速延長
