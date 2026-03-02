@@ -392,8 +392,15 @@ def show_tenants():
         st.error("⚠️ Supabase not configured")
         return
     
-    # 建立 tabs
+    # 使用 session state 來記住 active tab
+    if "active_tab" not in st.session_state:
+        st.session_state["active_tab"] = 0
+    
+    # 建立 tabs（使用 session state 的 active tab）
     tab1, tab2 = st.tabs(["📋 Tenant List", "➕ Create New Tenant"])
+    
+    # 根據 session state 決定顯示哪個 tab
+    # Streamlit 不支援直接設定 active tab，所以我們用條件判斷
     
     # ==========================================
     # Tab 1: 租戶列表
@@ -557,7 +564,7 @@ def show_tenant_details(tenant: dict, supabase_url: str, service_key: str):
     st.markdown("---")
     
     # 操作按鈕
-    col_op1, col_op2, col_op3 = st.columns(3)
+    col_op1, col_op2, col_op3, col_op4 = st.columns(4)
     
     with col_op1:
         # Trial 延期
@@ -570,16 +577,31 @@ def show_tenant_details(tenant: dict, supabase_url: str, service_key: str):
     with col_op2:
         # 停用/啟用
         if tenant['is_active']:
-            if st.button(f"🔴 Disable Tenant", key=f"disable_{tenant['id']}", type="secondary"):
+            if st.button(f"🔴 Disable", key=f"disable_{tenant['id']}", type="secondary", use_container_width=True):
                 toggle_tenant_status(tenant, False, supabase_url, service_key)
         else:
-            if st.button(f"🟢 Enable Tenant", key=f"enable_{tenant['id']}", type="primary"):
+            if st.button(f"🟢 Enable", key=f"enable_{tenant['id']}", type="primary", use_container_width=True):
                 toggle_tenant_status(tenant, True, supabase_url, service_key)
     
     with col_op3:
-        st.markdown("**Quick Actions**")
-        if st.button(f"🔄 View Full Details", key=f"details_{tenant['id']}"):
-            st.info(f"Tenant ID: `{tenant['id']}`\n\nSlug: `{tenant['slug']}`")
+        # 刪除租戶（危險操作）
+        with st.form(f"delete_tenant_{tenant['id']}"):
+            st.markdown("**⚠️ Delete Tenant**")
+            confirm_slug = st.text_input(
+                "Type slug to confirm", 
+                key=f"confirm_delete_{tenant['id']}",
+                help=f"Type '{tenant['slug']}' to confirm deletion"
+            )
+            if st.form_submit_button("🗑️ Delete", type="secondary"):
+                if confirm_slug == tenant['slug']:
+                    delete_tenant(tenant, supabase_url, service_key)
+                else:
+                    st.error(f"❌ Slug mismatch. Type '{tenant['slug']}' to confirm.")
+    
+    with col_op4:
+        st.markdown("**Quick Info**")
+        if st.button(f"ℹ️ Details", key=f"details_{tenant['id']}", use_container_width=True):
+            st.info(f"**Tenant ID**: `{tenant['id']}`\n\n**Slug**: `{tenant['slug']}`")
 
 
 def get_tenant_member_count(tenant_id: str, supabase_url: str, service_key: str) -> int:
@@ -659,9 +681,6 @@ def create_tenant(slug: str, name: str, display_name: str, trial_days: int,
     """建立新租戶"""
     from datetime import datetime, timedelta, timezone
     
-    # 使用 session state 來追蹤成功訊息
-    success_messages = []
-    
     try:
         headers = {
             "apikey": service_key,
@@ -692,27 +711,37 @@ def create_tenant(slug: str, name: str, display_name: str, trial_days: int,
         tenant_data = resp.json()[0]
         tenant_id = tenant_data['id']
         
-        success_messages.append(f"✅ Tenant created: {slug}")
+        st.success(f"✅ Tenant created: {slug}")
         
         # 2. 初始化 epoch
-        epoch_payload = {"tenant": slug, "epoch": 0}
-        endpoint = f"{supabase_url}/rest/v1/tenant_session_epoch"
-        resp = requests.post(endpoint, json=epoch_payload, headers=headers, timeout=5)
-        
-        if resp.status_code == 201:
-            success_messages.append("✅ Epoch initialized")
+        try:
+            epoch_payload = {"tenant": slug, "epoch": 0}
+            endpoint = f"{supabase_url}/rest/v1/tenant_session_epoch"
+            resp = requests.post(endpoint, json=epoch_payload, headers=headers, timeout=5)
+            
+            if resp.status_code == 201:
+                st.success("✅ Epoch initialized")
+            else:
+                st.warning(f"⚠️ Epoch initialization: HTTP {resp.status_code}")
+        except Exception as e:
+            st.warning(f"⚠️ Epoch initialization error: {str(e)}")
         
         # 3. 設定 usage caps
-        caps_payload = {
-            "tenant_id": tenant_id,
-            "daily_review_cap": daily_review_cap,
-            "daily_download_cap": daily_download_cap
-        }
-        endpoint = f"{supabase_url}/rest/v1/tenant_usage_caps"
-        resp = requests.post(endpoint, json=caps_payload, headers=headers, timeout=5)
-        
-        if resp.status_code == 201:
-            success_messages.append("✅ Usage caps configured")
+        try:
+            caps_payload = {
+                "tenant_id": tenant_id,
+                "daily_review_cap": daily_review_cap,
+                "daily_download_cap": daily_download_cap
+            }
+            endpoint = f"{supabase_url}/rest/v1/tenant_usage_caps"
+            resp = requests.post(endpoint, json=caps_payload, headers=headers, timeout=5)
+            
+            if resp.status_code == 201:
+                st.success("✅ Usage caps configured")
+            else:
+                st.warning(f"⚠️ Usage caps setup: HTTP {resp.status_code} - {resp.text}")
+        except Exception as e:
+            st.warning(f"⚠️ Usage caps error: {str(e)}")
         
         # 4. 記錄 audit event
         _log_audit_event(
@@ -728,24 +757,22 @@ def create_tenant(slug: str, name: str, display_name: str, trial_days: int,
             }
         )
         
-        # 顯示所有成功訊息
-        for msg in success_messages:
-            st.success(msg)
-        
+        # 5. 顯示完成訊息
         st.success("🎉 Tenant setup complete!")
         st.balloons()
         
-        # 使用 session state 來觸發 tab 切換
-        st.session_state["tenant_created"] = True
-        st.session_state["switch_to_list_tab"] = True
-        
-        # 延遲重新載入，讓用戶看到成功訊息
+        # 6. 延遲後重新載入
         import time
-        time.sleep(2)
+        time.sleep(3)  # 增加到 3 秒，確保所有訊息都能看到
+        
+        # 設定 session state 來切換到 List tab
+        st.session_state["active_tab"] = 0  # 0 = Tenant List tab
         st.rerun()
         
     except Exception as e:
         st.error(f"❌ Error creating tenant: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
         _log_audit_event(
             action="tenant_created",
             tenant=slug,
@@ -841,6 +868,79 @@ def toggle_tenant_status(tenant: dict, new_status: bool, supabase_url: str, serv
             
     except Exception as e:
         st.error(f"❌ Error: {str(e)}")
+
+
+def delete_tenant(tenant: dict, supabase_url: str, service_key: str):
+    """刪除租戶（危險操作）"""
+    try:
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Content-Type": "application/json"
+        }
+        
+        tenant_id = tenant['id']
+        tenant_slug = tenant['slug']
+        
+        # 1. 刪除 usage events（如果有）
+        try:
+            endpoint = f"{supabase_url}/rest/v1/tenant_usage_events?tenant_id=eq.{tenant_id}"
+            requests.delete(endpoint, headers=headers, timeout=5)
+        except:
+            pass
+        
+        # 2. 刪除 usage caps
+        try:
+            endpoint = f"{supabase_url}/rest/v1/tenant_usage_caps?tenant_id=eq.{tenant_id}"
+            requests.delete(endpoint, headers=headers, timeout=5)
+        except:
+            pass
+        
+        # 3. 刪除 members
+        try:
+            endpoint = f"{supabase_url}/rest/v1/tenant_members?tenant_id=eq.{tenant_id}"
+            requests.delete(endpoint, headers=headers, timeout=5)
+        except:
+            pass
+        
+        # 4. 刪除 epoch
+        try:
+            endpoint = f"{supabase_url}/rest/v1/tenant_session_epoch?tenant=eq.{tenant_slug}"
+            requests.delete(endpoint, headers=headers, timeout=5)
+        except:
+            pass
+        
+        # 5. 刪除 tenant（主表）
+        endpoint = f"{supabase_url}/rest/v1/tenants?id=eq.{tenant_id}"
+        resp = requests.delete(endpoint, headers=headers, timeout=10)
+        
+        if resp.status_code in [200, 204]:
+            st.success(f"✅ Tenant '{tenant_slug}' deleted successfully")
+            
+            # 記錄 audit event
+            _log_audit_event(
+                action="tenant_deleted",
+                tenant=tenant_slug,
+                result="success",
+                actor_email=st.session_state.get("admin_email", "admin"),
+                context={
+                    "tenant_id": tenant_id,
+                    "tenant_name": tenant['name']
+                }
+            )
+            
+            # 延遲重新載入
+            import time
+            time.sleep(2)
+            st.rerun()
+        else:
+            st.error(f"❌ Failed to delete tenant: HTTP {resp.status_code}")
+            st.code(resp.text)
+            
+    except Exception as e:
+        st.error(f"❌ Error deleting tenant: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
 
 def show_members():
     """成員管理（Phase B3 實作）"""
