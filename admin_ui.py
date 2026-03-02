@@ -567,43 +567,95 @@ def show_tenant_details(tenant: dict, supabase_url: str, service_key: str):
     st.markdown("---")
     
     # 操作按鈕
-    col_op1, col_op2, col_op3, col_op4 = st.columns(4)
+    st.markdown("### 🔧 Tenant Operations")
+    
+    col_op1, col_op2 = st.columns(2)
     
     with col_op1:
-        # Trial 延期
-        with st.form(f"extend_trial_{tenant['id']}"):
-            st.markdown("**Extend Trial**")
-            extend_days = st.number_input("Add Days", min_value=1, max_value=365, value=30, key=f"extend_{tenant['id']}")
-            if st.form_submit_button("📅 Extend", type="secondary"):
-                extend_tenant_trial(tenant, extend_days, supabase_url, service_key)
+        # Trial 管理（延長或修改）
+        st.markdown("**📅 Trial Period Management**")
+        
+        trial_action = st.radio(
+            "Select Action",
+            ["Extend (Add Days)", "Set End Date"],
+            key=f"trial_action_{tenant['id']}",
+            horizontal=True
+        )
+        
+        if trial_action == "Extend (Add Days)":
+            with st.form(f"extend_trial_{tenant['id']}"):
+                extend_days = st.number_input(
+                    "Days to Add", 
+                    min_value=1, 
+                    max_value=365, 
+                    value=30, 
+                    key=f"extend_{tenant['id']}"
+                )
+                if st.form_submit_button("➕ Extend Trial", type="secondary"):
+                    extend_tenant_trial(tenant, extend_days, supabase_url, service_key)
+        else:  # Set End Date
+            with st.form(f"set_trial_date_{tenant['id']}"):
+                from datetime import datetime, date
+                
+                # 解析當前結束日期
+                try:
+                    current_end = datetime.fromisoformat(tenant['trial_end'].replace('Z', '+00:00')).date()
+                except:
+                    current_end = date.today()
+                
+                st.caption(f"Current end date: {current_end}")
+                
+                new_end_date = st.date_input(
+                    "New End Date",
+                    value=current_end,
+                    min_value=date.today(),
+                    key=f"new_date_{tenant['id']}"
+                )
+                
+                if st.form_submit_button("📅 Update End Date", type="secondary"):
+                    update_tenant_trial_date(tenant, new_end_date, supabase_url, service_key)
     
     with col_op2:
+        # 狀態管理和刪除
+        st.markdown("**⚙️ Status & Management**")
+        
         # 停用/啟用
         if tenant['is_active']:
-            if st.button(f"🔴 Disable", key=f"disable_{tenant['id']}", type="secondary", use_container_width=True):
+            if st.button(
+                "🔴 Disable Tenant", 
+                key=f"disable_{tenant['id']}", 
+                type="secondary",
+                use_container_width=True
+            ):
                 toggle_tenant_status(tenant, False, supabase_url, service_key)
         else:
-            if st.button(f"🟢 Enable", key=f"enable_{tenant['id']}", type="primary", use_container_width=True):
+            if st.button(
+                "🟢 Enable Tenant", 
+                key=f"enable_{tenant['id']}", 
+                type="primary",
+                use_container_width=True
+            ):
                 toggle_tenant_status(tenant, True, supabase_url, service_key)
-    
-    with col_op3:
-        # 刪除租戶（危險操作）
+        
+        # 刪除租戶
         with st.form(f"delete_tenant_{tenant['id']}"):
-            st.markdown("**⚠️ Delete Tenant**")
+            st.caption("⚠️ Danger Zone")
             confirm_slug = st.text_input(
-                "Type slug to confirm", 
-                key=f"confirm_delete_{tenant['id']}",
-                help=f"Type '{tenant['slug']}' to confirm deletion"
+                f"Type '{tenant['slug']}' to delete", 
+                key=f"confirm_delete_{tenant['id']}"
             )
-            if st.form_submit_button("🗑️ Delete", type="secondary"):
+            if st.form_submit_button("🗑️ Delete Tenant", type="secondary"):
                 if confirm_slug == tenant['slug']:
                     delete_tenant(tenant, supabase_url, service_key)
                 else:
-                    st.error(f"❌ Slug mismatch. Type '{tenant['slug']}' to confirm.")
-    
-    with col_op4:
-        st.markdown("**Quick Info**")
-        if st.button(f"ℹ️ Details", key=f"details_{tenant['id']}", use_container_width=True):
+                    st.error(f"❌ Confirmation failed. Type '{tenant['slug']}' exactly.")
+        
+        # Quick Info
+        if st.button(
+            "ℹ️ View Details", 
+            key=f"details_{tenant['id']}",
+            use_container_width=True
+        ):
             st.info(f"**Tenant ID**: `{tenant['id']}`\n\n**Slug**: `{tenant['slug']}`")
 
 
@@ -831,6 +883,67 @@ def extend_tenant_trial(tenant: dict, extend_days: int, supabase_url: str, servi
             
     except Exception as e:
         st.error(f"❌ Error: {str(e)}")
+
+
+def update_tenant_trial_date(tenant: dict, new_end_date, supabase_url: str, service_key: str):
+    """直接修改租戶試用期結束日期（可以縮短或延長）"""
+    from datetime import datetime, timezone
+    
+    try:
+        # 解析當前和新的日期
+        current_end = datetime.fromisoformat(tenant['trial_end'].replace('Z', '+00:00'))
+        
+        # 將 date 轉換為 datetime（使用 UTC 午夜）
+        new_end_datetime = datetime.combine(new_end_date, datetime.min.time()).replace(tzinfo=timezone.utc)
+        
+        # 計算差異
+        days_diff = (new_end_datetime - current_end).days
+        
+        # 更新租戶
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {"trial_end": new_end_datetime.isoformat()}
+        endpoint = f"{supabase_url}/rest/v1/tenants?id=eq.{tenant['id']}"
+        resp = requests.patch(endpoint, json=payload, headers=headers, timeout=10)
+        
+        if resp.status_code in [200, 204]:
+            if days_diff > 0:
+                st.success(f"✅ Trial period extended by {days_diff} days")
+            elif days_diff < 0:
+                st.success(f"✅ Trial period shortened by {abs(days_diff)} days")
+            else:
+                st.info("ℹ️ Trial end date unchanged")
+            
+            st.info(f"New end date: {new_end_date}")
+            
+            # 記錄 audit event
+            _log_audit_event(
+                action="tenant_trial_date_updated",
+                tenant=tenant['slug'],
+                result="success",
+                actor_email=st.session_state.get("admin_email", "admin"),
+                context={
+                    "old_trial_end": current_end.isoformat(),
+                    "new_trial_end": new_end_datetime.isoformat(),
+                    "days_diff": days_diff
+                }
+            )
+            
+            # 延遲重新載入
+            import time
+            time.sleep(2)
+            st.rerun()
+        else:
+            st.error(f"❌ Failed to update trial date: HTTP {resp.status_code}")
+            
+    except Exception as e:
+        st.error(f"❌ Error: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
 
 
 def toggle_tenant_status(tenant: dict, new_status: bool, supabase_url: str, service_key: str):
