@@ -392,15 +392,8 @@ def show_tenants():
         st.error("⚠️ Supabase not configured")
         return
     
-    # 使用 session state 來記住 active tab
-    if "active_tab" not in st.session_state:
-        st.session_state["active_tab"] = 0
-    
-    # 建立 tabs（使用 session state 的 active tab）
+    # 建立 tabs
     tab1, tab2 = st.tabs(["📋 Tenant List", "➕ Create New Tenant"])
-    
-    # 根據 session state 決定顯示哪個 tab
-    # Streamlit 不支援直接設定 active tab，所以我們用條件判斷
     
     # ==========================================
     # Tab 1: 租戶列表
@@ -447,7 +440,14 @@ def show_tenants():
     with tab2:
         st.subheader("Create New Tenant")
         
-        with st.form("create_tenant_form"):
+        # 檢查是否剛建立完租戶（用來清空表單）
+        if st.session_state.get("tenant_just_created", False):
+            # 清空標記
+            st.session_state["tenant_just_created"] = False
+            # 顯示提示訊息
+            st.info("✨ Form cleared. You can now create another tenant or switch to the Tenant List tab.")
+        
+        with st.form("create_tenant_form", clear_on_submit=True):
             st.markdown("### Basic Information")
             
             col1, col2 = st.columns(2)
@@ -455,16 +455,19 @@ def show_tenants():
             with col1:
                 slug = st.text_input(
                     "Tenant Slug *",
+                    value="",  # 明確設定為空
                     help="Unique identifier (lowercase, no spaces, e.g., 'acme-corp')"
                 )
                 name = st.text_input(
                     "Name *",
+                    value="",  # 明確設定為空
                     help="Company name (e.g., 'Acme Corporation')"
                 )
             
             with col2:
                 display_name = st.text_input(
                     "Display Name",
+                    value="",  # 明確設定為空
                     help="Optional display name (defaults to Name if empty)"
                 )
                 trial_days = st.number_input(
@@ -761,12 +764,13 @@ def create_tenant(slug: str, name: str, display_name: str, trial_days: int,
         st.success("🎉 Tenant setup complete!")
         st.balloons()
         
-        # 6. 延遲後重新載入
+        # 6. 設定標記表示租戶已建立（用來清空表單）
+        st.session_state["tenant_just_created"] = True
+        
+        # 7. 延遲後重新載入
         import time
         time.sleep(3)  # 增加到 3 秒，確保所有訊息都能看到
         
-        # 設定 session state 來切換到 List tab
-        st.session_state["active_tab"] = 0  # 0 = Tenant List tab
         st.rerun()
         
     except Exception as e:
