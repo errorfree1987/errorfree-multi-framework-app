@@ -1299,7 +1299,7 @@ def get_all_tenants(supabase_url: str, service_key: str) -> list:
 
 
 def get_members(supabase_url: str, service_key: str, tenant_slug: str = None) -> list:
-    """獲取成員列表"""
+    """獲取成員列表（JOIN tenants 表以取得 slug）"""
     try:
         headers = {
             "apikey": service_key,
@@ -1307,25 +1307,58 @@ def get_members(supabase_url: str, service_key: str, tenant_slug: str = None) ->
             "Content-Type": "application/json"
         }
         
+        # 使用 select 來 JOIN tenants 表
         if tenant_slug:
-            endpoint = f"{supabase_url}/rest/v1/tenant_members?tenant_slug=eq.{tenant_slug}&select=*&order=created_at.desc"
+            # 先獲取 tenant_id
+            tenant_endpoint = f"{supabase_url}/rest/v1/tenants?slug=eq.{tenant_slug}&select=id"
+            tenant_resp = requests.get(tenant_endpoint, headers=headers, timeout=10)
+            
+            if tenant_resp.status_code != 200 or not tenant_resp.json():
+                st.error(f"❌ Tenant '{tenant_slug}' not found")
+                return []
+            
+            tenant_id = tenant_resp.json()[0]['id']
+            endpoint = f"{supabase_url}/rest/v1/tenant_members?tenant_id=eq.{tenant_id}&select=*&order=created_at.desc"
         else:
             endpoint = f"{supabase_url}/rest/v1/tenant_members?select=*&order=created_at.desc"
         
         resp = requests.get(endpoint, headers=headers, timeout=10)
         
         if resp.status_code == 200:
-            return resp.json()
+            members = resp.json()
+            
+            # 為每個成員添加 tenant_slug（通過 tenant_id 查詢）
+            tenant_cache = {}  # 快取 tenant_id -> slug 的對應
+            
+            for member in members:
+                tenant_id = member.get('tenant_id')
+                if tenant_id:
+                    # 檢查快取
+                    if tenant_id not in tenant_cache:
+                        tenant_endpoint = f"{supabase_url}/rest/v1/tenants?id=eq.{tenant_id}&select=slug"
+                        tenant_resp = requests.get(tenant_endpoint, headers=headers, timeout=10)
+                        if tenant_resp.status_code == 200 and tenant_resp.json():
+                            tenant_cache[tenant_id] = tenant_resp.json()[0]['slug']
+                        else:
+                            tenant_cache[tenant_id] = 'unknown'
+                    
+                    member['tenant_slug'] = tenant_cache[tenant_id]
+                else:
+                    member['tenant_slug'] = 'unknown'
+            
+            return members
         else:
             st.error(f"❌ Failed to fetch members: HTTP {resp.status_code}")
             return []
     except Exception as e:
         st.error(f"❌ Error fetching members: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
         return []
 
 
 def batch_add_members(tenant_slug: str, emails: list, supabase_url: str, service_key: str, role: str = "user"):
-    """批量新增成員"""
+    """批量新增成員（使用 tenant_id）"""
     try:
         headers = {
             "apikey": service_key,
@@ -1334,11 +1367,21 @@ def batch_add_members(tenant_slug: str, emails: list, supabase_url: str, service
             "Prefer": "return=representation"
         }
         
+        # 先獲取 tenant_id
+        tenant_endpoint = f"{supabase_url}/rest/v1/tenants?slug=eq.{tenant_slug}&select=id"
+        tenant_resp = requests.get(tenant_endpoint, headers=headers, timeout=10)
+        
+        if tenant_resp.status_code != 200 or not tenant_resp.json():
+            st.error(f"❌ Tenant '{tenant_slug}' not found")
+            return
+        
+        tenant_id = tenant_resp.json()[0]['id']
+        
         # 準備批量插入的數據
         members_data = []
         for email in emails:
             members_data.append({
-                "tenant_slug": tenant_slug,
+                "tenant_id": tenant_id,
                 "email": email.lower().strip(),
                 "role": role,
                 "is_active": True
@@ -1461,7 +1504,7 @@ def update_member_role(member: dict, new_role: str, supabase_url: str, service_k
 
 
 def batch_toggle_members(tenant_slug: str, emails: list, new_status: bool, supabase_url: str, service_key: str):
-    """批量切換成員狀態"""
+    """批量切換成員狀態（使用 tenant_id）"""
     try:
         headers = {
             "apikey": service_key,
@@ -1469,11 +1512,21 @@ def batch_toggle_members(tenant_slug: str, emails: list, new_status: bool, supab
             "Content-Type": "application/json"
         }
         
+        # 先獲取 tenant_id
+        tenant_endpoint = f"{supabase_url}/rest/v1/tenants?slug=eq.{tenant_slug}&select=id"
+        tenant_resp = requests.get(tenant_endpoint, headers=headers, timeout=10)
+        
+        if tenant_resp.status_code != 200 or not tenant_resp.json():
+            st.error(f"❌ Tenant '{tenant_slug}' not found")
+            return
+        
+        tenant_id = tenant_resp.json()[0]['id']
+        
         # 對每個 email 進行更新
         success_count = 0
         for email in emails:
             payload = {"is_active": new_status}
-            endpoint = f"{supabase_url}/rest/v1/tenant_members?tenant_slug=eq.{tenant_slug}&email=eq.{email}"
+            endpoint = f"{supabase_url}/rest/v1/tenant_members?tenant_id=eq.{tenant_id}&email=eq.{email}"
             resp = requests.patch(endpoint, json=payload, headers=headers, timeout=10)
             
             if resp.status_code in [200, 204]:
