@@ -1277,22 +1277,23 @@ def show_batch_add_members(supabase_url: str, service_key: str):
                 else:
                     batch_add_members(tenant_slug, emails, supabase_url, service_key, role_default)
     
-    else:  # Manual Entry（不使用 form，避免 "Press Enter to submit" 提示）
+    else:  # Manual Entry
         st.markdown("**Add a single member:**")
-        email = st.text_input("Email", placeholder="user@example.com", key="manual_add_email")
+        manual_counter = st.session_state.get("manual_add_counter", 0)
+        email = st.text_input("Email", placeholder="user@example.com", key=f"manual_add_email_{manual_counter}")
         role = st.selectbox(
             "Role",
             options=["user", "tenant_admin", "guest"],
             format_func=_role_display,
             index=["user", "tenant_admin", "guest"].index(role_default),
-            key="manual_add_role"
+            key=f"manual_add_role_{manual_counter}"
         )
         
         if st.button("➕ Add Member", type="primary"):
             if not email or '@' not in email:
                 st.error("❌ Please enter a valid email address.")
             else:
-                batch_add_members(tenant_slug, [email], supabase_url, service_key, role)
+                batch_add_members(tenant_slug, [email], supabase_url, service_key, role, source="manual")
 
 
 def show_batch_operations(supabase_url: str, service_key: str):
@@ -1356,7 +1357,7 @@ def show_batch_operations(supabase_url: str, service_key: str):
         return
     
     st.markdown("---")
-    st.markdown("**Select members**（直接勾選每個帳戶）：")
+    st.markdown("**Select members** (check each account):")
     
     selected_ids = set()
     for m in members:
@@ -1371,7 +1372,7 @@ def show_batch_operations(supabase_url: str, service_key: str):
     selected_emails = [m['email'] for m in selected_members]
     
     if not selected_emails:
-        st.info("👆 勾選上方帳戶，或使用 Select All / Select Active / Select Inactive 快速選取。")
+        st.info("👆 Check the accounts above, or use Select All / Select Active / Select Inactive for quick selection.")
         return
     
     st.write(f"**Selected**: {len(selected_emails)} member(s)")
@@ -1391,7 +1392,7 @@ def show_batch_operations(supabase_url: str, service_key: str):
                 batch_toggle_members(tenant_slug, selected_emails, False, supabase_url, service_key)
     
     if sel_active == 0 and sel_inactive == 0:
-        st.caption("（選取成員後會顯示 Enable / Disable 按鈕）")
+        st.caption("(Enable / Disable buttons appear after selecting members)")
 
 
 # ==========================================
@@ -1544,7 +1545,7 @@ def get_all_existing_emails_global(supabase_url: str, service_key: str) -> set:
         return set()
 
 
-def batch_add_members(tenant_slug: str, emails: list, supabase_url: str, service_key: str, role: str = "user"):
+def batch_add_members(tenant_slug: str, emails: list, supabase_url: str, service_key: str, role: str = "user", source: str = "paste"):
     """批量新增成員（使用 tenant_id，會檢查重複）"""
     try:
         headers = {
@@ -1572,9 +1573,9 @@ def batch_add_members(tenant_slug: str, emails: list, supabase_url: str, service
         to_add = [e for e in emails_lower if e not in existing_emails]
         
         if duplicates:
-            st.warning(f"⚠️ **以下帳號已存在於系統（任一租戶或 individual），無法新增**：{', '.join(duplicates)}")
+            st.warning(f"⚠️ **The following account(s) already exist in the system (any tenant or individual) and cannot be added**: {', '.join(duplicates)}")
             if not to_add:
-                st.info("ℹ️ 沒有可新增的帳號，請檢查後再試。")
+                st.info("ℹ️ No accounts can be added. Please check and try again.")
                 return
         
         if not to_add:
@@ -1612,8 +1613,10 @@ def batch_add_members(tenant_slug: str, emails: list, supabase_url: str, service
                 }
             )
             
-            # 成功後增加 counter，使 text_area 清空
+            # Success: increment counter(s) to clear form
             st.session_state["batch_add_counter"] = st.session_state.get("batch_add_counter", 0) + 1
+            if source == "manual":
+                st.session_state["manual_add_counter"] = st.session_state.get("manual_add_counter", 0) + 1
             import time
             time.sleep(2)
             st.rerun()
