@@ -748,6 +748,34 @@ def get_tenant_usage_caps(tenant_id: str, supabase_url: str, service_key: str) -
     return {}
 
 
+def init_tenant_usage_caps(tenant_id: str, supabase_url: str, service_key: str,
+                          daily_review_cap: int = 50, daily_download_cap: int = 20) -> bool:
+    """
+    為沒有 caps 記錄的租戶建立 tenant_usage_caps 記錄。
+    用於透過 ensure_individual_tenant 等途徑建立的租戶（未走 Create Tenant 流程）。
+    """
+    from datetime import datetime, timezone
+    try:
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=representation"
+        }
+        payload = {
+            "tenant_id": tenant_id,
+            "daily_review_cap": daily_review_cap,
+            "daily_download_cap": daily_download_cap,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "last_modified_by": st.session_state.get("admin_email", "admin")
+        }
+        endpoint = f"{supabase_url}/rest/v1/tenant_usage_caps"
+        resp = requests.post(endpoint, json=payload, headers=headers, timeout=10)
+        return resp.status_code in [200, 201]
+    except Exception:
+        return False
+
+
 def update_tenant_usage_caps(cap_id: str, daily_review_cap, daily_download_cap,
                              supabase_url: str, service_key: str) -> bool:
     """
@@ -2159,7 +2187,22 @@ def show_usage():
             with col2:
                 st.markdown("**⚙️ Set Caps**")
                 if not cap_id:
-                    st.caption("No caps record. Create tenant with caps first.")
+                    st.caption("No caps record. This tenant was created without caps (e.g. Individual/Guest). Click below to initialize.")
+                    if st.button("➕ Initialize Caps", key=f"init_caps_{tenant_id}"):
+                        if init_tenant_usage_caps(tenant_id, supabase_url, service_key, 50, 20):
+                            st.success("✅ Caps initialized (default: Review 50, Download 20).")
+                            _log_audit_event(
+                                action="usage_caps_initialized",
+                                tenant=slug,
+                                result="success",
+                                actor_email=st.session_state.get("admin_email", "admin"),
+                                context={"daily_review_cap": 50, "daily_download_cap": 20}
+                            )
+                            import time
+                            time.sleep(1.5)
+                            st.rerun()
+                        else:
+                            st.error("❌ Failed to initialize caps.")
                     continue
                 with st.form(f"caps_form_{tenant_id}"):
                     rev_val = review_cap if review_cap is not None else 50
