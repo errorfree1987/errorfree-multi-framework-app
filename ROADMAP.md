@@ -407,23 +407,24 @@
 
 ### Phase B6: 基本限流/成本設定入口
 
-#### B6.1 MVP 版本（預計 0.5 天）
+#### B6.1 MVP 版本（已完成 - 2026-03-03）✅
 
 **任務**：
-- [ ] Per-tenant cap 設定（st.number_input）
-- [ ] 保存按鈕（SQL UPDATE）
-- [ ] 顯示今日用量（數字）
-- [ ] 用量百分比（st.progress）
+- ✅ Per-tenant cap 設定（st.number_input + Unlimited checkbox）
+- ✅ 保存按鈕（PATCH tenant_usage_caps）
+- ✅ 顯示今日用量（review、download）
+- ✅ 用量百分比（st.progress）
+- ✅ 記錄 audit_events（usage_caps_updated）
 
 **UI 元件**：
 - `st.number_input()` - Cap 設定
 - `st.progress()` - 用量進度條
-- `st.button()` - 保存
+- `st.form()` + 保存按鈕
 
 **驗收標準**：
-- [ ] 可調整 caps
-- [ ] 可查看即時用量
-- [ ] 設定立即生效
+- ✅ 可調整 caps（含 Unlimited 選項）
+- ✅ 可查看即時用量
+- ✅ 設定立即生效
 
 #### B6.2 完美版本（預計 1 天）
 
@@ -542,7 +543,7 @@ errorfree-multi-framework-app/
 - ✅ **Phase B1 (MVP 登入)**: 100% (1/1 子項完成)
 - ✅ **Phase B2.1 (MVP Tenant)**: 100% (1/1 子項完成)
 - ✅ **Phase B3.1 (MVP Members)**: 100% (1/1 子項完成)
-- 🔄 **Phase B4-B6 (MVP)**: 67% (2/3 子項，B4.1、B5.1 完成)
+- ✅ **Phase B4-B6 (MVP)**: 100% (3/3 子項完成)
 - ⏳ **Phase B (完美版)**: 0% (0/6 子項)
 - ⏳ **Phase C**: 0% (0/3 子項)
 
@@ -551,7 +552,7 @@ errorfree-multi-framework-app/
 - **Phase B1.1 (MVP Admin 登入)**: ✅ **100% 完成** (2026-02-28)
 - **Phase B2.1 (MVP Tenant 管理)**: ✅ **100% 完美完成** (2026-03-02) ⭐
 - **Phase B3.1 (MVP Members 管理)**: ✅ **100% 完成** (2026-03-03) ⭐
-- **Phase B4-B6 (MVP Admin UI)**: 🔄 **進行中** - B4.1、B5.1 完成 (2026-03-03)
+- **Phase B4-B6 (MVP Admin UI)**: ✅ **全部完成** - B4.1、B5.1、B6.1 (2026-03-03)
 - **Phase B (完美 Admin UI)**: ⏳ **未開始** (Week 3-4)
 - **Mode B BYOK (長期)**: ⏳ **未開始**
 
@@ -612,6 +613,13 @@ errorfree-multi-framework-app/
 ---
 
 ## 📝 變更日誌
+
+### 2026-03-03 Phase B6.1 Usage & Caps 完成
+- ✅ 完成 Phase B6.1 (MVP Usage & Caps Management)
+- 📝 實作 `show_usage()`、`get_tenant_usage_caps()`、`get_tenant_today_usage_full()`、`update_tenant_usage_caps()`
+- 📝 顯示今日 review/download 用量、進度條、per-tenant cap 設定（含 Unlimited）
+- 📝 記錄 audit_events（action: `usage_caps_updated`）
+- 🎉 **Phase B4-B6 MVP 全部完成**
 
 ### 2026-03-03 Phase B5.1 Audit Log 完成
 - ✅ 完成 Phase B5.1 (MVP Audit Log Viewer)

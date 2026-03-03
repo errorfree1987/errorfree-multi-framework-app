@@ -689,30 +689,89 @@ def get_tenant_member_count(tenant_id: str, supabase_url: str, service_key: str)
 
 
 def get_tenant_today_usage(tenant_id: str, supabase_url: str, service_key: str) -> int:
-    """獲取租戶今日用量"""
+    """獲取租戶今日 review 用量"""
+    r, _ = get_tenant_today_usage_full(tenant_id, supabase_url, service_key)
+    return r
+
+
+def get_tenant_today_usage_full(tenant_id: str, supabase_url: str, service_key: str) -> tuple:
+    """獲取租戶今日 review 和 download 用量，回傳 (review_count, download_count)"""
+    from datetime import datetime, timezone
+    today = datetime.now(timezone.utc).date().isoformat()
+    headers = {
+        "apikey": service_key,
+        "Authorization": f"Bearer {service_key}",
+        "Accept": "application/json"
+    }
+    review_count = download_count = 0
     try:
-        endpoint = f"{supabase_url}/rest/v1/tenant_usage_events"
+        for utype in ("review", "download"):
+            endpoint = f"{supabase_url}/rest/v1/tenant_usage_events"
+            params = {
+                "tenant_id": f"eq.{tenant_id}",
+                "usage_type": f"eq.{utype}",
+                "created_at": f"gte.{today}T00:00:00Z",
+                "select": "quantity"
+            }
+            resp = requests.get(endpoint, headers=headers, params=params, timeout=5)
+            if resp.status_code == 200:
+                rows = resp.json() or []
+                total = sum(r.get("quantity", 1) for r in rows)
+                if utype == "review":
+                    review_count = total
+                else:
+                    download_count = total
+    except Exception:
+        pass
+    return review_count, download_count
+
+
+def get_tenant_usage_caps(tenant_id: str, supabase_url: str, service_key: str) -> dict:
+    """獲取租戶 usage caps（daily_review_cap, daily_download_cap），若無則回傳空"""
+    try:
+        endpoint = f"{supabase_url}/rest/v1/tenant_usage_caps"
         headers = {
             "apikey": service_key,
             "Authorization": f"Bearer {service_key}",
             "Accept": "application/json"
         }
-        # 今日 00:00 UTC
-        from datetime import datetime, timezone
-        today = datetime.now(timezone.utc).date().isoformat()
-        
         params = {
             "tenant_id": f"eq.{tenant_id}",
-            "usage_type": "eq.review",
-            "created_at": f"gte.{today}T00:00:00Z",
-            "select": "id"
+            "select": "id,daily_review_cap,daily_download_cap",
+            "limit": "1"
         }
         resp = requests.get(endpoint, headers=headers, params=params, timeout=5)
-        if resp.status_code == 200:
-            return len(resp.json())
-    except:
+        if resp.status_code == 200 and resp.json():
+            return resp.json()[0]
+    except Exception:
         pass
-    return 0
+    return {}
+
+
+def update_tenant_usage_caps(cap_id: str, daily_review_cap, daily_download_cap,
+                             supabase_url: str, service_key: str) -> bool:
+    """
+    更新租戶 usage caps。
+    None=unlimited, 0=disabled, >0=limit
+    """
+    from datetime import datetime, timezone
+    try:
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "daily_review_cap": daily_review_cap,
+            "daily_download_cap": daily_download_cap,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "last_modified_by": st.session_state.get("admin_email", "admin")
+        }
+        endpoint = f"{supabase_url}/rest/v1/tenant_usage_caps?id=eq.{cap_id}"
+        resp = requests.patch(endpoint, json=payload, headers=headers, timeout=10)
+        return resp.status_code in [200, 204]
+    except Exception:
+        return False
 
 
 def get_tenant_epoch(tenant_slug: str, supabase_url: str, service_key: str) -> int:
@@ -2051,16 +2110,92 @@ def revoke_tenant_sessions(tenant_slug: str, supabase_url: str, service_key: str
         )
 
 def show_usage():
-    """用量管理（Phase B6 實作）"""
+    """用量管理（Phase B6.1 實作）- 今日用量、caps 設定"""
     st.header("📊 Usage & Caps Management")
-    st.info("🚧 Coming in Phase B6 - Usage Controls")
-    st.markdown("""
-    **Planned features:**
-    - View today's usage (all tenants)
-    - Set/adjust caps per tenant
-    - Usage trends (7-day chart)
-    - Alerts for tenants approaching limits
-    """)
+    
+    supabase_url, service_key = get_supabase_client()
+    if not supabase_url or not service_key:
+        st.error("⚠️ Supabase not configured")
+        return
+    
+    st.markdown("View today's usage and set daily caps per tenant. **0** = disabled, **Unlimited** = no cap.")
+    
+    tenants = get_all_tenants(supabase_url, service_key)
+    if not tenants:
+        st.warning("No tenants found.")
+        return
+    
+    for tenant in tenants:
+        tenant_id = tenant["id"]
+        slug = tenant["slug"]
+        name = tenant.get("name", slug)
+        caps = get_tenant_usage_caps(tenant_id, supabase_url, service_key)
+        review_count, download_count = get_tenant_today_usage_full(tenant_id, supabase_url, service_key)
+        
+        review_cap = caps.get("daily_review_cap")
+        download_cap = caps.get("daily_download_cap")
+        cap_id = caps.get("id")
+        
+        # 顯示標題與用量
+        review_status = "Unlimited" if review_cap is None else f"{review_count} / {review_cap}"
+        download_status = "Unlimited" if download_cap is None else f"{download_count} / {download_cap}"
+        
+        with st.expander(f"**{slug}** - {name} | Review: {review_status} | Download: {download_status}", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("**📈 Today's Usage**")
+                st.metric("Review", review_count)
+                st.metric("Download", download_count)
+                # 進度條（有 cap 時）
+                if review_cap is not None and review_cap > 0:
+                    pct = min(1.0, review_count / review_cap)
+                    st.progress(pct)
+                    st.caption(f"Review: {review_count}/{review_cap} ({int(pct*100)}%)")
+                if download_cap is not None and download_cap > 0:
+                    pct = min(1.0, download_count / download_cap)
+                    st.progress(pct)
+                    st.caption(f"Download: {download_count}/{download_cap} ({int(pct*100)}%)")
+            
+            with col2:
+                st.markdown("**⚙️ Set Caps**")
+                if not cap_id:
+                    st.caption("No caps record. Create tenant with caps first.")
+                    continue
+                with st.form(f"caps_form_{tenant_id}"):
+                    rev_val = review_cap if review_cap is not None else 50
+                    dwn_val = download_cap if download_cap is not None else 20
+                    rev_unlimited = st.checkbox("Review: Unlimited", value=(review_cap is None), key=f"rev_unl_{tenant_id}")
+                    if not rev_unlimited:
+                        new_review_cap = st.number_input("Daily Review Cap", min_value=0, value=rev_val if rev_val else 50, key=f"rev_cap_{tenant_id}")
+                    else:
+                        new_review_cap = None
+                    dwn_unlimited = st.checkbox("Download: Unlimited", value=(download_cap is None), key=f"dwn_unl_{tenant_id}")
+                    if not dwn_unlimited:
+                        new_download_cap = st.number_input("Daily Download Cap", min_value=0, value=dwn_val if dwn_val else 20, key=f"dwn_cap_{tenant_id}")
+                    else:
+                        new_download_cap = None
+                    if st.form_submit_button("💾 Save Caps"):
+                        ok = update_tenant_usage_caps(
+                            cap_id, new_review_cap, new_download_cap,
+                            supabase_url, service_key
+                        )
+                        if ok:
+                            st.success("✅ Caps updated!")
+                            _log_audit_event(
+                                action="usage_caps_updated",
+                                tenant=slug,
+                                result="success",
+                                actor_email=st.session_state.get("admin_email", "admin"),
+                                context={
+                                    "daily_review_cap": new_review_cap,
+                                    "daily_download_cap": new_download_cap
+                                }
+                            )
+                            import time
+                            time.sleep(1.5)
+                            st.rerun()
+                        else:
+                            st.error("❌ Failed to update caps.")
 
 def show_audit_logs():
     """審計日誌（Phase B5.1 實作）- Audit Log 列表、篩選、詳情"""
