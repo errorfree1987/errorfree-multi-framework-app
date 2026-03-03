@@ -694,6 +694,41 @@ def get_tenant_today_usage(tenant_id: str, supabase_url: str, service_key: str) 
     return r
 
 
+def get_tenant_members_usage_today(tenant_id: str, supabase_url: str, service_key: str) -> list:
+    """
+    取得租戶內各 member 今日用量（按 email 分組）。
+    回傳 [{"email": "...", "review": n, "download": n}, ...]
+    """
+    from datetime import datetime, timezone
+    today = datetime.now(timezone.utc).date().isoformat()
+    headers = {
+        "apikey": service_key,
+        "Authorization": f"Bearer {service_key}",
+        "Accept": "application/json"
+    }
+    result = {}
+    try:
+        for utype in ("review", "download"):
+            endpoint = f"{supabase_url}/rest/v1/tenant_usage_events"
+            params = {
+                "tenant_id": f"eq.{tenant_id}",
+                "usage_type": f"eq.{utype}",
+                "created_at": f"gte.{today}T00:00:00Z",
+                "select": "email,quantity"
+            }
+            resp = requests.get(endpoint, headers=headers, params=params, timeout=5)
+            if resp.status_code == 200:
+                for r in resp.json() or []:
+                    em = (r.get("email") or "").lower()
+                    qty = r.get("quantity", 1)
+                    if em not in result:
+                        result[em] = {"email": em, "review": 0, "download": 0}
+                    result[em][utype] = result[em].get(utype, 0) + qty
+    except Exception:
+        pass
+    return list(result.values())
+
+
 def get_tenant_today_usage_full(tenant_id: str, supabase_url: str, service_key: str) -> tuple:
     """獲取租戶今日 review 和 download 用量，回傳 (review_count, download_count)"""
     from datetime import datetime, timezone
@@ -2211,9 +2246,20 @@ def show_usage():
         download_status = "Unlimited" if download_cap is None else f"{download_count} / {download_cap}"
         
         with st.expander(f"**{slug}** - {name} | Review: {review_status} | Download: {download_status}", expanded=False):
+            # 各 member 今日用量（individual 等租戶可清楚看到個別狀況）
+            members_usage = get_tenant_members_usage_today(tenant_id, supabase_url, service_key)
+            members_list = get_members(supabase_url, service_key, slug)
+            if members_list or members_usage:
+                st.markdown("**👥 Members & Today's Usage**")
+                usage_by_email = {m["email"]: m for m in members_usage}
+                all_emails = {m.get("email") for m in members_list if m.get("email")} | {m.get("email") for m in members_usage if m.get("email")}
+                for em in sorted(all_emails, key=lambda x: (x or "").lower()):
+                    u = usage_by_email.get((em or "").lower(), {"review": 0, "download": 0})
+                    st.caption(f"• **{em}**: Review {u.get('review', 0)}, Download {u.get('download', 0)}")
+                st.markdown("---")
             col1, col2 = st.columns(2)
             with col1:
-                st.markdown("**📈 Today's Usage**")
+                st.markdown("**📈 Today's Usage (Total)**")
                 st.metric("Review", review_count)
                 st.metric("Download", download_count)
                 # 進度條（有 cap 時）
