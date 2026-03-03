@@ -2317,6 +2317,13 @@ def show_usage():
                 _others = [e for e in _all_emails_list if e not in _matching]
                 _all_emails_list = _matching + _others
             member_count = len(_all_emails_list)
+            # Effective default per member when no member cap row: Individual=tenant cap, Company=floor(tenant/members)
+            if slug == "individual":
+                default_rev = review_cap
+                default_dwn = download_cap
+            else:
+                default_rev = (review_cap // member_count) if (review_cap is not None and member_count) else review_cap
+                default_dwn = (download_cap // member_count) if (download_cap is not None and member_count) else download_cap
             if members_list or members_usage:
                 st.markdown("**👥 Members & Today's Usage** — Member caps override tenant. Adjust below for individuals.")
                 usage_by_email = {m["email"]: m for m in members_usage}
@@ -2325,18 +2332,21 @@ def show_usage():
                     mem_caps = get_member_usage_caps(tenant_id, em, supabase_url, service_key)
                     rev_cap = mem_caps.get("daily_review_cap")
                     dwn_cap = mem_caps.get("daily_download_cap")
+                    rc = rev_cap if rev_cap is not None else default_rev
+                    dc = dwn_cap if dwn_cap is not None else default_dwn
                     cap_label = ""
-                    if rev_cap is not None or dwn_cap is not None:
-                        rc = "∞" if rev_cap is None else rev_cap
-                        dc = "∞" if dwn_cap is None else dwn_cap
-                        cap_label = f" [Cap: R{rc}/D{dc}]"
+                    if rc is not None or dc is not None:
+                        rc_str = "∞" if rc is None else rc
+                        dc_str = "∞" if dc is None else dc
+                        suffix = " (tenant default)" if (rev_cap is None and dwn_cap is None) else ""
+                        cap_label = f" [Cap: R{rc_str}/D{dc_str}{suffix}]"
                     _key_safe = (em or "").replace("@", "_").replace(".", "_")[:50]
                     with st.expander(f"• **{em}** — Review {u.get('review', 0)}, Download {u.get('download', 0)}{cap_label}"):
                         with st.form(f"member_cap_{tenant_id}_{_key_safe}"):
-                            rev_unl = st.checkbox("Review: Unlimited", value=(rev_cap is None), key=f"mrev_unl_{tenant_id}_{_key_safe}")
-                            new_rev = None if rev_unl else st.number_input("Daily Review Cap", min_value=0, value=rev_cap if rev_cap is not None else 10, key=f"mrev_{tenant_id}_{_key_safe}")
-                            dwn_unl = st.checkbox("Download: Unlimited", value=(dwn_cap is None), key=f"mdwn_unl_{tenant_id}_{_key_safe}")
-                            new_dwn = None if dwn_unl else st.number_input("Daily Download Cap", min_value=0, value=dwn_cap if dwn_cap is not None else 5, key=f"mdwn_{tenant_id}_{_key_safe}")
+                            rev_unl = st.checkbox("Review: Unlimited", value=(rev_cap is None and default_rev is None), key=f"mrev_unl_{tenant_id}_{_key_safe}")
+                            new_rev = None if rev_unl else st.number_input("Daily Review Cap", min_value=0, value=rc if rc is not None else 10, key=f"mrev_{tenant_id}_{_key_safe}")
+                            dwn_unl = st.checkbox("Download: Unlimited", value=(dwn_cap is None and default_dwn is None), key=f"mdwn_unl_{tenant_id}_{_key_safe}")
+                            new_dwn = None if dwn_unl else st.number_input("Daily Download Cap", min_value=0, value=dc if dc is not None else 5, key=f"mdwn_{tenant_id}_{_key_safe}")
                             if st.form_submit_button("💾 Save Member Caps"):
                                 if upsert_member_usage_caps(tenant_id, em, new_rev, new_dwn, supabase_url, service_key):
                                     st.success("✅ Member caps saved!")
@@ -2372,9 +2382,9 @@ def show_usage():
             with col2:
                 st.markdown("**⚙️ Set Caps** (tenant default)")
                 if slug == "individual":
-                    st.caption("For Individual: cap value = each member's trial limit (no averaging). Apply to all sets this value for every member.")
+                    st.caption("For Individual: cap value = each member's trial limit (no averaging). Saving applies this value to all members.")
                 else:
-                    st.caption("Member caps override tenant. Apply to all = floor(total ÷ member count) per member; override per member below.")
+                    st.caption("Member caps override tenant. Saving applies floor(total ÷ member count) to each member; override per member below.")
                 if not cap_id:
                     st.caption("No caps record. This tenant was created without caps (e.g. Individual/Guest). Click below to initialize.")
                     if st.button("➕ Initialize Caps", key=f"init_caps_{tenant_id}"):
@@ -2406,8 +2416,6 @@ def show_usage():
                         new_download_cap = st.number_input("Daily Download Cap", min_value=0, value=dwn_val if dwn_val else 20, key=f"dwn_cap_{tenant_id}")
                     else:
                         new_download_cap = None
-                    apply_help = "Set each member's cap to this value (direct)." if slug == "individual" else "Set each member's cap to floor(total ÷ member count)."
-                    apply_to_all = st.checkbox("Apply to all members", value=False, key=f"apply_all_{tenant_id}", help=apply_help)
                     if member_count > 0 and slug != "individual":
                         # 提示：總數無法整除時建議調整（僅 company tenant）
                         if not rev_unlimited and new_review_cap and new_review_cap % member_count != 0:
@@ -2424,7 +2432,7 @@ def show_usage():
                             supabase_url, service_key
                         )
                         if ok:
-                            if apply_to_all and member_count > 0:
+                            if member_count > 0:
                                 if slug == "individual":
                                     per_rev = new_review_cap
                                     per_dwn = new_download_cap
@@ -2438,7 +2446,7 @@ def show_usage():
                                     uneven_d = new_download_cap and new_download_cap % member_count != 0
                                     if uneven_r or uneven_d:
                                         st.warning("Applied floor average to members. Total not evenly divisible — consider adjusting total for equal split.")
-                            st.success("✅ Caps updated!" + (" Applied to all members." if apply_to_all and member_count else ""))
+                            st.success("✅ Caps updated!" + (" Applied to all members." if member_count else ""))
                             _log_audit_event(
                                 action="usage_caps_updated",
                                 tenant=slug,
@@ -2447,7 +2455,7 @@ def show_usage():
                                 context={
                                     "daily_review_cap": new_review_cap,
                                     "daily_download_cap": new_download_cap,
-                                    "apply_to_all_members": apply_to_all,
+                                    "apply_to_all_members": member_count > 0,
                                     "member_count": member_count
                                 }
                             )

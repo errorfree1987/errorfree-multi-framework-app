@@ -548,6 +548,7 @@ def _check_usage_cap(tenant: str, usage_type: str, email: str = "") -> tuple[boo
         
         # 3. Fallback to tenant cap if no member cap
         if cap is None:
+            usage_filter_email = email.strip() if email and (email or "").strip() else None
             resp = requests.get(
                 f"{supabase_url}/rest/v1/tenant_usage_caps",
                 params={"tenant_id": f"eq.{tenant_id}", "select": "daily_review_cap,daily_download_cap", "limit": "1"},
@@ -556,11 +557,30 @@ def _check_usage_cap(tenant: str, usage_type: str, email: str = "") -> tuple[boo
             if resp.status_code != 200 or not resp.json():
                 return True, 0, 0, ""
             caps_data = resp.json()[0]
-            cap = caps_data.get(f"daily_{usage_type}_cap")
-            if cap is None:
+            tenant_cap_val = caps_data.get(f"daily_{usage_type}_cap")
+            if tenant_cap_val is None:
                 return True, 0, 0, ""
-            if cap == 0:
+            if tenant_cap_val == 0:
                 return False, 0, 0, f"Your organization's {usage_type} access has been disabled. Please contact your administrator."
+            # Individual: cap = tenant cap (per-member). Company with email: cap = floor(tenant_cap / member_count)
+            if tenant == "individual" or not usage_filter_email:
+                cap = tenant_cap_val
+            else:
+                member_count = 1
+                mc_resp = requests.get(
+                    f"{supabase_url}/rest/v1/tenant_members",
+                    params={"tenant_id": f"eq.{tenant_id}", "select": "id", "limit": "1"},
+                    headers={**headers, "Prefer": "count=exact"},
+                    timeout=10
+                )
+                if mc_resp.status_code == 200:
+                    count_header = mc_resp.headers.get("Content-Range") or ""
+                    if "/" in count_header:
+                        try:
+                            member_count = max(1, int(count_header.split("/")[-1]))
+                        except (ValueError, IndexError):
+                            pass
+                cap = max(0, tenant_cap_val // member_count)
         
         # 4. Get today's usage (filter by email if member-level)
         usage_params = {
