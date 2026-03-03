@@ -492,24 +492,23 @@ def _log_audit_event(action: str, tenant: str, email: str, result: str, deny_rea
         pass
 
 
-def _check_usage_cap(tenant: str, usage_type: str) -> tuple[bool, int, int, str]:
+def _check_usage_cap(tenant: str, usage_type: str, email: str = "") -> tuple[bool, int, int, str]:
     """
-    Phase A2-2: Check if tenant has reached usage cap for today.
+    Phase A2-2 + Member-level caps: Check if tenant/member has reached usage cap for today.
     Returns (allow: bool, cap: int, current_usage: int, message: str)
+    
+    Member-level: when email is provided, checks member_usage_caps first. If member has a cap,
+    uses that and counts only that member's usage. Otherwise falls back to tenant cap.
     
     Args:
         tenant: tenant slug
         usage_type: 'review' or 'download'
-    
-    Returns:
-        (True, cap, usage, "") if under limit or no cap set
-        (False, cap, usage, "message") if cap reached
+        email: user email (optional). When set, checks member-level cap first.
     """
     supabase_url = (os.getenv("SUPABASE_URL", "") or "").strip().rstrip("/")
     service_key = (os.getenv("SUPABASE_SERVICE_KEY", "") or "").strip()
     
     if not supabase_url or not service_key:
-        # Fail open if env not configured
         return True, 0, 0, ""
     
     headers = {
@@ -519,77 +518,73 @@ def _check_usage_cap(tenant: str, usage_type: str) -> tuple[bool, int, int, str]
     }
     
     try:
-        # 1. Get tenant_id from slug
-        tenant_endpoint = f"{supabase_url}/rest/v1/tenants"
-        tenant_params = {
-            "select": "id",
-            "slug": f"eq.{tenant}",
-            "limit": "1",
-        }
-        resp = requests.get(tenant_endpoint, params=tenant_params, headers=headers, timeout=10)
-        if resp.status_code != 200:
-            return True, 0, 0, ""
-        
-        rows = resp.json() or []
-        if not rows:
-            return True, 0, 0, ""
-        
-        tenant_id = rows[0].get("id")
-        
-        # 2. Get usage cap
-        caps_endpoint = f"{supabase_url}/rest/v1/tenant_usage_caps"
-        caps_params = {
-            "select": "daily_review_cap,daily_download_cap",
-            "tenant_id": f"eq.{tenant_id}",
-            "limit": "1",
-        }
-        resp = requests.get(caps_endpoint, params=caps_params, headers=headers, timeout=10)
-        if resp.status_code != 200:
-            return True, 0, 0, ""
-        
-        caps_rows = resp.json() or []
-        if not caps_rows:
-            # No cap set - unlimited
-            return True, 0, 0, ""
-        
-        caps_data = caps_rows[0]
-        cap = caps_data.get(f"daily_{usage_type}_cap")
-        
-        if cap is None or cap == 0:
-            # No cap or cap=0 (unlimited for None, blocked for 0)
-            if cap == 0:
-                return False, 0, 0, f"Your organization's {usage_type} access has been disabled. Please contact your administrator."
-            return True, 0, 0, ""
-        
-        # 3. Get today's usage count
         from datetime import datetime, timezone
         today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         
-        usage_endpoint = f"{supabase_url}/rest/v1/tenant_usage_events"
+        # 1. Get tenant_id from slug
+        tenant_endpoint = f"{supabase_url}/rest/v1/tenants"
+        resp = requests.get(tenant_endpoint, params={"select": "id", "slug": f"eq.{tenant}", "limit": "1"}, headers=headers, timeout=10)
+        if resp.status_code != 200:
+            return True, 0, 0, ""
+        rows = resp.json() or []
+        if not rows:
+            return True, 0, 0, ""
+        tenant_id = rows[0].get("id")
+        
+        # 2. Member-level cap: if email provided, check member_usage_caps first
+        cap = None
+        usage_filter_email = None  # None = tenant total, else filter by this email
+        if email and (email or "").strip():
+            mem_endpoint = f"{supabase_url}/rest/v1/member_usage_caps"
+            mem_params = {"tenant_id": f"eq.{tenant_id}", "email": f"eq.{email.strip()}", "limit": "1"}
+            resp = requests.get(mem_endpoint, params=mem_params, headers=headers, timeout=10)
+            if resp.status_code == 200 and resp.json():
+                mem_cap = resp.json()[0].get(f"daily_{usage_type}_cap")
+                if mem_cap == 0:
+                    return False, 0, 0, f"Your {usage_type} access has been disabled. Please contact your administrator."
+                if mem_cap is not None and mem_cap > 0:
+                    cap = mem_cap
+                    usage_filter_email = email.strip()
+        
+        # 3. Fallback to tenant cap if no member cap
+        if cap is None:
+            resp = requests.get(
+                f"{supabase_url}/rest/v1/tenant_usage_caps",
+                params={"tenant_id": f"eq.{tenant_id}", "select": "daily_review_cap,daily_download_cap", "limit": "1"},
+                headers=headers, timeout=10
+            )
+            if resp.status_code != 200 or not resp.json():
+                return True, 0, 0, ""
+            caps_data = resp.json()[0]
+            cap = caps_data.get(f"daily_{usage_type}_cap")
+            if cap is None:
+                return True, 0, 0, ""
+            if cap == 0:
+                return False, 0, 0, f"Your organization's {usage_type} access has been disabled. Please contact your administrator."
+        
+        # 4. Get today's usage (filter by email if member-level)
         usage_params = {
             "select": "quantity",
             "tenant_id": f"eq.{tenant_id}",
             "usage_type": f"eq.{usage_type}",
             "created_at": f"gte.{today_start.isoformat()}",
         }
-        resp = requests.get(usage_endpoint, params=usage_params, headers=headers, timeout=10)
+        if usage_filter_email:
+            usage_params["email"] = f"eq.{usage_filter_email}"
+        resp = requests.get(f"{supabase_url}/rest/v1/tenant_usage_events", params=usage_params, headers=headers, timeout=10)
         if resp.status_code != 200:
             return True, cap, 0, ""
-        
         usage_rows = resp.json() or []
         current_usage = sum(row.get("quantity", 1) for row in usage_rows)
         
-        # 4. Check if cap reached
+        # 5. Check if cap reached
         if current_usage >= cap:
             message = f"Daily {usage_type} limit reached ({current_usage}/{cap}). Please try again tomorrow or contact support to upgrade."
             return False, cap, current_usage, message
-        
-        # Under limit
         return True, cap, current_usage, ""
         
     except Exception as e:
         print(f"[DEBUG] Exception in usage cap check: {type(e).__name__}: {e}")
-        # Fail open on error
         return True, 0, 0, ""
 
 
@@ -3932,7 +3927,7 @@ def main():
             tenant = st.session_state.get("tenant", "")
             email = st.session_state.get("user_email", "")
             
-            allow, cap, current_usage, cap_message = _check_usage_cap(tenant, "review")
+            allow, cap, current_usage, cap_message = _check_usage_cap(tenant, "review", email=email)
             
             if not allow:
                 # Cap reached - show error and log denial

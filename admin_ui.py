@@ -811,6 +811,60 @@ def init_tenant_usage_caps(tenant_id: str, supabase_url: str, service_key: str,
         return False
 
 
+def get_member_usage_caps(tenant_id: str, email: str, supabase_url: str, service_key: str) -> dict:
+    """取得 member 的 usage caps（若無則回傳空）"""
+    try:
+        endpoint = f"{supabase_url}/rest/v1/member_usage_caps"
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Accept": "application/json"
+        }
+        params = {
+            "tenant_id": f"eq.{tenant_id}",
+            "email": f"eq.{email}",
+            "select": "id,daily_review_cap,daily_download_cap",
+            "limit": "1"
+        }
+        resp = requests.get(endpoint, headers=headers, params=params, timeout=5)
+        if resp.status_code == 200 and resp.json():
+            return resp.json()[0]
+    except Exception:
+        pass
+    return {}
+
+
+def upsert_member_usage_caps(tenant_id: str, email: str, daily_review_cap, daily_download_cap,
+                             supabase_url: str, service_key: str) -> bool:
+    """
+    新增或更新 member usage caps。
+    """
+    from datetime import datetime, timezone
+    try:
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "tenant_id": tenant_id,
+            "email": email,
+            "daily_review_cap": daily_review_cap,
+            "daily_download_cap": daily_download_cap,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "last_modified_by": st.session_state.get("admin_email", "admin")
+        }
+        # Upsert: ON CONFLICT (tenant_id, email) DO UPDATE
+        endpoint = f"{supabase_url}/rest/v1/member_usage_caps"
+        resp = requests.post(
+            endpoint, json=payload, headers={**headers, "Prefer": "resolution=merge-duplicates"},
+            timeout=10
+        )
+        return resp.status_code in [200, 201]
+    except Exception:
+        return False
+
+
 def update_tenant_usage_caps(cap_id: str, daily_review_cap, daily_download_cap,
                              supabase_url: str, service_key: str) -> bool:
     """
