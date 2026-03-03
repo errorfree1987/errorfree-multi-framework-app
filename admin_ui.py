@@ -1107,18 +1107,53 @@ def show_member_list(supabase_url: str, service_key: str):
         st.info("ℹ️ No members found.")
         return
     
-    # 顯示統計
+    # 搜尋框
+    search_query = st.text_input("🔍 Search by email", placeholder="Type to search...", key="member_search")
+    if search_query:
+        members = [m for m in members if search_query.lower() in (m.get('email') or '').lower()]
+    
+    # 統計與狀態篩選（點擊可篩選顯示）
+    active_count = sum(1 for m in members if m['is_active'])
+    inactive_count = len(members) - active_count
+    
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("Total Members", len(members))
     with col2:
-        active_count = sum(1 for m in members if m['is_active'])
         st.metric("Active Members", active_count)
     with col3:
-        inactive_count = len(members) - active_count
         st.metric("Inactive Members", inactive_count)
     
+    status_filter = st.radio(
+        "Filter by status",
+        ["All", "Active only", "Inactive only"],
+        horizontal=True,
+        key="member_status_filter"
+    )
+    if status_filter == "Active only":
+        members = [m for m in members if m['is_active']]
+    elif status_filter == "Inactive only":
+        members = [m for m in members if not m['is_active']]
+    
     st.markdown("---")
+    
+    # 批量刪除區域
+    if members:
+        st.markdown("**Batch Delete**")
+        member_options = [f"{m['email']} @ {m['tenant_slug']} {'✅' if m['is_active'] else '❌'}" for m in members]
+        opt_to_member = {opt: m for opt, m in zip(member_options, members)}
+        
+        selected_for_delete = st.multiselect(
+            "Select members to delete",
+            member_options,
+            key="member_batch_delete_select"
+        )
+        
+        if selected_for_delete:
+            to_delete = [opt_to_member[opt] for opt in selected_for_delete if opt in opt_to_member]
+            if st.button("🗑️ Delete Selected", type="secondary"):
+                batch_delete_members(to_delete, supabase_url, service_key)
+        st.markdown("---")
     
     # 成員列表
     for member in members:
@@ -1130,8 +1165,10 @@ def show_member_list(supabase_url: str, service_key: str):
 
 
 def _role_display(role: str) -> str:
-    """將 DB 角色轉為顯示名稱（DB: user/tenant_admin）"""
-    return "Admin" if role == "tenant_admin" else "User"
+    """將 DB 角色轉為顯示名稱（DB: user/tenant_admin/guest）"""
+    if role == "tenant_admin": return "Admin"
+    if role == "guest": return "Guest"
+    return "User"
 
 
 def show_member_details(member: dict, supabase_url: str, service_key: str):
@@ -1158,13 +1195,19 @@ def show_member_details(member: dict, supabase_url: str, service_key: str):
             if st.button(f"🟢 Enable", key=f"enable_member_{member['id']}", type="primary"):
                 toggle_member_status(member, True, supabase_url, service_key)
         
-        # 更改角色（DB 使用 user / tenant_admin，非 admin）
+        # 刪除成員
+        if st.button(f"🗑️ Delete", key=f"delete_member_{member['id']}", type="secondary"):
+            delete_member(member, supabase_url, service_key)
+        
+        # 更改角色（DB 使用 user / tenant_admin / guest）
         with st.form(f"role_form_{member['id']}"):
+            role_opts = ["user", "tenant_admin", "guest"]
+            role_idx = role_opts.index(member.get('role', 'user')) if member.get('role', 'user') in role_opts else 0
             new_role = st.selectbox(
                 "Change Role",
-                options=["user", "tenant_admin"],
+                options=role_opts,
                 format_func=_role_display,
-                index=0 if member.get('role', 'user') == 'user' else 1,
+                index=role_idx,
                 key=f"role_{member['id']}"
             )
             if st.form_submit_button("Update Role"):
@@ -1175,15 +1218,31 @@ def show_batch_add_members(supabase_url: str, service_key: str):
     """批量新增成員"""
     st.subheader("Batch Add Members")
     
-    # 選擇租戶
-    tenants = get_all_tenants(supabase_url, service_key)
-    if not tenants:
-        st.warning("⚠️ No tenants found. Please create a tenant first.")
-        return
+    add_type = st.radio(
+        "Add to",
+        ["Tenant", "Individual (Guest)"],
+        horizontal=True,
+        key="batch_add_type"
+    )
     
-    tenant_options = [f"{t['slug']} - {t['name']}" for t in tenants]
-    selected_tenant = st.selectbox("Select Tenant", tenant_options, key="batch_add_tenant")
-    tenant_slug = selected_tenant.split(" - ")[0]
+    if add_type == "Tenant":
+        tenants = get_all_tenants(supabase_url, service_key)
+        if not tenants:
+            st.warning("⚠️ No tenants found. Please create a tenant first.")
+            return
+        
+        tenant_options = [f"{t['slug']} - {t['name']}" for t in tenants]
+        selected_tenant = st.selectbox("Select Tenant", tenant_options, key="batch_add_tenant")
+        tenant_slug = selected_tenant.split(" - ")[0]
+        role_default = "user"
+    else:
+        # Individual (Guest) - 使用 individual 租戶
+        if not ensure_individual_tenant(supabase_url, service_key):
+            st.error("❌ Failed to ensure 'individual' tenant exists. Please create it manually.")
+            return
+        tenant_slug = "individual"
+        role_default = "guest"
+        st.info("ℹ️ Adding as **Individual (Guest)** — user will not belong to any company tenant.")
     
     st.markdown("---")
     
@@ -1194,37 +1253,38 @@ def show_batch_add_members(supabase_url: str, service_key: str):
         horizontal=True
     )
     
+    # 使用 counter 讓表單在成功後清空（key 改變會重置 widget）
+    batch_counter = st.session_state.get("batch_add_counter", 0)
+    
     if input_method == "Paste Emails":
         st.markdown("**Paste email addresses** (one per line):")
         email_text = st.text_area(
             "Email List",
             height=200,
             placeholder="user1@example.com\nuser2@example.com\nuser3@example.com",
-            key="batch_email_text"
+            key=f"batch_email_text_{batch_counter}"
         )
         
         if st.button("➕ Add All Members", type="primary"):
             if not email_text.strip():
                 st.error("❌ Please enter at least one email address.")
             else:
-                # 解析 email
                 emails = [line.strip() for line in email_text.strip().split('\n') if line.strip()]
-                emails = [e for e in emails if '@' in e]  # 基本驗證
-                
+                emails = [e for e in emails if '@' in e]
                 if not emails:
                     st.error("❌ No valid email addresses found.")
                 else:
-                    batch_add_members(tenant_slug, emails, supabase_url, service_key)
+                    batch_add_members(tenant_slug, emails, supabase_url, service_key, role_default)
     
     else:  # Manual Entry
-        with st.form("manual_add_form"):
+        with st.form("manual_add_form", clear_on_submit=True):
             st.markdown("**Add a single member:**")
             email = st.text_input("Email", placeholder="user@example.com")
             role = st.selectbox(
                 "Role",
-                options=["user", "tenant_admin"],
+                options=["user", "tenant_admin", "guest"],
                 format_func=_role_display,
-                index=0
+                index=["user", "tenant_admin", "guest"].index(role_default)
             )
             
             if st.form_submit_button("➕ Add Member", type="primary"):
@@ -1255,18 +1315,59 @@ def show_batch_operations(supabase_url: str, service_key: str):
         st.info("ℹ️ No members found for this tenant.")
         return
     
+    # 搜尋
+    ops_search = st.text_input("🔍 Search members", placeholder="Type to filter...", key="batch_ops_search")
+    if ops_search:
+        members = [m for m in members if ops_search.lower() in (m.get('email') or '').lower()]
+    
+    if not members:
+        st.info("ℹ️ No members match your search.")
+        return
+    
     st.markdown("---")
     
-    # 成員選擇
-    member_emails = [m['email'] for m in members]
-    selected_emails = st.multiselect(
-        "Select Members",
-        member_emails,
-        key="batch_select_members"
+    # 選項：顯示 email + Active/Inactive 標記
+    member_options = [f"{m['email']} {'✅' if m['is_active'] else '❌'}" for m in members]
+    opt_to_email = {opt: m['email'] for opt, m in zip(member_options, members)}
+    
+    # 使用 counter 讓 multiselect 在 batch op 成功後清空
+    ops_counter = st.session_state.get("batch_ops_counter", 0)
+    
+    # 全選按鈕
+    col_a, col_b, col_c, col_d = st.columns(4)
+    with col_a:
+        if st.button("Select All", key="batch_select_all"):
+            st.session_state[f"batch_ops_preselected_{ops_counter}"] = member_options
+            st.rerun()
+    with col_b:
+        if st.button("Select Active", key="batch_select_active"):
+            st.session_state[f"batch_ops_preselected_{ops_counter}"] = [opt for opt, m in zip(member_options, members) if m['is_active']]
+            st.rerun()
+    with col_c:
+        if st.button("Select Inactive", key="batch_select_inactive"):
+            st.session_state[f"batch_ops_preselected_{ops_counter}"] = [opt for opt, m in zip(member_options, members) if not m['is_active']]
+            st.rerun()
+    with col_d:
+        if st.button("Clear", key="batch_select_clear"):
+            if f"batch_ops_preselected_{ops_counter}" in st.session_state:
+                del st.session_state[f"batch_ops_preselected_{ops_counter}"]
+            st.rerun()
+    
+    preselected = st.session_state.get(f"batch_ops_preselected_{ops_counter}", [])
+    if preselected:
+        st.session_state.pop(f"batch_ops_preselected_{ops_counter}", None)
+    
+    selected_opts = st.multiselect(
+        "Select Members (✅ Active / ❌ Inactive)",
+        member_options,
+        default=preselected,
+        key=f"batch_select_members_{ops_counter}"
     )
     
+    selected_emails = [opt_to_email[opt] for opt in selected_opts if opt in opt_to_email]
+    
     if not selected_emails:
-        st.info("👆 Select one or more members to perform batch operations.")
+        st.info("👆 Select one or more members, or use quick select buttons above.")
         return
     
     st.write(f"**Selected**: {len(selected_emails)} member(s)")
@@ -1286,6 +1387,37 @@ def show_batch_operations(supabase_url: str, service_key: str):
 # ==========================================
 # 成員管理 Helper Functions
 # ==========================================
+
+def ensure_individual_tenant(supabase_url: str, service_key: str) -> bool:
+    """確保 individual 租戶存在（用於 Guest 個人使用者）"""
+    try:
+        from datetime import datetime, timedelta, timezone
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Content-Type": "application/json"
+        }
+        endpoint = f"{supabase_url}/rest/v1/tenants?slug=eq.individual&select=id"
+        resp = requests.get(endpoint, headers=headers, timeout=10)
+        if resp.status_code == 200 and resp.json():
+            return True
+        # 不存在則建立
+        now = datetime.now(timezone.utc)
+        trial_end = now + timedelta(days=3650)  # 10 年
+        payload = {
+            "slug": "individual",
+            "name": "Individual Users",
+            "display_name": "Individual (Guest)",
+            "status": "active",
+            "is_active": True,
+            "trial_start": now.isoformat(),
+            "trial_end": trial_end.isoformat()
+        }
+        resp = requests.post(f"{supabase_url}/rest/v1/tenants", json=payload, headers={**headers, "Prefer": "return=minimal"}, timeout=10)
+        return resp.status_code in [200, 201]
+    except Exception:
+        return False
+
 
 def get_all_tenants(supabase_url: str, service_key: str) -> list:
     """獲取所有租戶"""
@@ -1420,6 +1552,8 @@ def batch_add_members(tenant_slug: str, emails: list, supabase_url: str, service
                 }
             )
             
+            # 成功後增加 counter，使 text_area 清空
+            st.session_state["batch_add_counter"] = st.session_state.get("batch_add_counter", 0) + 1
             import time
             time.sleep(2)
             st.rerun()
@@ -1520,6 +1654,72 @@ def update_member_role(member: dict, new_role: str, supabase_url: str, service_k
         st.error(f"❌ Error: {str(e)}")
 
 
+def delete_member(member: dict, supabase_url: str, service_key: str):
+    """刪除單個成員"""
+    try:
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Content-Type": "application/json"
+        }
+        endpoint = f"{supabase_url}/rest/v1/tenant_members?id=eq.{member['id']}"
+        resp = requests.delete(endpoint, headers=headers, timeout=10)
+        if resp.status_code in [200, 204]:
+            st.success(f"✅ Member {member['email']} deleted.")
+            _log_audit_event(
+                action="member_deleted",
+                tenant=member.get('tenant_slug', ''),
+                result="success",
+                actor_email=st.session_state.get("admin_email", "admin"),
+                context={"member_email": member['email']}
+            )
+            import time
+            time.sleep(1.5)
+            st.rerun()
+        else:
+            st.error(f"❌ Failed to delete: HTTP {resp.status_code}")
+    except Exception as e:
+        st.error(f"❌ Error: {str(e)}")
+
+
+def batch_delete_members(members: list, supabase_url: str, service_key: str):
+    """批量刪除成員"""
+    try:
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Content-Type": "application/json"
+        }
+        success = 0
+        for member in members:
+            endpoint = f"{supabase_url}/rest/v1/tenant_members?id=eq.{member['id']}"
+            resp = requests.delete(endpoint, headers=headers, timeout=10)
+            if resp.status_code in [200, 204]:
+                success += 1
+        if success > 0:
+            st.success(f"✅ {success} member(s) deleted.")
+            tenant = members[0].get('tenant_slug', '') if members else ''
+            _log_audit_event(
+                action="members_batch_deleted",
+                tenant=tenant,
+                result="success",
+                actor_email=st.session_state.get("admin_email", "admin"),
+                context={
+                    "count": success,
+                    "emails": [m['email'] for m in members[:success]]
+                }
+            )
+            import time
+            time.sleep(2)
+            if "member_batch_delete_select" in st.session_state:
+                del st.session_state["member_batch_delete_select"]
+            st.rerun()
+        else:
+            st.error("❌ No members were deleted.")
+    except Exception as e:
+        st.error(f"❌ Error: {str(e)}")
+
+
 def batch_toggle_members(tenant_slug: str, emails: list, new_status: bool, supabase_url: str, service_key: str):
     """批量切換成員狀態（使用 tenant_id）"""
     try:
@@ -1566,6 +1766,8 @@ def batch_toggle_members(tenant_slug: str, emails: list, new_status: bool, supab
                 }
             )
             
+            # 成功後增加 counter，使 Select Members 清空
+            st.session_state["batch_ops_counter"] = st.session_state.get("batch_ops_counter", 0) + 1
             import time
             time.sleep(2)
             st.rerun()

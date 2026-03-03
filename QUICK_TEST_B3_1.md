@@ -1,6 +1,6 @@
 # 🧪 Phase B3.1 快速測試指南
 
-## 📋 測試結果總結與修正（2026-03-02）
+## 📋 測試結果總結與修正（2026-03-02 更新）
 
 ### 已修正問題
 
@@ -10,10 +10,19 @@
 | **Failed to update role: HTTP 400** | 資料庫角色為 `tenant_admin`，程式傳送 `admin` | 將選項改為 `user` / `tenant_admin`，UI 顯示為 User / Admin，使用 `format_func` 對應 |
 | **SQL 範例錯誤** | `tenant_members` 使用 `tenant_id`，非 `tenant_slug` | 更新 DELETE / SELECT 範例，改為 JOIN tenants 或子查詢 |
 
-### 測試通過狀態
+### 新功能（全面改進 - 2026-03-02）
 
-- ✅ 測試 1-6, 8-10：正常
-- ✅ 測試 7（更改角色）：已修正，請重新測試
+| 項目 | 改進內容 |
+|------|----------|
+| **測試 1** | 批量新增成功後，Email 輸入框自動清空（使用 batch_add_counter） |
+| **測試 5/6** | 批量操作成功後，Select Members 自動清空 |
+| **測試 5/6** | 新增搜尋框、Select All / Select Active / Select Inactive / Clear 快速按鈕 |
+| **測試 5/6** | Select Members 選項顯示 ✅ Active / ❌ Inactive 標記 |
+| **測試 8** | 新增 Individual (Guest) 選項 — 可新增不屬於公司租戶的個人使用者，Role 為 Guest |
+| **Member List** | 新增搜尋框，可依 email 快速搜尋 |
+| **Member List** | 新增批量刪除（multiselect + Delete Selected 按鈕） |
+| **Member List** | 成員詳情頁新增 Delete 按鈕 |
+| **Member List** | 新增 Active only / Inactive only 篩選（radio） |
 
 ---
 
@@ -143,16 +152,28 @@ eve@example.com
 
 ### 測試 8：手動新增單個成員 ➕
 
-**步驟**：
+**步驟 A - 新增至租戶**：
 1. 切換到 **"Batch Add Members"**
-2. 選擇 **"Manual Entry"**
-3. 輸入 Email：`frank@example.com`
-4. 選擇 Role：`user`
-5. 點擊 **"➕ Add Member"**
+2. 選擇 **"Tenant"**
+3. 選擇 **"Manual Entry"**
+4. 輸入 Email：`frank@example.com`
+5. 選擇 Role：`user`
+6. 點擊 **"➕ Add Member"**
 
 **✅ 預期結果**：
 - 看到：「✅ Successfully added 1 member(s)!」
 - 在 Member List 可看到 `frank@example.com`
+
+**步驟 B - 新增個人使用者 (Guest)**：
+1. 選擇 **"Individual (Guest)"**
+2. 選擇 **"Manual Entry"**
+3. 輸入 Email：`guest@example.com`
+4. Role 預設為 Guest
+5. 點擊 **"➕ Add Member"**
+
+**✅ 預期結果**：
+- 看到：「✅ Successfully added 1 member(s)!」
+- 在 Member List 可看到 `guest@example.com`，Tenant 顯示為 `individual`
 
 ---
 
@@ -341,6 +362,17 @@ ORDER BY total_members DESC;
 **解決方法**：
 - 已修正：UI 選項為 User / Admin，後端會正確傳送 `user` / `tenant_admin`
 - 若仍失敗，檢查 Supabase 的 role 欄位是否有 CHECK 約束或其他限制
+
+---
+
+### 問題 5：新增 Guest 時出現 HTTP 400
+
+**可能原因**：
+- 資料庫 `tenant_members.role` 可能僅允許 `user`、`tenant_admin`
+
+**解決方法**：
+- 在 Supabase SQL Editor 執行：`ALTER TABLE tenant_members DROP CONSTRAINT IF EXISTS tenant_members_role_check;`
+- 或新增 CHECK 包含 guest：`ALTER TABLE tenant_members ADD CONSTRAINT tenant_members_role_check CHECK (role IN ('user','tenant_admin','guest'));`
 
 ---
 
