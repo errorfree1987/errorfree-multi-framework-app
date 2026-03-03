@@ -837,7 +837,7 @@ def get_member_usage_caps(tenant_id: str, email: str, supabase_url: str, service
 def upsert_member_usage_caps(tenant_id: str, email: str, daily_review_cap, daily_download_cap,
                              supabase_url: str, service_key: str) -> bool:
     """
-    新增或更新 member usage caps。
+    新增或更新 member usage caps。若已有記錄則 PATCH，否則 POST。
     """
     from datetime import datetime, timezone
     try:
@@ -847,20 +847,20 @@ def upsert_member_usage_caps(tenant_id: str, email: str, daily_review_cap, daily
             "Content-Type": "application/json"
         }
         payload = {
-            "tenant_id": tenant_id,
-            "email": email,
             "daily_review_cap": daily_review_cap,
             "daily_download_cap": daily_download_cap,
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "last_modified_by": st.session_state.get("admin_email", "admin")
         }
-        # Upsert: ON CONFLICT (tenant_id, email) DO UPDATE
-        endpoint = f"{supabase_url}/rest/v1/member_usage_caps"
-        resp = requests.post(
-            endpoint, json=payload, headers={**headers, "Prefer": "resolution=merge-duplicates"},
-            timeout=10
-        )
-        return resp.status_code in [200, 201]
+        existing = get_member_usage_caps(tenant_id, email, supabase_url, service_key)
+        if existing and existing.get("id"):
+            endpoint = f"{supabase_url}/rest/v1/member_usage_caps?id=eq.{existing['id']}"
+            resp = requests.patch(endpoint, json=payload, headers=headers, timeout=10)
+            return resp.status_code in [200, 204]
+        else:
+            full_payload = {**payload, "tenant_id": tenant_id, "email": email}
+            resp = requests.post(f"{supabase_url}/rest/v1/member_usage_caps", json=full_payload, headers=headers, timeout=10)
+            return resp.status_code in [200, 201]
     except Exception:
         return False
 
@@ -2266,6 +2266,7 @@ def show_usage():
         return
     
     st.markdown("View today's usage and set daily caps per tenant. **0** = disabled, **Unlimited** = no cap.")
+    st.caption("💡 Per-member caps: expand each member to set individual limits. Run `sql_member_usage_caps.sql` in Supabase first.")
     
     tenants = get_all_tenants(supabase_url, service_key)
     if not tenants:
@@ -2300,16 +2301,45 @@ def show_usage():
         download_status = "Unlimited" if download_cap is None else f"{download_count} / {download_cap}"
         
         with st.expander(f"**{slug}** - {name} | Review: {review_status} | Download: {download_status}", expanded=False):
-            # 各 member 今日用量（individual 等租戶可清楚看到個別狀況）
+            # 各 member 今日用量 + per-member cap 設定
             members_usage = get_tenant_members_usage_today(tenant_id, supabase_url, service_key)
             members_list = get_members(supabase_url, service_key, slug)
             if members_list or members_usage:
-                st.markdown("**👥 Members & Today's Usage**")
+                st.markdown("**👥 Members & Today's Usage** (per-member caps override tenant)")
                 usage_by_email = {m["email"]: m for m in members_usage}
                 all_emails = {m.get("email") for m in members_list if m.get("email")} | {m.get("email") for m in members_usage if m.get("email")}
                 for em in sorted(all_emails, key=lambda x: (x or "").lower()):
                     u = usage_by_email.get((em or "").lower(), {"review": 0, "download": 0})
-                    st.caption(f"• **{em}**: Review {u.get('review', 0)}, Download {u.get('download', 0)}")
+                    mem_caps = get_member_usage_caps(tenant_id, em, supabase_url, service_key)
+                    rev_cap = mem_caps.get("daily_review_cap")
+                    dwn_cap = mem_caps.get("daily_download_cap")
+                    cap_label = ""
+                    if rev_cap is not None or dwn_cap is not None:
+                        rc = "∞" if rev_cap is None else rev_cap
+                        dc = "∞" if dwn_cap is None else dwn_cap
+                        cap_label = f" [Cap: R{rc}/D{dc}]"
+                    _key_safe = (em or "").replace("@", "_").replace(".", "_")[:50]
+                    with st.expander(f"• **{em}** — Review {u.get('review', 0)}, Download {u.get('download', 0)}{cap_label}"):
+                        with st.form(f"member_cap_{tenant_id}_{_key_safe}"):
+                            rev_unl = st.checkbox("Review: Unlimited", value=(rev_cap is None), key=f"mrev_unl_{tenant_id}_{_key_safe}")
+                            new_rev = None if rev_unl else st.number_input("Daily Review Cap", min_value=0, value=rev_cap if rev_cap is not None else 10, key=f"mrev_{tenant_id}_{_key_safe}")
+                            dwn_unl = st.checkbox("Download: Unlimited", value=(dwn_cap is None), key=f"mdwn_unl_{tenant_id}_{_key_safe}")
+                            new_dwn = None if dwn_unl else st.number_input("Daily Download Cap", min_value=0, value=dwn_cap if dwn_cap is not None else 5, key=f"mdwn_{tenant_id}_{_key_safe}")
+                            if st.form_submit_button("💾 Save Member Caps"):
+                                if upsert_member_usage_caps(tenant_id, em, new_rev, new_dwn, supabase_url, service_key):
+                                    st.success("✅ Member caps saved!")
+                                    _log_audit_event(
+                                        action="member_caps_updated",
+                                        tenant=slug,
+                                        result="success",
+                                        actor_email=st.session_state.get("admin_email", "admin"),
+                                        context={"member_email": em, "daily_review_cap": new_rev, "daily_download_cap": new_dwn}
+                                    )
+                                    import time
+                                    time.sleep(1.5)
+                                    st.rerun()
+                                else:
+                                    st.error("❌ Failed. Ensure sql_member_usage_caps.sql has been run in Supabase.")
                 st.markdown("---")
             col1, col2 = st.columns(2)
             with col1:
@@ -2431,6 +2461,7 @@ def show_audit_logs():
                 "members_batch_disabled",
                 "member_deleted",
                 "members_batch_deleted",
+                "member_caps_updated",
                 "sso_verify",
                 "analyzer_launch",
                 "access_denied"

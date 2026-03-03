@@ -553,6 +553,7 @@ errorfree-multi-framework-app/
 - **Phase B2.1 (MVP Tenant 管理)**: ✅ **100% 完美完成** (2026-03-02) ⭐
 - **Phase B3.1 (MVP Members 管理)**: ✅ **100% 完成** (2026-03-03) ⭐
 - **Phase B4-B6 (MVP Admin UI)**: ✅ **全部完成** - B4.1、B5.1、B6.1 (2026-03-03)
+- **Member-Level Caps**: ✅ **已完成** (2026-03-03) — 支援 per-member review/download 上限
 - **Phase B (完美 Admin UI)**: ⏳ **未開始** (Week 3-4)
 - **Mode B BYOK (長期)**: ⏳ **未開始**
 
@@ -613,6 +614,13 @@ errorfree-multi-framework-app/
 ---
 
 ## 📝 變更日誌
+
+### 2026-03-03 Member-Level Caps 完成
+- ✅ 完成 per-member usage caps
+- 📝 新增 `member_usage_caps` 表（需執行 sql_member_usage_caps.sql）
+- 📝 修改 app.py `_check_usage_cap`：支援 email 參數、member cap 優先
+- 📝 Admin UI：每個 member 可展開設定 Review/Download cap（覆寫 tenant）
+- 📝 用量改為 per-member 統計，公平分配、互不影響
 
 ### 2026-03-03 Phase B6.1 Usage & Caps 完成
 - ✅ 完成 Phase B6.1 (MVP Usage & Caps Management)

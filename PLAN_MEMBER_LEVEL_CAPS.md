@@ -3,6 +3,14 @@
 > **目的**：讓 Individual 等租戶可針對**個別 member** 設定不同的 review/download 上限，真正做到 per-user 控管。
 > 
 > **建立日期**：2026-03-03
+> 
+> **✅ 實作完成**：2026-03-03
+
+---
+
+## 0. 前置步驟（必須先執行）
+
+在 Supabase SQL Editor 執行 `sql_member_usage_caps.sql`，建立 `member_usage_caps` 表。
 
 ---
 
