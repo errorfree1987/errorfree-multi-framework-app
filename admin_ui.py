@@ -1477,6 +1477,62 @@ def get_all_tenants(supabase_url: str, service_key: str) -> list:
         return []
 
 
+def get_audit_events(supabase_url: str, service_key: str,
+                    time_range: str = "Last 7 days",
+                    tenant_slug: str = None,
+                    action: str = None,
+                    result: str = None,
+                    limit: int = 200) -> list:
+    """
+    取得 audit_events 列表（支援篩選）
+    
+    Args:
+        time_range: "Today" | "Last 7 days" | "Last 30 days"
+        tenant_slug: 租戶 slug 篩選（None = 全部）
+        action: action 篩選（None = 全部）
+        result: result 篩選（None = 全部）
+        limit: 最多筆數
+    """
+    from datetime import datetime, timedelta, timezone
+    try:
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Accept": "application/json"
+        }
+        now = datetime.now(timezone.utc)
+        if time_range == "Today":
+            since = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        elif time_range == "Last 30 days":
+            since = now - timedelta(days=30)
+        else:
+            since = now - timedelta(days=7)
+        since_iso = since.isoformat().replace("+00:00", "Z")
+        
+        endpoint = f"{supabase_url}/rest/v1/audit_events"
+        params = {
+            "select": "id,created_at,action,tenant_slug,email,result,deny_reason,context,actor_email,notes",
+            "created_at": f"gte.{since_iso}",
+            "order": "created_at.desc",
+            "limit": str(limit)
+        }
+        if tenant_slug:
+            params["tenant_slug"] = f"eq.{tenant_slug}"
+        if action:
+            params["action"] = f"eq.{action}"
+        if result:
+            params["result"] = f"eq.{result}"
+        
+        resp = requests.get(endpoint, headers=headers, params=params, timeout=15)
+        if resp.status_code == 200:
+            return resp.json()
+        st.error(f"❌ Failed to fetch audit events: HTTP {resp.status_code}")
+        return []
+    except Exception as e:
+        st.error(f"❌ Error fetching audit events: {str(e)}")
+        return []
+
+
 def get_members(supabase_url: str, service_key: str, tenant_slug: str = None) -> list:
     """獲取成員列表（JOIN tenants 表以取得 slug）"""
     try:
@@ -2007,16 +2063,131 @@ def show_usage():
     """)
 
 def show_audit_logs():
-    """審計日誌（Phase B5 實作）"""
+    """審計日誌（Phase B5.1 實作）- Audit Log 列表、篩選、詳情"""
     st.header("📜 Audit Logs")
-    st.info("🚧 Coming in Phase B5 - Audit Log Viewer")
-    st.markdown("""
-    **Planned features:**
-    - View all audit events
-    - Filter by tenant/action/result/time
-    - View detailed context (JSON)
-    - Export to CSV
-    """)
+    
+    supabase_url, service_key = get_supabase_client()
+    if not supabase_url or not service_key:
+        st.error("⚠️ Supabase not configured")
+        return
+    
+    st.markdown("View audit events with filters. Expand a row to see context JSON.")
+    
+    # 篩選器
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        time_range = st.selectbox(
+            "Time Range",
+            ["Today", "Last 7 days", "Last 30 days"],
+            key="audit_time_range"
+        )
+    
+    with col2:
+        # 取得所有 distinct actions 供篩選
+        tenants = get_all_tenants(supabase_url, service_key)
+        tenant_options = ["All Tenants"] + [f"{t['slug']} - {t['name']}" for t in tenants]
+        tenant_filter = st.selectbox("Tenant", tenant_options, key="audit_tenant_filter")
+    
+    with col3:
+        action_filter = st.selectbox(
+            "Action",
+            [
+                "All",
+                "admin_login",
+                "admin_logout",
+                "tenant_created",
+                "tenant_deleted",
+                "tenant_enabled",
+                "tenant_disabled",
+                "tenant_trial_extended",
+                "tenant_trial_date_updated",
+                "epoch_revoke",
+                "members_batch_added",
+                "member_enabled",
+                "member_disabled",
+                "member_role_updated",
+                "members_batch_enabled",
+                "members_batch_disabled",
+                "member_deleted",
+                "members_batch_deleted",
+                "sso_verify",
+                "analyzer_launch",
+                "access_denied"
+            ],
+            key="audit_action_filter"
+        )
+    
+    result_filter = st.selectbox(
+        "Result",
+        ["All", "success", "denied", "error"],
+        key="audit_result_filter",
+        horizontal=True
+    )
+    
+    # 取得 audit events
+    tenant_slug_filter = None
+    if tenant_filter and tenant_filter != "All Tenants":
+        tenant_slug_filter = tenant_filter.split(" - ")[0]
+    events = get_audit_events(
+        supabase_url, service_key,
+        time_range=time_range,
+        tenant_slug=tenant_slug_filter,
+        action=action_filter if action_filter != "All" else None,
+        result=result_filter if result_filter != "All" else None
+    )
+    
+    if not events:
+        st.info("No audit events match the filters.")
+        return
+    
+    st.success(f"Found {len(events)} event(s)")
+    
+    # 轉成 DataFrame 顯示（選取常用欄位）
+    import pandas as pd
+    def _ctx_preview(ctx):
+        s = json.dumps(ctx or {})
+        return (s[:80] + "...") if len(s) > 80 else s
+    df = pd.DataFrame([
+        {
+            "Time": (e.get("created_at") or "")[:19].replace("T", " "),
+            "Action": e.get("action", ""),
+            "Tenant": e.get("tenant_slug") or "-",
+            "Actor": e.get("actor_email") or e.get("email") or "-",
+            "Result": e.get("result", ""),
+            "Context": _ctx_preview(e.get("context"))
+        }
+        for e in events
+    ])
+    
+    # 使用 dataframe 顯示，設定 height
+    st.dataframe(df, use_container_width=True, height=400)
+    
+    # 詳情展開：選擇一筆查看 context
+    st.markdown("---")
+    st.markdown("**View Details**")
+    event_options = [
+        f"{e.get('created_at','')[:19]} | {e.get('action','')} | {e.get('tenant_slug') or '-'} | {e.get('result','')}"
+        for e in events
+    ]
+    selected_idx = st.selectbox(
+        "Select an event to view context",
+        range(len(events)),
+        format_func=lambda i: event_options[i],
+        key="audit_detail_select"
+    )
+    if selected_idx is not None and 0 <= selected_idx < len(events):
+        ev = events[selected_idx]
+        with st.expander("Context (JSON)", expanded=True):
+            ctx = ev.get("context") or {}
+            if ctx:
+                st.json(ctx)
+            else:
+                st.caption("No context")
+        if ev.get("deny_reason"):
+            st.caption(f"Deny reason: {ev['deny_reason']}")
+        if ev.get("notes"):
+            st.caption(f"Notes: {ev['notes']}")
 
 # ==========================================
 # 主程式入口

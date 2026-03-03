@@ -373,13 +373,13 @@
 
 ### Phase B5: Audit log
 
-#### B5.1 MVP 版本（預計 0.5 天）
+#### B5.1 MVP 版本（已完成 - 2026-03-03）✅
 
 **任務**：
-- [ ] Audit log 列表（st.dataframe）
-- [ ] 基本篩選（tenant, action, result）
-- [ ] 時間範圍（today / 7 days / 30 days）
-- [ ] 詳情展開（st.json 顯示 context）
+- ✅ Audit log 列表（st.dataframe）
+- ✅ 基本篩選（tenant, action, result）
+- ✅ 時間範圍（Today / Last 7 days / Last 30 days）
+- ✅ 詳情展開（selectbox 選事件 → st.json 顯示 context）
 
 **UI 元件**：
 - `st.selectbox()` - 篩選器
@@ -387,9 +387,9 @@
 - `st.json()` - Context 詳情
 
 **驗收標準**：
-- [ ] 可按 tenant/action 篩選
-- [ ] 可選擇時間範圍
-- [ ] 可查看 context JSON
+- ✅ 可按 tenant/action/result 篩選
+- ✅ 可選擇時間範圍
+- ✅ 可查看 context JSON
 
 #### B5.2 完美版本（預計 1 天）
 
@@ -542,7 +542,7 @@ errorfree-multi-framework-app/
 - ✅ **Phase B1 (MVP 登入)**: 100% (1/1 子項完成)
 - ✅ **Phase B2.1 (MVP Tenant)**: 100% (1/1 子項完成)
 - ✅ **Phase B3.1 (MVP Members)**: 100% (1/1 子項完成)
-- 🔄 **Phase B4-B6 (MVP)**: 33% (1/3 子項，B4.1 完成)
+- 🔄 **Phase B4-B6 (MVP)**: 67% (2/3 子項，B4.1、B5.1 完成)
 - ⏳ **Phase B (完美版)**: 0% (0/6 子項)
 - ⏳ **Phase C**: 0% (0/3 子項)
 
@@ -551,7 +551,7 @@ errorfree-multi-framework-app/
 - **Phase B1.1 (MVP Admin 登入)**: ✅ **100% 完成** (2026-02-28)
 - **Phase B2.1 (MVP Tenant 管理)**: ✅ **100% 完美完成** (2026-03-02) ⭐
 - **Phase B3.1 (MVP Members 管理)**: ✅ **100% 完成** (2026-03-03) ⭐
-- **Phase B4-B6 (MVP Admin UI)**: 🔄 **進行中** - B4.1 完成 (2026-03-03)
+- **Phase B4-B6 (MVP Admin UI)**: 🔄 **進行中** - B4.1、B5.1 完成 (2026-03-03)
 - **Phase B (完美 Admin UI)**: ⏳ **未開始** (Week 3-4)
 - **Mode B BYOK (長期)**: ⏳ **未開始**
 
@@ -612,6 +612,12 @@ errorfree-multi-framework-app/
 ---
 
 ## 📝 變更日誌
+
+### 2026-03-03 Phase B5.1 Audit Log 完成
+- ✅ 完成 Phase B5.1 (MVP Audit Log Viewer)
+- 📝 實作 `show_audit_logs()` 和 `get_audit_events()` helper
+- 📝 篩選：時間範圍（Today/7d/30d）、tenant、action、result
+- 📝 st.dataframe 顯示事件列表、selectbox 選事件查看 context JSON
 
 ### 2026-03-03 Phase B4.1 一鍵撤權完成
 - ✅ 完成 Phase B4.1 (MVP 一鍵撤權 per tenant)
