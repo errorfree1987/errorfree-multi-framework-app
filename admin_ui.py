@@ -2298,13 +2298,17 @@ def show_usage():
         download_cap = caps.get("daily_download_cap")
         cap_id = caps.get("id")
         
-        # 顯示標題與用量；搜尋 email 時自動展開，方便直接看到該 member
+        members_usage = get_tenant_members_usage_today(tenant_id, supabase_url, service_key)
+        members_list = get_members(supabase_url, service_key, slug)
+        _all_emails_pre = {m.get("email") for m in members_list if m.get("email")} | {m.get("email") for m in members_usage if m.get("email")}
+        member_count_title = len(_all_emails_pre)
+        active_today = sum(1 for m in members_usage if (m.get("review", 0) or m.get("download", 0)))
+        # 顯示標題與用量、總人數；搜尋 email 時自動展開
         review_status = "Unlimited" if review_cap is None else f"{review_count} / {review_cap}"
         download_status = "Unlimited" if download_cap is None else f"{download_count} / {download_cap}"
         auto_expand = search_by_email and tenant_id in by_member_ids
-        with st.expander(f"**{slug}** - {name} | Review: {review_status} | Download: {download_status}", expanded=auto_expand):
-            members_usage = get_tenant_members_usage_today(tenant_id, supabase_url, service_key)
-            members_list = get_members(supabase_url, service_key, slug)
+        title_suffix = f" | {member_count_title} members" if member_count_title else ""
+        with st.expander(f"**{slug}** - {name}{title_suffix} | Review: {review_status} | Download: {download_status}", expanded=auto_expand):
             _all_emails = {m.get("email") for m in members_list if m.get("email")} | {m.get("email") for m in members_usage if m.get("email")}
             _all_emails_list = sorted(_all_emails, key=lambda x: (x or "").lower())
             if search_by_email and usage_search:
@@ -2354,6 +2358,7 @@ def show_usage():
                 st.markdown("**📈 Today's Usage (Total)**")
                 st.metric("Review", review_count)
                 st.metric("Download", download_count)
+                st.metric("Active today", active_today)
                 # 進度條（有 cap 時）
                 if review_cap is not None and review_cap > 0:
                     pct = min(1.0, review_count / review_cap)
@@ -2366,7 +2371,10 @@ def show_usage():
             
             with col2:
                 st.markdown("**⚙️ Set Caps** (tenant default)")
-                st.caption("Member caps override this. Apply to all members to set each member's cap; override per member below.")
+                if slug == "individual":
+                    st.caption("For Individual: cap value = each member's trial limit (no averaging). Apply to all sets this value for every member.")
+                else:
+                    st.caption("Member caps override tenant. Apply to all = floor(total ÷ member count) per member; override per member below.")
                 if not cap_id:
                     st.caption("No caps record. This tenant was created without caps (e.g. Individual/Guest). Click below to initialize.")
                     if st.button("➕ Initialize Caps", key=f"init_caps_{tenant_id}"):
@@ -2398,9 +2406,10 @@ def show_usage():
                         new_download_cap = st.number_input("Daily Download Cap", min_value=0, value=dwn_val if dwn_val else 20, key=f"dwn_cap_{tenant_id}")
                     else:
                         new_download_cap = None
-                    apply_to_all = st.checkbox("Apply to all members", value=False, key=f"apply_all_{tenant_id}", help="Set each member's cap to these values (or average). Member caps override tenant.")
-                    if member_count > 0:
-                        # 提示：總數無法整除時建議調整
+                    apply_help = "Set each member's cap to this value (direct)." if slug == "individual" else "Set each member's cap to floor(total ÷ member count)."
+                    apply_to_all = st.checkbox("Apply to all members", value=False, key=f"apply_all_{tenant_id}", help=apply_help)
+                    if member_count > 0 and slug != "individual":
+                        # 提示：總數無法整除時建議調整（僅 company tenant）
                         if not rev_unlimited and new_review_cap and new_review_cap % member_count != 0:
                             lo = member_count * (new_review_cap // member_count)
                             hi = member_count * (new_review_cap // member_count + 1)
@@ -2416,14 +2425,19 @@ def show_usage():
                         )
                         if ok:
                             if apply_to_all and member_count > 0:
-                                per_rev = (new_review_cap // member_count) if new_review_cap else None
-                                per_dwn = (new_download_cap // member_count) if new_download_cap else None
+                                if slug == "individual":
+                                    per_rev = new_review_cap
+                                    per_dwn = new_download_cap
+                                else:
+                                    per_rev = (new_review_cap // member_count) if new_review_cap else None
+                                    per_dwn = (new_download_cap // member_count) if new_download_cap else None
                                 for em in _all_emails_list:
                                     upsert_member_usage_caps(tenant_id, em, per_rev, per_dwn, supabase_url, service_key)
-                                uneven_r = new_review_cap and new_review_cap % member_count != 0
-                                uneven_d = new_download_cap and new_download_cap % member_count != 0
-                                if uneven_r or uneven_d:
-                                    st.warning("Applied floor average to members. Total not evenly divisible — consider adjusting total for equal split.")
+                                if slug != "individual":
+                                    uneven_r = new_review_cap and new_review_cap % member_count != 0
+                                    uneven_d = new_download_cap and new_download_cap % member_count != 0
+                                    if uneven_r or uneven_d:
+                                        st.warning("Applied floor average to members. Total not evenly divisible — consider adjusting total for equal split.")
                             st.success("✅ Caps updated!" + (" Applied to all members." if apply_to_all and member_count else ""))
                             _log_audit_event(
                                 action="usage_caps_updated",
