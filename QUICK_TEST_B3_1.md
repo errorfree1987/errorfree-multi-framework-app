@@ -1,5 +1,22 @@
 # 🧪 Phase B3.1 快速測試指南
 
+## 📋 測試結果總結與修正（2026-03-02）
+
+### 已修正問題
+
+| 問題 | 原因 | 修正 |
+|------|------|------|
+| **KeyError: 'tenant_slug'** | `tenant_members` 表使用 `tenant_id` 而非 `tenant_slug` | 在 `get_members()` 中透過 `tenant_id` 查詢 `tenants` 取得 slug，動態加入 `member['tenant_slug']` |
+| **Failed to update role: HTTP 400** | 資料庫角色為 `tenant_admin`，程式傳送 `admin` | 將選項改為 `user` / `tenant_admin`，UI 顯示為 User / Admin，使用 `format_func` 對應 |
+| **SQL 範例錯誤** | `tenant_members` 使用 `tenant_id`，非 `tenant_slug` | 更新 DELETE / SELECT 範例，改為 JOIN tenants 或子查詢 |
+
+### 測試通過狀態
+
+- ✅ 測試 1-6, 8-10：正常
+- ✅ 測試 7（更改角色）：已修正，請重新測試
+
+---
+
 ## 🚀 測試準備
 
 **前置條件**：
@@ -115,12 +132,12 @@ eve@example.com
 **步驟**：
 1. 切換到 **"Member List"**
 2. 展開 `eve@example.com`
-3. 在 **"Change Role"** 表單中選擇 **`admin`**
+3. 在 **"Change Role"** 表單中選擇 **`Admin`**
 4. 點擊 **"Update Role"**
 
 **✅ 預期結果**：
-- 看到：「✅ Role updated to 'admin'!」
-- 重載後，`eve@example.com` 的 Role 顯示為 `admin`
+- 看到：「✅ Role updated to 'Admin'!」
+- 重載後，`eve@example.com` 的 Role 顯示為 `Admin`（DB 實際儲存為 `tenant_admin`）
 
 ---
 
@@ -244,33 +261,36 @@ LIMIT 20;
 
 ```sql
 -- ⚠️ 警告：這會刪除指定租戶的所有成員！
+-- 注意：tenant_members 使用 tenant_id（UUID），需先透過 tenants 表查詢
 DELETE FROM tenant_members 
-WHERE tenant_slug = 'test-demo';
+WHERE tenant_id = (SELECT id FROM tenants WHERE slug = 'test-demo');
 ```
 
 ### 查看特定租戶的成員
 
 ```sql
 SELECT 
-    email,
-    role,
-    is_active,
-    created_at
-FROM tenant_members
-WHERE tenant_slug = 'test-demo'
-ORDER BY created_at DESC;
+    tm.email,
+    tm.role,
+    tm.is_active,
+    tm.created_at
+FROM tenant_members tm
+JOIN tenants t ON tm.tenant_id = t.id
+WHERE t.slug = 'test-demo'
+ORDER BY tm.created_at DESC;
 ```
 
 ### 統計成員數量
 
 ```sql
 SELECT 
-    tenant_slug,
+    t.slug AS tenant_slug,
     COUNT(*) as total_members,
-    COUNT(*) FILTER (WHERE is_active = true) as active_members,
-    COUNT(*) FILTER (WHERE is_active = false) as inactive_members
-FROM tenant_members
-GROUP BY tenant_slug
+    COUNT(*) FILTER (WHERE tm.is_active = true) as active_members,
+    COUNT(*) FILTER (WHERE tm.is_active = false) as inactive_members
+FROM tenant_members tm
+JOIN tenants t ON tm.tenant_id = t.id
+GROUP BY t.slug
 ORDER BY total_members DESC;
 ```
 
@@ -310,6 +330,17 @@ ORDER BY total_members DESC;
 **解決方法**：
 - 確認在 multiselect 中至少選擇了一個成員
 - 應該看到「Selected: X member(s)」提示
+
+---
+
+### 問題 4：更改角色時出現 HTTP 400
+
+**可能原因**：
+- 資料庫 `tenant_members.role` 欄位使用 `tenant_admin`，而非 `admin`
+
+**解決方法**：
+- 已修正：UI 選項為 User / Admin，後端會正確傳送 `user` / `tenant_admin`
+- 若仍失敗，檢查 Supabase 的 role 欄位是否有 CHECK 約束或其他限制
 
 ---
 

@@ -1129,6 +1129,11 @@ def show_member_list(supabase_url: str, service_key: str):
             show_member_details(member, supabase_url, service_key)
 
 
+def _role_display(role: str) -> str:
+    """將 DB 角色轉為顯示名稱（DB: user/tenant_admin）"""
+    return "Admin" if role == "tenant_admin" else "User"
+
+
 def show_member_details(member: dict, supabase_url: str, service_key: str):
     """顯示單個成員的詳細資訊"""
     col1, col2 = st.columns(2)
@@ -1137,7 +1142,7 @@ def show_member_details(member: dict, supabase_url: str, service_key: str):
         st.markdown("**Basic Info**")
         st.write(f"**Email**: {member['email']}")
         st.write(f"**Tenant**: {member['tenant_slug']}")
-        st.write(f"**Role**: {member.get('role', 'user')}")
+        st.write(f"**Role**: {_role_display(member.get('role', 'user'))}")
         status = "🟢 Active" if member['is_active'] else "🔴 Inactive"
         st.write(f"**Status**: {status}")
         st.write(f"**Created**: {member.get('created_at', 'N/A')[:10]}")
@@ -1153,11 +1158,12 @@ def show_member_details(member: dict, supabase_url: str, service_key: str):
             if st.button(f"🟢 Enable", key=f"enable_member_{member['id']}", type="primary"):
                 toggle_member_status(member, True, supabase_url, service_key)
         
-        # 更改角色
+        # 更改角色（DB 使用 user / tenant_admin，非 admin）
         with st.form(f"role_form_{member['id']}"):
             new_role = st.selectbox(
                 "Change Role",
-                ["user", "admin"],
+                options=["user", "tenant_admin"],
+                format_func=_role_display,
                 index=0 if member.get('role', 'user') == 'user' else 1,
                 key=f"role_{member['id']}"
             )
@@ -1214,7 +1220,12 @@ def show_batch_add_members(supabase_url: str, service_key: str):
         with st.form("manual_add_form"):
             st.markdown("**Add a single member:**")
             email = st.text_input("Email", placeholder="user@example.com")
-            role = st.selectbox("Role", ["user", "admin"], index=0)
+            role = st.selectbox(
+                "Role",
+                options=["user", "tenant_admin"],
+                format_func=_role_display,
+                index=0
+            )
             
             if st.form_submit_button("➕ Add Member", type="primary"):
                 if not email or '@' not in email:
@@ -1478,7 +1489,7 @@ def update_member_role(member: dict, new_role: str, supabase_url: str, service_k
         resp = requests.patch(endpoint, json=payload, headers=headers, timeout=10)
         
         if resp.status_code in [200, 204]:
-            st.success(f"✅ Role updated to '{new_role}'!")
+            st.success(f"✅ Role updated to '{_role_display(new_role)}'!")
             
             # 記錄 audit event
             _log_audit_event(
@@ -1498,6 +1509,12 @@ def update_member_role(member: dict, new_role: str, supabase_url: str, service_k
             st.rerun()
         else:
             st.error(f"❌ Failed to update role: HTTP {resp.status_code}")
+            try:
+                err_detail = resp.json() or resp.text
+                if err_detail:
+                    st.code(str(err_detail), language="json")
+            except Exception:
+                pass
             
     except Exception as e:
         st.error(f"❌ Error: {str(e)}")
