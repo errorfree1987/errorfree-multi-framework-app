@@ -1867,16 +1867,132 @@ def batch_toggle_members(tenant_slug: str, emails: list, new_status: bool, supab
         st.code(traceback.format_exc())
 
 def show_revoke():
-    """撤權管理（Phase B4 實作）"""
+    """撤權管理（Phase B4.1 實作）- 一鍵撤權 per tenant"""
     st.header("🚫 Emergency Access Revocation")
-    st.info("🚧 Coming in Phase B4 - One-Click Revocation")
+    
+    supabase_url, service_key = get_supabase_client()
+    if not supabase_url or not service_key:
+        st.error("⚠️ Supabase not configured")
+        return
+    
     st.markdown("""
-    **Planned features:**
-    - Per-tenant session revocation (epoch bump)
-    - Confirmation flow (type tenant slug to confirm)
-    - Show current epoch and affected sessions
-    - Revocation history
+    **Revoke all sessions** for a tenant by bumping its epoch. All existing sessions will immediately require re-login from the Portal.
     """)
+    
+    # 獲取租戶列表
+    tenants = get_all_tenants(supabase_url, service_key)
+    if not tenants:
+        st.warning("⚠️ No tenants found.")
+        return
+    
+    tenant_options = [f"{t['slug']} - {t['name']}" for t in tenants]
+    selected = st.selectbox("Select Tenant to Revoke", tenant_options, key="revoke_tenant_select")
+    tenant_slug = selected.split(" - ")[0]
+    
+    # 顯示當前 epoch
+    current_epoch = get_tenant_epoch(tenant_slug, supabase_url, service_key)
+    st.metric("Current Epoch", current_epoch)
+    st.caption("Epoch is bumped on revoke; all sessions with older epoch will be invalidated.")
+    
+    st.markdown("---")
+    st.markdown("**⚠️ Confirm Revocation**")
+    st.caption(f"Type the tenant slug `{tenant_slug}` to confirm. This will immediately invalidate all active sessions.")
+    
+    confirm_input = st.text_input(
+        "Type tenant slug to confirm",
+        placeholder=tenant_slug,
+        key="revoke_confirm_input"
+    )
+    
+    if st.button("🚨 Revoke All Sessions", type="primary"):
+        if confirm_input != tenant_slug:
+            st.error(f"❌ Confirmation failed. Type `{tenant_slug}` exactly to revoke.")
+        else:
+            revoke_tenant_sessions(tenant_slug, supabase_url, service_key)
+
+
+def revoke_tenant_sessions(tenant_slug: str, supabase_url: str, service_key: str):
+    """
+    撤銷指定租戶的所有 session（bump epoch）
+    
+    流程：
+    1. 取得當前 epoch
+    2. 更新 tenant_session_epoch 將 epoch + 1
+    3. 記錄 audit_events
+    4. 顯示新 epoch
+    """
+    import time
+    from datetime import datetime, timezone
+    
+    try:
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+        }
+        
+        # 1. 取得當前 epoch
+        endpoint = f"{supabase_url}/rest/v1/tenant_session_epoch"
+        params = {"tenant": f"eq.{tenant_slug}", "select": "epoch", "limit": "1"}
+        resp = requests.get(endpoint, headers=headers, params=params, timeout=10)
+        
+        if resp.status_code != 200:
+            st.error(f"❌ Failed to fetch epoch: HTTP {resp.status_code}")
+            return
+        
+        rows = resp.json()
+        if not rows:
+            st.error(f"❌ Tenant '{tenant_slug}' has no epoch record. Create tenant first or run epoch init SQL.")
+            return
+        
+        old_epoch = int(rows[0].get("epoch", 0))
+        new_epoch = old_epoch + 1
+        
+        # 2. 更新 epoch（PATCH by tenant slug）
+        patch_endpoint = f"{supabase_url}/rest/v1/tenant_session_epoch?tenant=eq.{tenant_slug}"
+        patch_payload = {
+            "epoch": new_epoch,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }
+        patch_resp = requests.patch(patch_endpoint, json=patch_payload, headers=headers, timeout=10)
+        
+        if patch_resp.status_code not in [200, 204]:
+            st.error(f"❌ Failed to bump epoch: HTTP {patch_resp.status_code}")
+            return
+        
+        # 3. 記錄 audit event
+        _log_audit_event(
+            action="epoch_revoke",
+            tenant=tenant_slug,
+            result="success",
+            actor_email=st.session_state.get("admin_email", "admin"),
+            context={
+                "old_epoch": old_epoch,
+                "new_epoch": new_epoch,
+                "source": "admin_ui_revoke"
+            }
+        )
+        
+        # 4. 顯示成功訊息與新 epoch
+        st.success(f"✅ **Revoked!** All sessions for `{tenant_slug}` are now invalid.")
+        st.info(f"**New epoch:** {new_epoch} (was {old_epoch})")
+        st.caption("Users must re-enter from the Portal to get a new session.")
+        
+        time.sleep(2)
+        st.rerun()
+        
+    except Exception as e:
+        st.error(f"❌ Error revoking sessions: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
+        _log_audit_event(
+            action="epoch_revoke",
+            tenant=tenant_slug,
+            result="error",
+            actor_email=st.session_state.get("admin_email", "admin"),
+            context={"error": str(e)}
+        )
 
 def show_usage():
     """用量管理（Phase B6 實作）"""

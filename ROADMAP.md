@@ -338,13 +338,14 @@
 
 ### Phase B4: 一鍵撤權
 
-#### B4.1 MVP 版本（預計 0.5 天）
+#### B4.1 MVP 版本（已完成 - 2026-03-03）✅
 
 **任務**：
-- [ ] Per-tenant revoke 按鈕
-- [ ] 二次確認（st.text_input 輸入 tenant slug）
-- [ ] 撤權結果顯示（當前 epoch）
-- [ ] 記錄到 audit_events
+- ✅ Per-tenant revoke 按鈕
+- ✅ 二次確認（st.text_input 輸入 tenant slug）
+- ✅ 撤權結果顯示（新 epoch）
+- ✅ 記錄到 audit_events（含 context: old_epoch, new_epoch, source）
+- ✅ 更新 tenant_session_epoch 的 epoch 欄位（bump）
 
 **UI 元件**：
 - `st.button(type="primary")` - 紅色撤權按鈕
@@ -352,9 +353,9 @@
 - `st.success()` - 結果顯示
 
 **驗收標準**：
-- [ ] 需輸入 tenant slug 才能撤權
-- [ ] 撤權成功顯示新 epoch
-- [ ] 記錄到 audit_events
+- ✅ 需輸入 tenant slug 才能撤權
+- ✅ 撤權成功顯示新 epoch
+- ✅ 記錄到 audit_events（action: epoch_revoke）
 
 #### B4.2 完美版本（預計 0.5 天）
 
@@ -541,7 +542,7 @@ errorfree-multi-framework-app/
 - ✅ **Phase B1 (MVP 登入)**: 100% (1/1 子項完成)
 - ✅ **Phase B2.1 (MVP Tenant)**: 100% (1/1 子項完成)
 - ✅ **Phase B3.1 (MVP Members)**: 100% (1/1 子項完成)
-- 🔄 **Phase B4-B6 (MVP)**: 0% (0/3 子項)
+- 🔄 **Phase B4-B6 (MVP)**: 33% (1/3 子項，B4.1 完成)
 - ⏳ **Phase B (完美版)**: 0% (0/6 子項)
 - ⏳ **Phase C**: 0% (0/3 子項)
 
@@ -550,7 +551,7 @@ errorfree-multi-framework-app/
 - **Phase B1.1 (MVP Admin 登入)**: ✅ **100% 完成** (2026-02-28)
 - **Phase B2.1 (MVP Tenant 管理)**: ✅ **100% 完美完成** (2026-03-02) ⭐
 - **Phase B3.1 (MVP Members 管理)**: ✅ **100% 完成** (2026-03-03) ⭐
-- **Phase B4-B6 (MVP Admin UI)**: 🔄 **準備開始** (Week 1-2)
+- **Phase B4-B6 (MVP Admin UI)**: 🔄 **進行中** - B4.1 完成 (2026-03-03)
 - **Phase B (完美 Admin UI)**: ⏳ **未開始** (Week 3-4)
 - **Mode B BYOK (長期)**: ⏳ **未開始**
 
@@ -611,6 +612,13 @@ errorfree-multi-framework-app/
 ---
 
 ## 📝 變更日誌
+
+### 2026-03-03 Phase B4.1 一鍵撤權完成
+- ✅ 完成 Phase B4.1 (MVP 一鍵撤權 per tenant)
+- 📝 實作 `show_revoke()` 和 `revoke_tenant_sessions()` helper
+- 📝 Per-tenant revoke 按鈕、二次確認（輸入 tenant slug）、顯示新 epoch
+- 📝 記錄 audit_events（action: `epoch_revoke`，context: old_epoch, new_epoch, source）
+- 📝 更新 tenant_session_epoch 的 epoch 欄位（bump）
 
 ### 2026-03-03 Phase B3.1 完整驗收 + 租戶搜尋
 - ✅ Phase B3.1 測試完成、全部修正通過
