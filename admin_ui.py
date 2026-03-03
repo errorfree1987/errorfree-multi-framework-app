@@ -424,7 +424,15 @@ def show_tenants():
                 else:
                     st.success(f"✅ Found {len(tenants)} tenant(s)")
                     
-                    # 顯示租戶列表
+                    # Search tenants
+                    tenant_search = st.text_input("🔍 Search tenants", placeholder="Type slug or name to filter...", key="tenant_list_search")
+                    if tenant_search:
+                        q = tenant_search.lower()
+                        tenants = [t for t in tenants if q in (t.get('slug') or '').lower() or q in (t.get('name') or '').lower()]
+                        if not tenants:
+                            st.info("No tenants match your search.")
+                    
+                    # Display tenant list
                     for tenant in tenants:
                         with st.expander(f"**{tenant['slug']}** - {tenant['name']}", expanded=False):
                             show_tenant_details(tenant, supabase_url, service_key)
@@ -1232,7 +1240,15 @@ def show_batch_add_members(supabase_url: str, service_key: str):
             st.warning("⚠️ No tenants found. Please create a tenant first.")
             return
         
+        tenant_search = st.text_input("🔍 Search tenants", placeholder="Type slug or name to filter...", key="batch_add_tenant_search")
+        if tenant_search:
+            q = tenant_search.lower()
+            tenants = [t for t in tenants if q in (t.get('slug') or '').lower() or q in (t.get('name') or '').lower()]
+        
         tenant_options = [f"{t['slug']} - {t['name']}" for t in tenants]
+        if not tenant_options:
+            st.info("No tenants match your search.")
+            return
         selected_tenant = st.selectbox("Select Tenant", tenant_options, key="batch_add_tenant")
         tenant_slug = selected_tenant.split(" - ")[0]
         role_default = "user"
@@ -1303,6 +1319,15 @@ def show_batch_operations(supabase_url: str, service_key: str):
     tenants = get_all_tenants(supabase_url, service_key)
     if not tenants:
         st.warning("⚠️ No tenants found.")
+        return
+    
+    tenant_search = st.text_input("🔍 Search tenants", placeholder="Type slug or name to filter...", key="batch_ops_tenant_search")
+    if tenant_search:
+        q = tenant_search.lower()
+        tenants = [t for t in tenants if q in (t.get('slug') or '').lower() or q in (t.get('name') or '').lower()]
+    
+    if not tenants:
+        st.info("No tenants match your search.")
         return
     
     tenant_options = [f"{t['slug']} - {t['name']}" for t in tenants]
