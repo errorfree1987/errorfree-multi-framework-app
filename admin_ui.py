@@ -2153,6 +2153,15 @@ def show_usage():
         st.warning("No tenants found.")
         return
     
+    # 快速搜尋（特別是 individual 等個人試用多時）
+    usage_search = st.text_input("🔍 Search tenants", placeholder="Type slug or name to filter (e.g. individual)...", key="usage_tenant_search")
+    if usage_search:
+        q = usage_search.lower()
+        tenants = [t for t in tenants if q in (t.get('slug') or '').lower() or q in (t.get('name') or '').lower()]
+        if not tenants:
+            st.info("No tenants match your search.")
+            return
+    
     for tenant in tenants:
         tenant_id = tenant["id"]
         slug = tenant["slug"]
