@@ -2266,24 +2266,26 @@ def show_usage():
         return
     
     st.markdown("View today's usage and set daily caps per tenant. **0** = disabled, **Unlimited** = no cap.")
-    st.caption("💡 Per-member caps: expand each member to set individual limits. Run `sql_member_usage_caps.sql` in Supabase first.")
     
     tenants = get_all_tenants(supabase_url, service_key)
     if not tenants:
         st.warning("No tenants found.")
         return
     
-    # 快速搜尋（支援 slug/name 或 member email，例如 individual、coco@gmail.com）
+    # 快速搜尋（支援 slug/name 或 member email）
     usage_search = st.text_input("🔍 Search tenants", placeholder="Type slug, name, or member email (e.g. individual, coco@gmail.com)...", key="usage_tenant_search")
+    search_by_email = False
+    by_member_ids = set()
     if usage_search:
         q = usage_search.strip().lower()
         by_slug_name = [t for t in tenants if q in (t.get('slug') or '').lower() or q in (t.get('name') or '').lower()]
-        by_member = get_tenant_ids_by_member_email_search(usage_search, supabase_url, service_key)
-        tenants_filtered = [t for t in tenants if t['id'] in by_member or t in by_slug_name]
-        tenants = list({t['id']: t for t in tenants_filtered}.values())  # 去重
+        by_member_ids = get_tenant_ids_by_member_email_search(usage_search, supabase_url, service_key)
+        tenants_filtered = [t for t in tenants if t['id'] in by_member_ids or t in by_slug_name]
+        tenants = list({t['id']: t for t in tenants_filtered}.values())
         if not tenants:
             st.info("No tenants match your search (by slug, name, or member email).")
             return
+        search_by_email = "@" in usage_search
     
     for tenant in tenants:
         tenant_id = tenant["id"]
@@ -2296,19 +2298,25 @@ def show_usage():
         download_cap = caps.get("daily_download_cap")
         cap_id = caps.get("id")
         
-        # 顯示標題與用量
+        # 顯示標題與用量；搜尋 email 時自動展開，方便直接看到該 member
         review_status = "Unlimited" if review_cap is None else f"{review_count} / {review_cap}"
         download_status = "Unlimited" if download_cap is None else f"{download_count} / {download_cap}"
-        
-        with st.expander(f"**{slug}** - {name} | Review: {review_status} | Download: {download_status}", expanded=False):
-            # 各 member 今日用量 + per-member cap 設定
+        auto_expand = search_by_email and tenant_id in by_member_ids
+        with st.expander(f"**{slug}** - {name} | Review: {review_status} | Download: {download_status}", expanded=auto_expand):
             members_usage = get_tenant_members_usage_today(tenant_id, supabase_url, service_key)
             members_list = get_members(supabase_url, service_key, slug)
+            _all_emails = {m.get("email") for m in members_list if m.get("email")} | {m.get("email") for m in members_usage if m.get("email")}
+            _all_emails_list = sorted(_all_emails, key=lambda x: (x or "").lower())
+            if search_by_email and usage_search:
+                q = usage_search.strip().lower()
+                _matching = [e for e in _all_emails_list if q in (e or "").lower()]
+                _others = [e for e in _all_emails_list if e not in _matching]
+                _all_emails_list = _matching + _others
+            member_count = len(_all_emails_list)
             if members_list or members_usage:
-                st.markdown("**👥 Members & Today's Usage** (per-member caps override tenant)")
+                st.markdown("**👥 Members & Today's Usage** — Member caps override tenant. Adjust below for individuals.")
                 usage_by_email = {m["email"]: m for m in members_usage}
-                all_emails = {m.get("email") for m in members_list if m.get("email")} | {m.get("email") for m in members_usage if m.get("email")}
-                for em in sorted(all_emails, key=lambda x: (x or "").lower()):
+                for em in _all_emails_list:
                     u = usage_by_email.get((em or "").lower(), {"review": 0, "download": 0})
                     mem_caps = get_member_usage_caps(tenant_id, em, supabase_url, service_key)
                     rev_cap = mem_caps.get("daily_review_cap")
@@ -2339,7 +2347,7 @@ def show_usage():
                                     time.sleep(1.5)
                                     st.rerun()
                                 else:
-                                    st.error("❌ Failed. Ensure sql_member_usage_caps.sql has been run in Supabase.")
+                                    st.error("❌ Failed to save member caps.")
                 st.markdown("---")
             col1, col2 = st.columns(2)
             with col1:
@@ -2357,7 +2365,8 @@ def show_usage():
                     st.caption(f"Download: {download_count}/{download_cap} ({int(pct*100)}%)")
             
             with col2:
-                st.markdown("**⚙️ Set Caps**")
+                st.markdown("**⚙️ Set Caps** (tenant default)")
+                st.caption("Member caps override this. Apply to all members to set each member's cap; override per member below.")
                 if not cap_id:
                     st.caption("No caps record. This tenant was created without caps (e.g. Individual/Guest). Click below to initialize.")
                     if st.button("➕ Initialize Caps", key=f"init_caps_{tenant_id}"):
@@ -2389,13 +2398,33 @@ def show_usage():
                         new_download_cap = st.number_input("Daily Download Cap", min_value=0, value=dwn_val if dwn_val else 20, key=f"dwn_cap_{tenant_id}")
                     else:
                         new_download_cap = None
+                    apply_to_all = st.checkbox("Apply to all members", value=False, key=f"apply_all_{tenant_id}", help="Set each member's cap to these values (or average). Member caps override tenant.")
+                    if member_count > 0:
+                        # 提示：總數無法整除時建議調整
+                        if not rev_unlimited and new_review_cap and new_review_cap % member_count != 0:
+                            lo = member_count * (new_review_cap // member_count)
+                            hi = member_count * (new_review_cap // member_count + 1)
+                            st.caption(f"⚠️ Review {new_review_cap} ÷ {member_count} ≠ integer. For equal split, consider total {lo} or {hi}.")
+                        if not dwn_unlimited and new_download_cap and new_download_cap % member_count != 0:
+                            lo = member_count * (new_download_cap // member_count)
+                            hi = member_count * (new_download_cap // member_count + 1)
+                            st.caption(f"⚠️ Download {new_download_cap} ÷ {member_count} ≠ integer. For equal split, consider total {lo} or {hi}.")
                     if st.form_submit_button("💾 Save Caps"):
                         ok = update_tenant_usage_caps(
                             cap_id, new_review_cap, new_download_cap,
                             supabase_url, service_key
                         )
                         if ok:
-                            st.success("✅ Caps updated!")
+                            if apply_to_all and member_count > 0:
+                                per_rev = (new_review_cap // member_count) if new_review_cap else None
+                                per_dwn = (new_download_cap // member_count) if new_download_cap else None
+                                for em in _all_emails_list:
+                                    upsert_member_usage_caps(tenant_id, em, per_rev, per_dwn, supabase_url, service_key)
+                                uneven_r = new_review_cap and new_review_cap % member_count != 0
+                                uneven_d = new_download_cap and new_download_cap % member_count != 0
+                                if uneven_r or uneven_d:
+                                    st.warning("Applied floor average to members. Total not evenly divisible — consider adjusting total for equal split.")
+                            st.success("✅ Caps updated!" + (" Applied to all members." if apply_to_all and member_count else ""))
                             _log_audit_event(
                                 action="usage_caps_updated",
                                 tenant=slug,
@@ -2403,11 +2432,13 @@ def show_usage():
                                 actor_email=st.session_state.get("admin_email", "admin"),
                                 context={
                                     "daily_review_cap": new_review_cap,
-                                    "daily_download_cap": new_download_cap
+                                    "daily_download_cap": new_download_cap,
+                                    "apply_to_all_members": apply_to_all,
+                                    "member_count": member_count
                                 }
                             )
                             import time
-                            time.sleep(1.5)
+                            time.sleep(2)
                             st.rerun()
                         else:
                             st.error("❌ Failed to update caps.")
