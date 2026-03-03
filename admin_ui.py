@@ -1542,6 +1542,36 @@ def ensure_individual_tenant(supabase_url: str, service_key: str) -> bool:
         return False
 
 
+def get_tenant_ids_by_member_email_search(search: str, supabase_url: str, service_key: str) -> set:
+    """
+    依 member email 搜尋，回傳包含該成員的 tenant_id 集合。
+    支援部分比對（例如 coco@gmail.com 或 coco）。
+    """
+    if not search or not search.strip():
+        return set()
+    q = search.strip().lower()
+    try:
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Accept": "application/json"
+        }
+        # PostgREST: ilike 用 * 表示任意字元，*coco* = 包含 coco
+        endpoint = f"{supabase_url}/rest/v1/tenant_members"
+        params = {
+            "select": "tenant_id",
+            "email": f"ilike.*{q}*",
+            "limit": "500"
+        }
+        resp = requests.get(endpoint, headers=headers, params=params, timeout=10)
+        if resp.status_code == 200:
+            rows = resp.json() or []
+            return {r["tenant_id"] for r in rows if r.get("tenant_id")}
+    except Exception:
+        pass
+    return set()
+
+
 def get_all_tenants(supabase_url: str, service_key: str) -> list:
     """獲取所有租戶"""
     try:
@@ -2153,13 +2183,16 @@ def show_usage():
         st.warning("No tenants found.")
         return
     
-    # 快速搜尋（特別是 individual 等個人試用多時）
-    usage_search = st.text_input("🔍 Search tenants", placeholder="Type slug or name to filter (e.g. individual)...", key="usage_tenant_search")
+    # 快速搜尋（支援 slug/name 或 member email，例如 individual、coco@gmail.com）
+    usage_search = st.text_input("🔍 Search tenants", placeholder="Type slug, name, or member email (e.g. individual, coco@gmail.com)...", key="usage_tenant_search")
     if usage_search:
-        q = usage_search.lower()
-        tenants = [t for t in tenants if q in (t.get('slug') or '').lower() or q in (t.get('name') or '').lower()]
+        q = usage_search.strip().lower()
+        by_slug_name = [t for t in tenants if q in (t.get('slug') or '').lower() or q in (t.get('name') or '').lower()]
+        by_member = get_tenant_ids_by_member_email_search(usage_search, supabase_url, service_key)
+        tenants_filtered = [t for t in tenants if t['id'] in by_member or t in by_slug_name]
+        tenants = list({t['id']: t for t in tenants_filtered}.values())  # 去重
         if not tenants:
-            st.info("No tenants match your search.")
+            st.info("No tenants match your search (by slug, name, or member email).")
             return
     
     for tenant in tenants:
