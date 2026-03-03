@@ -4,7 +4,7 @@
 > 
 > **維護者**：Amanda Chiu
 > 
-> **最後更新**：2026-02-27
+> **最後更新**：2026-03-03
 
 ---
 
@@ -205,7 +205,7 @@
 #### B2.1 MVP 版本（已完成 - 2026-03-02）✅
 
 **任務**：
-- ✅ 租戶列表（st.dataframe，顯示基本資訊）
+- ✅ 租戶列表（顯示基本資訊、搜尋租戶）
 - ✅ 建立新租戶（st.form，自動清空）
 - ✅ **Trial 延期**（兩種模式）⭐
   - ✅ Extend (Add Days) - 快速加天數
@@ -247,6 +247,9 @@
    - `time.sleep()` 延遲重載
    - 確保用戶看到反饋訊息
 
+4. **租戶搜尋**（2026-03-03）
+   - Tenant List 新增搜尋框（依 slug/name 過濾）
+
 **驗收標準**：
 - ✅ 可建立新租戶（表單自動清空）
 - ✅ 可延長試用期（兩種方式）
@@ -281,53 +284,42 @@
 
 ### Phase B3: Users 批量管理
 
-#### B3.1 MVP 版本（已完成 - 2026-03-02）✅
+#### B3.1 MVP 版本（已完成 - 2026-03-03）✅
 
 **任務**：
-- ✅ 成員列表（按租戶篩選）
-- ✅ 批量新增成員（st.text_area 貼上 email，支援 30+）
-- ✅ 批量停用/啟用（checkbox 選擇 + 批量操作）
-- ✅ 角色設定（dropdown）
-- ✅ 手動單個新增成員
-- ✅ 重複 email 處理
+- ✅ 成員列表（按租戶篩選、搜尋、狀態篩選）
+- ✅ 批量新增成員（貼上 email 30+、Manual Entry）
+- ✅ Individual (Guest) 個人使用者
+- ✅ 批量停用/啟用（checkbox 列表 + Select All/Active/Inactive）
+- ✅ 角色設定（user / tenant_admin / guest）
+- ✅ 批量刪除、單個刪除
+- ✅ 全系統重複檢查（跨租戶）
+- ✅ 租戶搜尋（Batch Add、Batch Operations）
 
 **UI 元件**：
-- `st.tabs()` - 3 個分頁（Member List / Batch Add / Batch Operations）
+- `st.tabs()` - Member List / Batch Add / Batch Operations
 - `st.text_area()` - 貼上 email 清單
-- `st.multiselect()` - 批量選擇成員
-- `st.expander()` - 成員詳情展開
-- `st.selectbox()` - 租戶篩選器、角色選擇
-- `st.metric()` - 統計資訊（Total / Active / Inactive）
+- `st.checkbox()` - 成員列表個別勾選
+- `st.expander()` - 成員詳情
+- `st.radio()` - 狀態篩選、Add to (Tenant/Individual)
+- `st.metric()` - Total / Active / Inactive
+- 英文介面、表單自動清空
 
 **實作內容**：
-- 3 個主要頁面函數
-- 9 個 helper functions
-- Email 驗證和清理（lowercase, trim, @ validation）
-- 重複 email 處理（HTTP 409 → warning）
-- 成功動畫（st.balloons）
-- 錯誤處理完善
-- Audit logging（6 種操作）
+- `ensure_individual_tenant()`、`delete_member()`、`batch_delete_members()`
+- `get_all_existing_emails_global()` - 全系統重複檢查
+- Guest 角色需執行 `sql_add_guest_role.sql`
 
 **關鍵功能**：
-1. **批量新增** - 貼上 email 清單，一鍵新增
-2. **批量操作** - 多選成員，批量 enable/disable
-3. **按租戶篩選** - 查看特定租戶或所有租戶的成員
-4. **角色管理** - 更改成員角色（user/admin）
-5. **統計資訊** - 即時顯示成員數量和狀態
-
-**驗收標準**：
-- ✅ 可貼上 30+ email 並批量新增
-- ✅ 可批量停用/啟用成員
-- ✅ 可按租戶篩選查看
-- ✅ 可更改成員角色
-- ✅ 重複 email 有警告提示
-- ✅ 統計資訊正確顯示
-- ✅ 所有操作記錄到 audit_events
+1. **批量新增** - 貼上清單、Manual Entry、Individual (Guest)
+2. **Batch Operations** - 列表 + checkbox、Select All/Active/Inactive、搜尋成員
+3. **Member List** - 搜尋、狀態篩選、批量刪除、單個 Delete 按鈕
+4. **重複檢查** - 同一 email 跨所有租戶不可重複
+5. **租戶搜尋** - Tenant Management、Batch Add、Batch Operations 三處
 
 **相關檔案**：
-- `admin_ui.py` - 完整實作（show_members 及 9 個 helper functions）
-- `README_PHASE_B3_1.md` - 詳細實作說明（10 個測試用例）
-- `QUICK_TEST_B3_1.md` - 快速測試指南（5-10 分鐘）
+- `admin_ui.py`、`README_PHASE_B3_1.md`、`QUICK_TEST_B3_1.md`
+- `sql_add_guest_role.sql` - Guest 角色 DB 遷移
 
 #### B3.2 完美版本（預計 1 天）
 
@@ -557,7 +549,7 @@ errorfree-multi-framework-app/
 - **Mode A (1 週 MVP)**: ✅ **100% 完成** (2026-02-27)
 - **Phase B1.1 (MVP Admin 登入)**: ✅ **100% 完成** (2026-02-28)
 - **Phase B2.1 (MVP Tenant 管理)**: ✅ **100% 完美完成** (2026-03-02) ⭐
-- **Phase B3.1 (MVP Members 管理)**: ✅ **100% 完成** (2026-03-02) ⭐
+- **Phase B3.1 (MVP Members 管理)**: ✅ **100% 完成** (2026-03-03) ⭐
 - **Phase B4-B6 (MVP Admin UI)**: 🔄 **準備開始** (Week 1-2)
 - **Phase B (完美 Admin UI)**: ⏳ **未開始** (Week 3-4)
 - **Mode B BYOK (長期)**: ⏳ **未開始**
@@ -619,6 +611,12 @@ errorfree-multi-framework-app/
 ---
 
 ## 📝 變更日誌
+
+### 2026-03-03 Phase B3.1 完整驗收 + 租戶搜尋
+- ✅ Phase B3.1 測試完成、全部修正通過
+- 📝 **B3.1  refinements**：Individual (Guest)、checkbox 列表、英文 UI、Manual form 清空、全系統重複檢查、delete member、sql_add_guest_role.sql
+- 📝 **租戶搜尋**：Tenant Management、Batch Add Members、Batch Operations 三處新增搜尋
+- 📝 更新 ROADMAP 反映 B3.1 完整功能
 
 ### 2026-03-02 ⭐ Phase B3.1 完成
 - ✅ 完成 Phase B3.1 (MVP Members 批量管理)
@@ -686,4 +684,4 @@ errorfree-multi-framework-app/
 
 ---
 
-**最後更新**: 2026-03-02 | **維護者**: Amanda Chiu
+**最後更新**: 2026-03-03 | **維護者**: Amanda Chiu
