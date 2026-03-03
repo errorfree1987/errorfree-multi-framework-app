@@ -2121,8 +2121,7 @@ def show_audit_logs():
     result_filter = st.selectbox(
         "Result",
         ["All", "success", "denied", "error"],
-        key="audit_result_filter",
-        horizontal=True
+        key="audit_result_filter"
     )
     
     # 取得 audit events
