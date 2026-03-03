@@ -1244,7 +1244,6 @@ def show_batch_add_members(supabase_url: str, service_key: str):
         tenant_slug = "individual"
         role_default = "guest"
         st.info("ℹ️ Adding as **Individual (Guest)** — user will not belong to any company tenant.")
-        st.caption("若出現 HTTP 400，請在 Supabase SQL Editor 執行 `sql_add_guest_role.sql` 以啟用 guest 角色。")
     
     st.markdown("---")
     
@@ -1278,22 +1277,22 @@ def show_batch_add_members(supabase_url: str, service_key: str):
                 else:
                     batch_add_members(tenant_slug, emails, supabase_url, service_key, role_default)
     
-    else:  # Manual Entry
-        with st.form("manual_add_form", clear_on_submit=True):
-            st.markdown("**Add a single member:**")
-            email = st.text_input("Email", placeholder="user@example.com")
-            role = st.selectbox(
-                "Role",
-                options=["user", "tenant_admin", "guest"],
-                format_func=_role_display,
-                index=["user", "tenant_admin", "guest"].index(role_default)
-            )
-            
-            if st.form_submit_button("➕ Add Member", type="primary"):
-                if not email or '@' not in email:
-                    st.error("❌ Please enter a valid email address.")
-                else:
-                    batch_add_members(tenant_slug, [email], supabase_url, service_key, role)
+    else:  # Manual Entry（不使用 form，避免 "Press Enter to submit" 提示）
+        st.markdown("**Add a single member:**")
+        email = st.text_input("Email", placeholder="user@example.com", key="manual_add_email")
+        role = st.selectbox(
+            "Role",
+            options=["user", "tenant_admin", "guest"],
+            format_func=_role_display,
+            index=["user", "tenant_admin", "guest"].index(role_default),
+            key="manual_add_role"
+        )
+        
+        if st.button("➕ Add Member", type="primary"):
+            if not email or '@' not in email:
+                st.error("❌ Please enter a valid email address.")
+            else:
+                batch_add_members(tenant_slug, [email], supabase_url, service_key, role)
 
 
 def show_batch_operations(supabase_url: str, service_key: str):
@@ -1528,6 +1527,23 @@ def get_existing_member_emails(supabase_url: str, service_key: str, tenant_id: s
         return set()
 
 
+def get_all_existing_emails_global(supabase_url: str, service_key: str) -> set:
+    """取得全系統已存在的成員 email（跨所有租戶，含 individual）"""
+    try:
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Content-Type": "application/json"
+        }
+        endpoint = f"{supabase_url}/rest/v1/tenant_members?select=email"
+        resp = requests.get(endpoint, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            return {m['email'].lower() for m in resp.json()}
+        return set()
+    except Exception:
+        return set()
+
+
 def batch_add_members(tenant_slug: str, emails: list, supabase_url: str, service_key: str, role: str = "user"):
     """批量新增成員（使用 tenant_id，會檢查重複）"""
     try:
@@ -1548,17 +1564,15 @@ def batch_add_members(tenant_slug: str, emails: list, supabase_url: str, service
         
         tenant_id = tenant_resp.json()[0]['id']
         
-        # 檢查已存在的成員（含 disabled）
-        existing = get_existing_member_emails(supabase_url, service_key, tenant_id)
-        existing_emails = {e[0] for e in existing}
+        # 檢查全系統已存在的 email（跨所有租戶，含 individual），同一 email 不可重複
+        existing_emails = get_all_existing_emails_global(supabase_url, service_key)
         
-        # 過濾出重複的 email
         emails_lower = [e.lower().strip() for e in emails]
         duplicates = [e for e in emails_lower if e in existing_emails]
         to_add = [e for e in emails_lower if e not in existing_emails]
         
         if duplicates:
-            st.warning(f"⚠️ **以下帳號已存在（含已停用），無法新增**：{', '.join(duplicates)}")
+            st.warning(f"⚠️ **以下帳號已存在於系統（任一租戶或 individual），無法新增**：{', '.join(duplicates)}")
             if not to_add:
                 st.info("ℹ️ 沒有可新增的帳號，請檢查後再試。")
                 return
