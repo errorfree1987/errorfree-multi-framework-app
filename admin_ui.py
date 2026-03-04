@@ -2618,7 +2618,7 @@ def get_tenant_ai_settings_one(tenant_slug: str, supabase_url: str, service_key:
         }
         params = {
             "tenant": f"eq.{tenant_slug}",
-            "select": "tenant,provider,base_url,model,api_key_ref,max_tokens_per_request,id,updated_at",
+            "select": "tenant,provider,base_url,model,api_key_ref,max_tokens_per_request,updated_at",
             "limit": "1"
         }
         resp = requests.get(endpoint, headers=headers, params=params, timeout=10)
@@ -2679,11 +2679,13 @@ def upsert_tenant_ai_settings(
             "last_modified_by": st.session_state.get("admin_email", "admin")
         }
         existing = get_tenant_ai_settings_one(tenant_slug, supabase_url, service_key)
-        if existing and existing.get("id"):
-            endpoint = f"{supabase_url}/rest/v1/tenant_ai_settings?id=eq.{existing['id']}"
+        if existing:
+            # 表已存在此租戶設定 → 用 tenant 做 PATCH
+            endpoint = f"{supabase_url}/rest/v1/tenant_ai_settings?tenant=eq.{tenant_slug}"
             resp = requests.patch(endpoint, json=payload, headers=headers, timeout=10)
             return resp.status_code in [200, 204]
         else:
+            # 無既有資料 → INSERT 一筆新設定
             endpoint = f"{supabase_url}/rest/v1/tenant_ai_settings"
             resp = requests.post(endpoint, json=payload, headers=headers, timeout=10)
             return resp.status_code in [200, 201]
