@@ -475,6 +475,24 @@
 - 在 Supabase `tenant_ai_settings` 為各 tenant 寫入 `provider`, `base_url`, `model`, `api_key_ref`
 - 未來可在 Admin UI 新增「Tenant AI 設定」頁面（可放在 Phase B 或 C）
 
+### Company Admin BYOK 設定頁（已決定要做，尚未實作）
+
+**目的**：讓企業客戶的 Company Admin 可自行在 Portal / Admin UI 中設定本租戶專用的 AI Provider / Base URL / API Key，而不是由 Error-Free 運維代為手動寫入。
+
+**範圍（Phase C: Mode B BYOK 子項目）**：
+- 新增「Company Admin Settings」或類似頁面（僅 `company_admin` 角色可見）
+- 允許 per-tenant 設定：
+  - Provider（copilot / openai_compatible / deepseek / 未來 Gemini 等）
+  - Base URL（如 Azure OpenAI endpoint、DeepSeek endpoint 等）
+  - API key ref（對應自家環境變數名稱，不直接存明文 key）
+  - 預設模型（如 gpt-4.1, gpt-4.1-mini, deepseek-chat 等）
+- 後端沿用 `tenant_ai_settings` 結構，不直接暴露 service-role key
+
+**驗收標準**：
+- [ ] Company Admin 可不透過工程師，自行更新本租戶的 AI Provider/Model 設定
+- [ ] 修改後 Analyzer 依新設定切換 provider / model
+- [ ] 不在資料庫中存放明文 API key（僅存 ref）
+
 ---
 
 ## ⏳ 未來項目（Phase C: Mode B BYOK 並行）
