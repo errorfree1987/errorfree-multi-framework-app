@@ -562,25 +562,11 @@ def _check_usage_cap(tenant: str, usage_type: str, email: str = "") -> tuple[boo
                 return True, 0, 0, ""
             if tenant_cap_val == 0:
                 return False, 0, 0, f"Your organization's {usage_type} access has been disabled. Please contact your administrator."
-            # Individual: cap = tenant cap (per-member). Company with email: cap = floor(tenant_cap / member_count)
+            # Individual: cap = tenant cap (per-member). Company: 0 until member has explicit row (admin must increase total & Save to allocate)
             if tenant == "individual" or not usage_filter_email:
                 cap = tenant_cap_val
             else:
-                member_count = 1
-                mc_resp = requests.get(
-                    f"{supabase_url}/rest/v1/tenant_members",
-                    params={"tenant_id": f"eq.{tenant_id}", "select": "id", "limit": "1"},
-                    headers={**headers, "Prefer": "count=exact"},
-                    timeout=10
-                )
-                if mc_resp.status_code == 200:
-                    count_header = mc_resp.headers.get("Content-Range") or ""
-                    if "/" in count_header:
-                        try:
-                            member_count = max(1, int(count_header.split("/")[-1]))
-                        except (ValueError, IndexError):
-                            pass
-                cap = max(0, tenant_cap_val // member_count)
+                cap = 0
         
         # 4. Get today's usage (filter by email if member-level)
         usage_params = {
@@ -599,7 +585,10 @@ def _check_usage_cap(tenant: str, usage_type: str, email: str = "") -> tuple[boo
         
         # 5. Check if cap reached
         if current_usage >= cap:
-            message = f"Daily {usage_type} limit reached ({current_usage}/{cap}). Please try again tomorrow or contact support to upgrade."
+            if cap == 0:
+                message = "You have no allocation. Please ask your administrator to increase the total cap and allocate a share."
+            else:
+                message = f"Daily {usage_type} limit reached ({current_usage}/{cap}). Please try again tomorrow or contact support to upgrade."
             return False, cap, current_usage, message
         return True, cap, current_usage, ""
         
