@@ -4,7 +4,7 @@
 > 
 > **維護者**：Amanda Chiu
 > 
-> **最後更新**：2026-03-03
+> **最後更新**：2026-03-03（Member-level caps 完成；新增 Analyzer 多 Provider 指引）
 
 ---
 
@@ -411,10 +411,17 @@
 
 **任務**：
 - ✅ Per-tenant cap 設定（st.number_input + Unlimited checkbox）
-- ✅ 保存按鈕（PATCH tenant_usage_caps）
-- ✅ 顯示今日用量（review、download）
+- ✅ Per-member cap（member_usage_caps 表，Individual/Company 分流）
+- ✅ 保存按鈕（PATCH tenant_usage_caps；Save 自動套用到所有 members）
+- ✅ 顯示今日用量（review、download）、總人數、Active today
 - ✅ 用量百分比（st.progress）
 - ✅ 記錄 audit_events（usage_caps_updated）
+
+**Member-level caps**（2026-03-03）：
+- Individual：Set Caps = 每位 member 的 trial 上限（不平均）
+- Company：Set Caps = 總量，Save 時 floor(total ÷ member_count) 分給每位
+- Company 新成員：預設 0，需提高總量並 Save 才分配
+- 見 `sql_member_usage_caps.sql`、`PLAN_MEMBER_LEVEL_CAPS.md`
 
 **UI 元件**：
 - `st.number_input()` - Cap 設定
@@ -437,6 +444,36 @@
 **驗收標準**：
 - [ ] 圖表美觀
 - [ ] 可批量調整 caps
+
+---
+
+## 🔧 Analyzer 多 Provider 支援（DeepSeek / Copilot）
+
+> **時機**：在修改 Analyzer 內容時處理，可早於 Phase B 完美版或 Phase C。  
+> **目的**：大陸客戶用 DeepSeek、其他客戶用 Copilot/OpenAI，依 tenant 切換分析模型。
+
+### 現況
+- `tenant_ai_settings` 表與 `load_tenant_ai_settings_from_supabase()` 已存在（D4）
+- 欄位：`provider`, `base_url`, `model`, `api_key_ref`, `max_tokens_per_request`
+- 登入時已載入並顯示於 sidebar，但 LLM 呼叫仍固定使用 `OpenAI` 全域 client
+
+### 修改位置（app.py）
+| 區塊 | 檔案 | 說明 |
+|------|------|------|
+| LLM 呼叫層 | `app.py` | `run_llm_analysis()`, `_openai_simple()` 等改為依 `tenant_ai_settings` 建立 client |
+|  provider 分派 | `app.py` | 依 `provider` 建立不同 client（`openai_compatible` / `deepseek` / `copilot`） |
+| API Key 解析 | `app.py` | `api_key_ref` 對應到 env 變數或密鑰管理（如 `DEEPSEEK_API_KEY`, `OPENAI_API_KEY`） |
+
+### 建議實作步驟
+1. 建立 `_get_llm_client_for_tenant(tas: dict)`：依 tas 的 provider/base_url/api_key_ref 回傳對應 client
+2. 支援 `provider=deepseek`：使用 DeepSeek API（OpenAI-compatible base URL）
+3. 支援 `provider=openai_compatible` 或 `copilot`：使用現有 OpenAI client
+4. 將 `run_llm_analysis`、`_openai_simple`、OCR 等呼叫改為使用 tenant 專屬 client
+5. 無 tenant_ai_settings 或 provider 未設定時，fallback 到現有全域 `OPENAI_API_KEY`
+
+### 資料設定
+- 在 Supabase `tenant_ai_settings` 為各 tenant 寫入 `provider`, `base_url`, `model`, `api_key_ref`
+- 未來可在 Admin UI 新增「Tenant AI 設定」頁面（可放在 Phase B 或 C）
 
 ---
 
@@ -482,7 +519,7 @@
 
 ```
 errorfree-multi-framework-app/
-├── app.py                              # 主程式（Analyzer）
+├── app.py                              # 主程式（Analyzer）；多 Provider 見上方指引
 ├── admin_ui.py                         # Admin UI（Phase B1.1）✨
 ├── README_PHASE_A2_1.md                # Phase A2-1 實作說明
 ├── README_PHASE_A2_2.md                # Phase A2-2 實作說明
@@ -492,6 +529,8 @@ errorfree-multi-framework-app/
 ├── RUNBOOK_MODE_A_OPERATIONS.sql       # Phase A3 完整 runbook (927 行)
 ├── QUICK_REFERENCE_MODE_A.md           # Phase A3 快速參考卡
 ├── sql_epoch_management.sql            # Epoch 撤權管理（D3）
+├── sql_member_usage_caps.sql           # Member-level caps 遷移
+├── PLAN_MEMBER_LEVEL_CAPS.md           # Member caps 設計與實作說明
 ├── QUICK_REFERENCE.md                  # Epoch 快速參考卡（D3）
 ├── test_epoch_revoke.sh                # Epoch 自動化測試腳本（D3）
 ├── test_epoch_revoke.md                # Epoch 測試手冊（D3）
