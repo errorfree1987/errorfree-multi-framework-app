@@ -307,6 +307,7 @@ def show_admin_dashboard():
                 "🏠 Dashboard",
                 "🏢 Tenants",
                 "👥 Members",
+                "🤖 Tenant AI Settings",
                 "🚫 Revoke Access",
                 "📊 Usage & Caps",
                 "📜 Audit Logs"
@@ -325,6 +326,8 @@ def show_admin_dashboard():
         show_tenants()
     elif page == "👥 Members":
         show_members()
+    elif page == "🤖 Tenant AI Settings":
+        show_tenant_ai_settings()
     elif page == "🚫 Revoke Access":
         show_revoke()
     elif page == "📊 Usage & Caps":
@@ -2602,6 +2605,207 @@ def show_audit_logs():
             st.caption(f"Deny reason: {ev['deny_reason']}")
         if ev.get("notes"):
             st.caption(f"Notes: {ev['notes']}")
+
+
+def get_tenant_ai_settings_one(tenant_slug: str, supabase_url: str, service_key: str) -> dict:
+    """取得單一租戶的 AI 設定，若無則回傳空 dict。"""
+    try:
+        endpoint = f"{supabase_url}/rest/v1/tenant_ai_settings"
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Accept": "application/json"
+        }
+        params = {
+            "tenant": f"eq.{tenant_slug}",
+            "select": "tenant,provider,base_url,model,api_key_ref,max_tokens_per_request,id,updated_at",
+            "limit": "1"
+        }
+        resp = requests.get(endpoint, headers=headers, params=params, timeout=10)
+        if resp.status_code == 200 and resp.json():
+            return resp.json()[0]
+    except Exception:
+        pass
+    return {}
+
+
+def get_tenant_ai_settings_all(supabase_url: str, service_key: str) -> list:
+    """取得所有租戶的 AI 設定。"""
+    try:
+        endpoint = f"{supabase_url}/rest/v1/tenant_ai_settings"
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Accept": "application/json"
+        }
+        params = {
+            "select": "tenant,provider,base_url,model,api_key_ref,max_tokens_per_request,updated_at",
+            "order": "tenant.asc"
+        }
+        resp = requests.get(endpoint, headers=headers, params=params, timeout=10)
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception:
+        pass
+    return []
+
+
+def upsert_tenant_ai_settings(
+    tenant_slug: str,
+    provider: str,
+    base_url: str,
+    model: str,
+    api_key_ref: str,
+    max_tokens_per_request: int,
+    supabase_url: str,
+    service_key: str
+) -> bool:
+    """新增或更新租戶 AI 設定。"""
+    from datetime import datetime, timezone
+    try:
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "tenant": tenant_slug,
+            "provider": (provider or "").strip() or None,
+            "base_url": (base_url or "").strip() or None,
+            "model": (model or "").strip() or None,
+            "api_key_ref": (api_key_ref or "").strip() or None,
+            "max_tokens_per_request": max_tokens_per_request if max_tokens_per_request is not None and max_tokens_per_request > 0 else None,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "last_modified_by": st.session_state.get("admin_email", "admin")
+        }
+        existing = get_tenant_ai_settings_one(tenant_slug, supabase_url, service_key)
+        if existing and existing.get("id"):
+            endpoint = f"{supabase_url}/rest/v1/tenant_ai_settings?id=eq.{existing['id']}"
+            resp = requests.patch(endpoint, json=payload, headers=headers, timeout=10)
+            return resp.status_code in [200, 204]
+        else:
+            endpoint = f"{supabase_url}/rest/v1/tenant_ai_settings"
+            resp = requests.post(endpoint, json=payload, headers=headers, timeout=10)
+            return resp.status_code in [200, 201]
+    except Exception:
+        return False
+
+
+def show_tenant_ai_settings():
+    """Tenant AI 設定頁：依租戶設定 Copilot / OpenAI / DeepSeek。"""
+    st.header("🤖 Tenant AI Settings")
+    st.caption("Set which AI provider each tenant uses for Analyzer (e.g. Copilot first, DeepSeek for China).")
+
+    supabase_url, service_key = get_supabase_client()
+    if not supabase_url or not service_key:
+        st.error("⚠️ Supabase not configured")
+        return
+
+    tenants = get_all_tenants(supabase_url, service_key)
+    if not tenants:
+        st.info("No tenants found. Create a tenant in the Tenants section first.")
+        return
+
+    tab1, tab2 = st.tabs(["📋 Current Settings", "✏️ Edit / Add"])
+
+    with tab1:
+        st.subheader("All tenant AI settings")
+        rows = get_tenant_ai_settings_all(supabase_url, service_key)
+        if not rows:
+            st.info("No tenant AI settings yet. Use the 'Edit / Add' tab to set Copilot or DeepSeek per tenant.")
+        else:
+            import pandas as pd
+            df = pd.DataFrame([
+                {
+                    "Tenant": r.get("tenant", ""),
+                    "Provider": r.get("provider") or "(default)",
+                    "Base URL": (r.get("base_url") or "")[:50] + ("..." if len((r.get("base_url") or "")) > 50 else ""),
+                    "Model": r.get("model") or "(default)",
+                    "API Key Ref": r.get("api_key_ref") or "-",
+                    "Updated": (r.get("updated_at") or "")[:19].replace("T", " ")
+                }
+                for r in rows
+            ])
+            st.dataframe(df, use_container_width=True, height=300)
+
+    with tab2:
+        st.subheader("Edit or add AI settings for a tenant")
+        tenant_options = [f"{t['slug']} — {t['name']}" for t in tenants]
+        selected = st.selectbox("Select tenant", tenant_options, key="ai_settings_tenant_select")
+        if not selected:
+            return
+        tenant_slug = selected.split(" — ")[0].strip()
+        current = get_tenant_ai_settings_one(tenant_slug, supabase_url, service_key)
+
+        provider_options = ["(use default)", "copilot", "openai_compatible", "deepseek"]
+        provider_labels = ["(use default)", "Copilot", "OpenAI compatible", "DeepSeek"]
+        default_idx = 0
+        if current.get("provider"):
+            for i, p in enumerate(provider_options):
+                if p == current.get("provider"):
+                    default_idx = i
+                    break
+
+        with st.form("tenant_ai_settings_form", clear_on_submit=False):
+            provider_choice = st.selectbox(
+                "Provider",
+                range(len(provider_options)),
+                index=default_idx,
+                format_func=lambda i: provider_labels[i],
+                help="Copilot / OpenAI compatible: use OpenAI-style API. DeepSeek: use DeepSeek API (set api_key_ref to DEEPSEEK_API_KEY in env)."
+            )
+            provider_value = provider_options[provider_choice] if provider_options[provider_choice] != "(use default)" else ""
+
+            base_url = st.text_input(
+                "Base URL (optional)",
+                value=(current.get("base_url") or ""),
+                placeholder="e.g. https://api.openai.com/v1 or https://api.deepseek.com",
+                help="Leave empty to use provider default."
+            )
+            model = st.text_input(
+                "Model (optional)",
+                value=(current.get("model") or ""),
+                placeholder="e.g. gpt-4o, deepseek-chat",
+                help="Overrides role-based default when set."
+            )
+            api_key_ref_options = ["OPENAI_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY_TENANT_A", "(other)"]
+            current_ref = (current.get("api_key_ref") or "").strip()
+            ref_default = 0
+            if current_ref in api_key_ref_options[:-1]:
+                ref_default = api_key_ref_options.index(current_ref)
+            elif current_ref:
+                ref_default = len(api_key_ref_options) - 1
+
+            api_key_ref_choice = st.selectbox(
+                "API Key (env variable name)",
+                range(len(api_key_ref_options)),
+                index=ref_default,
+                format_func=lambda i: api_key_ref_options[i],
+                help="Environment variable name where the API key is stored (e.g. on Railway). Do not paste the key here."
+            )
+            api_key_ref_value = api_key_ref_options[api_key_ref_choice]
+            if api_key_ref_value == "(other)":
+                api_key_ref_value = st.text_input("Enter env variable name", value=current_ref, key="ai_api_key_ref_other")
+            max_tokens = st.number_input(
+                "Max tokens per request (optional)",
+                min_value=0,
+                value=current.get("max_tokens_per_request") or 0,
+                help="0 = use app default"
+            )
+            submitted = st.form_submit_button("💾 Save")
+            if submitted:
+                final_ref = api_key_ref_value
+                if final_ref == "(other)":
+                    final_ref = (st.session_state.get("ai_api_key_ref_other") or "").strip() or None
+                if upsert_tenant_ai_settings(
+                    tenant_slug, provider_value, base_url, model, final_ref,
+                    max_tokens if max_tokens > 0 else None,
+                    supabase_url, service_key
+                ):
+                    st.success(f"✅ Saved AI settings for tenant **{tenant_slug}**.")
+                    _log_audit_event("tenant_ai_settings_updated", "success", tenant=tenant_slug, context={"provider": provider_value or "(default)"})
+                else:
+                    st.error("Failed to save. Check Supabase table tenant_ai_settings exists (run sql_tenant_ai_settings.sql if needed).")
 
 # ==========================================
 # 主程式入口
