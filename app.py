@@ -1651,11 +1651,102 @@ def restore_state_from_disk():
 
 
 # =========================
-# OpenAI client & model selection
+# OpenAI / LLM client & model selection (tenant-aware)
 # =========================
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+
+
+def _resolve_api_key_for_tenant(tas: dict | None) -> Optional[str]:
+    """
+    Resolve the effective API key for a given tenant_ai_settings row.
+
+    Priority:
+    1) tas.api_key_ref -> corresponding env var (e.g. DEEPSEEK_API_KEY, OPENAI_API_KEY_TENANT_X, etc.)
+    2) Provider-specific fallback (e.g. DEEPSEEK_API_KEY for provider=deepseek)
+    3) Global OPENAI_API_KEY
+    """
+    tas = tas or {}
+
+    api_key_ref = (tas.get("api_key_ref") or "").strip()
+    if api_key_ref:
+        ref_key = (os.getenv(api_key_ref, "") or "").strip()
+        if ref_key:
+            return ref_key
+
+    provider = (tas.get("provider") or "").strip().lower()
+    if provider == "deepseek":
+        ds_key = (os.getenv("DEEPSEEK_API_KEY", "") or "").strip()
+        if ds_key:
+            return ds_key
+
+    # Fallback: existing global OpenAI key
+    if OPENAI_API_KEY:
+        k = OPENAI_API_KEY.strip()
+        if k:
+            return k
+
+    return None
+
+
+def _get_llm_client_for_tenant(tas: dict | None) -> Optional[OpenAI]:
+    """
+    Build an LLM client for the given tenant_ai_settings dict.
+
+    Supported providers (via tenant_ai_settings.provider):
+    - "openai_compatible" / "copilot": OpenAI-compatible HTTP APIs
+    - "deepseek": DeepSeek API (OpenAI-compatible base URL)
+
+    Unknown/empty provider falls back to the global OpenAI client.
+    """
+    # If we don't have tenant settings at all, just reuse the global client.
+    if not tas:
+        return client
+
+    provider = (tas.get("provider") or "").strip().lower()
+    base_url = (tas.get("base_url") or "").strip() or None
+    api_key = _resolve_api_key_for_tenant(tas)
+
+    # If we couldn't resolve any key, fall back to existing global client
+    if not api_key:
+        return client
+
+    # If provider/base_url are not set and this matches our global client, reuse it
+    if not provider and not base_url and client is not None and api_key == (OPENAI_API_KEY or "").strip():
+        return client
+
+    # DeepSeek (OpenAI-compatible)
+    if provider == "deepseek":
+        if not base_url:
+            base_url = (os.getenv("DEEPSEEK_BASE_URL", "") or "").strip() or "https://api.deepseek.com"
+        return OpenAI(api_key=api_key, base_url=base_url)
+
+    # Generic OpenAI-compatible / Copilot
+    if provider in ("openai_compatible", "copilot"):
+        if base_url:
+            return OpenAI(api_key=api_key, base_url=base_url)
+        return OpenAI(api_key=api_key)
+
+    # Unknown provider: if a base_url is configured, still try using it as OpenAI-compatible
+    if base_url:
+        return OpenAI(api_key=api_key, base_url=base_url)
+
+    # Default: plain OpenAI client (may be different key from global)
+    return OpenAI(api_key=api_key)
+
+
+def _get_llm_client_for_current_tenant() -> Optional[OpenAI]:
+    """
+    Convenience wrapper that reads st.session_state['tenant_ai_settings'] (if any)
+    and returns a tenant-scoped client. Falls back to the global client when
+    tenant_ai_settings is missing or incomplete.
+    """
+    try:
+        tas = st.session_state.get("tenant_ai_settings") or {}
+    except Exception:
+        tas = {}
+    return _get_llm_client_for_tenant(tas)
 
 
 def resolve_model_for_user(role: str) -> str:
@@ -1664,6 +1755,22 @@ def resolve_model_for_user(role: str) -> str:
     if role == "free":
         return "gpt-4.1-mini"
     return "gpt-5.1"
+
+
+def resolve_model_for_tenant_or_user(role: str) -> str:
+    """
+    Prefer per-tenant model from tenant_ai_settings.model if present;
+    otherwise fall back to role-based default.
+    """
+    try:
+        tas = st.session_state.get("tenant_ai_settings") or {}
+    except Exception:
+        tas = {}
+
+    model = (tas.get("model") or "").strip()
+    if model:
+        return model
+    return resolve_model_for_user(role)
 
 
 
@@ -1691,14 +1798,15 @@ def zh(tw: str, cn: str = None) -> str:
 
 def ocr_image_to_text(file_bytes: bytes, filename: str) -> str:
     """Use OpenAI vision model to perform OCR on an image and return plain text."""
-    if client is None:
+    llm_client = _get_llm_client_for_current_tenant()
+    if llm_client is None:
         return "[Error] OPENAI_API_KEY 尚未設定，無法進行圖片 OCR。"
 
     fname = filename.lower()
     img_format = "png" if fname.endswith(".png") else "jpeg"
 
     role = st.session_state.get("user_role", "free")
-    model_name = resolve_model_for_user(role)
+    model_name = resolve_model_for_tenant_or_user(role)
 
     b64_data = base64.b64encode(file_bytes).decode("utf-8")
 
@@ -1715,7 +1823,7 @@ def ocr_image_to_text(file_bytes: bytes, filename: str) -> str:
         )
 
     try:
-        response = client.responses.create(
+        response = llm_client.responses.create(
             model=model_name,
             input=[
                 {
@@ -1782,11 +1890,12 @@ def run_llm_analysis(framework_key: str, language: str, document_text: str, mode
     prefix = "以下是要分析的文件內容：\n\n" if language == "zh" else "Here is the document to analyze:\n\n"
     user_prompt = prefix + (document_text or "")
 
-    if client is None:
+    llm_client = _get_llm_client_for_current_tenant()
+    if llm_client is None:
         return "[Error] OPENAI_API_KEY 尚未設定，無法連線至 OpenAI。"
 
     try:
-        response = client.responses.create(
+        response = llm_client.responses.create(
             model=model_name,
             input=[
                 {"role": "system", "content": system_prompt},
@@ -1818,10 +1927,11 @@ def _openai_simple(system_prompt: str, user_prompt: str, model_name: str, max_ou
     st.session_state["_ef_last_openai_error"] = ""
     st.session_state["_ef_last_openai_error_type"] = ""
 
-    if client is None:
+    llm_client = _get_llm_client_for_current_tenant()
+    if llm_client is None:
         return "[Error] OPENAI_API_KEY 尚未設定，無法連線至 OpenAI。"
     try:
-        response = client.responses.create(
+        response = llm_client.responses.create(
             model=model_name,
             input=[
                 {"role": "system", "content": system_prompt},
@@ -2196,11 +2306,12 @@ def run_followup_qa(
 
     user_content = "\n\n".join(blocks)
 
-    if client is None:
+    llm_client = _get_llm_client_for_current_tenant()
+    if llm_client is None:
         return "[Error] OPENAI_API_KEY 尚未設定。"
 
     try:
-        response = client.responses.create(
+        response = llm_client.responses.create(
             model=model_name,
             input=[
                 {"role": "system", "content": system_prompt},
@@ -3602,7 +3713,7 @@ def main():
     user_email = st.session_state.user_email
     user_role = st.session_state.user_role
     is_guest = user_role == "free"
-    model_name = resolve_model_for_user(user_role)
+    model_name = resolve_model_for_tenant_or_user(user_role)
 
     # Framework state setup
     if not FRAMEWORKS:
