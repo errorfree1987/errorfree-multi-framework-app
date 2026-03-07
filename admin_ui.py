@@ -1913,17 +1913,14 @@ def batch_add_members(tenant_slug: str, rows: list, supabase_url: str, service_k
         
         members_data = []
         for r in to_add:
-            row = {
+            members_data.append({
                 "tenant_id": tenant_id,
                 "email": r["email"],
+                "phone": r.get("phone") or None,
+                "display_name": r.get("display_name") or None,
                 "role": role,
                 "is_active": True
-            }
-            if r.get("phone"):
-                row["phone"] = r["phone"]
-            if r.get("display_name"):
-                row["display_name"] = r["display_name"]
-            members_data.append(row)
+            })
         
         # 批量插入
         endpoint = f"{supabase_url}/rest/v1/tenant_members"
