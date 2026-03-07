@@ -533,6 +533,22 @@
 
 ---
 
+### Portal: Email Magic Link 登入（errorfree-portal repo，未開始）
+
+**目的**：將 Portal 登入從「email + 假密碼」改為 Supabase Auth `signInWithOtp`（Magic Link），達成真正的密碼less 驗證。
+
+**任務**：
+- [ ] 登入頁改為只輸入 email，移除密碼欄位
+- [ ] 後端呼叫 `signInWithOtp` 發送 Magic Link
+- [ ] 新增 `/auth/callback` 與 `POST /auth/confirm` 處理 Supabase redirect
+- [ ] 驗證後照舊 redirect `/catalog`，既有 `/launch`、`mint_sso_token` 不變
+
+**規劃檔**：`errorfree-portal/PLAN_PORTAL_MAGIC_LINK.md`
+
+**對 Analyzer 影響**：無，`/sso/verify` 與 `portal_token` 流程維持不變。
+
+---
+
 ## 📂 檔案結構總覽
 
 ```
