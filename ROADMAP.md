@@ -548,7 +548,9 @@ errorfree-multi-framework-app/
 ├── QUICK_REFERENCE_MODE_A.md           # Phase A3 快速參考卡
 ├── sql_epoch_management.sql            # Epoch 撤權管理（D3）
 ├── sql_member_usage_caps.sql           # Member-level caps 遷移
+├── sql_tenant_members_phone.sql        # 成員手機欄位（國際格式）
 ├── PLAN_MEMBER_LEVEL_CAPS.md           # Member caps 設計與實作說明
+├── CHECKLIST_PRE_LAUNCH.md             # 月底上線前必測清單（含學員 email+手機 收集驗證）
 ├── QUICK_REFERENCE.md                  # Epoch 快速參考卡（D3）
 ├── test_epoch_revoke.sh                # Epoch 自動化測試腳本（D3）
 ├── test_epoch_revoke.md                # Epoch 測試手冊（D3）
@@ -671,6 +673,13 @@ errorfree-multi-framework-app/
 ---
 
 ## 📝 變更日誌
+
+### 2026-03-04 學員資料收集：email + 手機（國際格式）
+- ✅ 新增 `tenant_members.phone` 欄位（sql_tenant_members_phone.sql）
+- ✅ Admin UI Batch Add：Paste 支援 `email,phone,display_name` 格式；Manual Entry 新增 Phone、Display name
+- ✅ 支援國際手機格式（+1, +886, +86, +44 等）
+- ✅ 成員詳情顯示 Phone、Display name
+- ✅ 新增 CHECKLIST_PRE_LAUNCH.md（月底上線必測清單）
 
 ### 2026-03-03 Member-Level Caps 完成
 - ✅ 完成 per-member usage caps

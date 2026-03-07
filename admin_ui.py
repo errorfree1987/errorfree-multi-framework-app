@@ -1370,6 +1370,10 @@ def show_member_details(member: dict, supabase_url: str, service_key: str):
     with col1:
         st.markdown("**Basic Info**")
         st.write(f"**Email**: {member['email']}")
+        if member.get('phone'):
+            st.write(f"**Phone**: {member['phone']}")
+        if member.get('display_name'):
+            st.write(f"**Display name**: {member['display_name']}")
         st.write(f"**Tenant**: {member['tenant_slug']}")
         st.write(f"**Role**: {_role_display(member.get('role', 'user'))}")
         status = "🟢 Active" if member['is_active'] else "🔴 Inactive"
@@ -1457,11 +1461,12 @@ def show_batch_add_members(supabase_url: str, service_key: str):
     batch_counter = st.session_state.get("batch_add_counter", 0)
     
     if input_method == "Paste Emails":
-        st.markdown("**Paste email addresses** (one per line):")
+        st.markdown("**Paste member data** (one per line). Supports international regions.")
+        st.caption("Format: `email` only, or `email,phone`, or `email,phone,display_name` — phone in international format (e.g. +1 2345678900, +886 912345678)")
         email_text = st.text_area(
-            "Email List",
+            "Member List",
             height=200,
-            placeholder="user1@example.com\nuser2@example.com\nuser3@example.com",
+            placeholder="user1@example.com\nuser2@example.com,+886912345678\nuser3@example.com,+1-234-567-8900,Jane Doe",
             key=f"batch_email_text_{batch_counter}"
         )
         
@@ -1469,17 +1474,33 @@ def show_batch_add_members(supabase_url: str, service_key: str):
             if not email_text.strip():
                 st.error("❌ Please enter at least one email address.")
             else:
-                emails = [line.strip() for line in email_text.strip().split('\n') if line.strip()]
-                emails = [e for e in emails if '@' in e]
-                if not emails:
+                rows = []
+                for line in email_text.strip().split('\n'):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = [p.strip() for p in line.split(',', 2)]
+                    email = parts[0] if parts else ""
+                    if '@' not in email:
+                        continue
+                    phone = (parts[1] if len(parts) > 1 else "") or None
+                    display_name = (parts[2] if len(parts) > 2 else "") or None
+                    rows.append({"email": email, "phone": phone, "display_name": display_name})
+                if not rows:
                     st.error("❌ No valid email addresses found.")
                 else:
-                    batch_add_members(tenant_slug, emails, supabase_url, service_key, role_default)
+                    batch_add_members(tenant_slug, rows, supabase_url, service_key, role_default)
     
     else:  # Manual Entry
         st.markdown("**Add a single member:**")
         manual_counter = st.session_state.get("manual_add_counter", 0)
-        email = st.text_input("Email", placeholder="user@example.com", key=f"manual_add_email_{manual_counter}")
+        email = st.text_input("Email *", placeholder="user@example.com", key=f"manual_add_email_{manual_counter}")
+        phone = st.text_input(
+            "Phone (optional, international format)",
+            placeholder="+1 2345678900, +886 912345678, +86 13800138000",
+            key=f"manual_add_phone_{manual_counter}"
+        )
+        display_name = st.text_input("Display name (optional)", placeholder="John Doe", key=f"manual_add_display_{manual_counter}")
         role = st.selectbox(
             "Role",
             options=["user", "tenant_admin", "guest"],
@@ -1492,7 +1513,8 @@ def show_batch_add_members(supabase_url: str, service_key: str):
             if not email or '@' not in email:
                 st.error("❌ Please enter a valid email address.")
             else:
-                batch_add_members(tenant_slug, [email], supabase_url, service_key, role, source="manual")
+                row = {"email": email, "phone": (phone.strip() or None), "display_name": (display_name.strip() or None)}
+                batch_add_members(tenant_slug, [row], supabase_url, service_key, role, source="manual")
 
 
 def show_batch_operations(supabase_url: str, service_key: str):
@@ -1839,9 +1861,26 @@ def get_all_existing_emails_global(supabase_url: str, service_key: str) -> set:
         return set()
 
 
-def batch_add_members(tenant_slug: str, emails: list, supabase_url: str, service_key: str, role: str = "user", source: str = "paste"):
-    """批量新增成員（使用 tenant_id，會檢查重複）"""
+def batch_add_members(tenant_slug: str, rows: list, supabase_url: str, service_key: str, role: str = "user", source: str = "paste"):
+    """
+    批量新增成員（使用 tenant_id，會檢查重複）。
+    rows: list of dicts, each {"email": str, "phone": str|None, "display_name": str|None}
+    也支援 list of str (僅 email)，會轉成 [{"email": e, "phone": None, "display_name": None}]
+    """
     try:
+        # 支援舊格式：list of emails
+        normalized_rows = []
+        for r in rows:
+            if isinstance(r, str):
+                normalized_rows.append({"email": r, "phone": None, "display_name": None})
+            else:
+                normalized_rows.append({
+                    "email": (r.get("email") or "").strip(),
+                    "phone": (r.get("phone") or "").strip() or None,
+                    "display_name": (r.get("display_name") or "").strip() or None
+                })
+        rows = [r for r in normalized_rows if r["email"] and "@" in r["email"]]
+
         headers = {
             "apikey": service_key,
             "Authorization": f"Bearer {service_key}",
@@ -1849,7 +1888,6 @@ def batch_add_members(tenant_slug: str, emails: list, supabase_url: str, service
             "Prefer": "return=representation"
         }
         
-        # 先獲取 tenant_id
         tenant_endpoint = f"{supabase_url}/rest/v1/tenants?slug=eq.{tenant_slug}&select=id"
         tenant_resp = requests.get(tenant_endpoint, headers=headers, timeout=10)
         
@@ -1858,13 +1896,11 @@ def batch_add_members(tenant_slug: str, emails: list, supabase_url: str, service
             return
         
         tenant_id = tenant_resp.json()[0]['id']
-        
-        # 檢查全系統已存在的 email（跨所有租戶，含 individual），同一 email 不可重複
         existing_emails = get_all_existing_emails_global(supabase_url, service_key)
         
-        emails_lower = [e.lower().strip() for e in emails]
+        emails_lower = [r["email"].lower() for r in rows]
         duplicates = [e for e in emails_lower if e in existing_emails]
-        to_add = [e for e in emails_lower if e not in existing_emails]
+        to_add = [r for r in rows if r["email"].lower() not in existing_emails]
         
         if duplicates:
             st.warning(f"⚠️ **The following account(s) already exist in the system (any tenant or individual) and cannot be added**: {', '.join(duplicates)}")
@@ -1875,15 +1911,19 @@ def batch_add_members(tenant_slug: str, emails: list, supabase_url: str, service
         if not to_add:
             return
         
-        # 準備批量插入的數據（只插入不重複的）
         members_data = []
-        for email in to_add:
-            members_data.append({
+        for r in to_add:
+            row = {
                 "tenant_id": tenant_id,
-                "email": email,
+                "email": r["email"],
                 "role": role,
                 "is_active": True
-            })
+            }
+            if r.get("phone"):
+                row["phone"] = r["phone"]
+            if r.get("display_name"):
+                row["display_name"] = r["display_name"]
+            members_data.append(row)
         
         # 批量插入
         endpoint = f"{supabase_url}/rest/v1/tenant_members"
@@ -1902,7 +1942,7 @@ def batch_add_members(tenant_slug: str, emails: list, supabase_url: str, service
                 actor_email=st.session_state.get("admin_email", "admin"),
                 context={
                     "count": len(added),
-                    "emails": emails,
+                    "emails": [r["email"] for r in to_add],
                     "role": role
                 }
             )
