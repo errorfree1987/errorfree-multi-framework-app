@@ -3819,35 +3819,50 @@ def main():
     st.caption("Single selection" if lang == "en" else zh("單選", "单选"))
 
     DOC_TYPES = [
+        "Specifications and Requirements",
         "Conceptual Design",
         "Preliminary Design",
         "Final Design",
         "Equivalency Engineering Evaluation",
         "Root Cause Analysis",
+        "Calculation and Analysis",
         "Safety Analysis",
-        "Specifications and Requirements",
-        "Calculations and Analysis",
+        "Justification for Continued Operation",
+        "Operation Procedures",
+        "Maintenance Procedures",
+        "Project Planning",
+        "Contract",
     ]
 
     DOC_TYPE_LABELS_ZH_TW = {
+        "Specifications and Requirements": "規格與需求",
         "Conceptual Design": "概念設計",
         "Preliminary Design": "初步設計",
         "Final Design": "最終設計",
         "Equivalency Engineering Evaluation": "等效工程評估",
         "Root Cause Analysis": "根本原因分析",
+        "Calculation and Analysis": "計算與分析",
         "Safety Analysis": "安全分析",
-        "Specifications and Requirements": "規格與需求",
-        "Calculations and Analysis": "計算與分析",
+        "Justification for Continued Operation": "持續運轉正當性論證",
+        "Operation Procedures": "操作程序",
+        "Maintenance Procedures": "維護程序",
+        "Project Planning": "專案規劃",
+        "Contract": "合約",
     }
     DOC_TYPE_LABELS_ZH_CN = {
+        "Specifications and Requirements": "规格与需求",
         "Conceptual Design": "概念设计",
         "Preliminary Design": "初步设计",
         "Final Design": "最终设计",
         "Equivalency Engineering Evaluation": "等效工程评估",
         "Root Cause Analysis": "根本原因分析",
+        "Calculation and Analysis": "计算与分析",
         "Safety Analysis": "安全分析",
-        "Specifications and Requirements": "规格与需求",
-        "Calculations and Analysis": "计算与分析",
+        "Justification for Continued Operation": "持续运转正当性论证",
+        "Operation Procedures": "操作程序",
+        "Maintenance Procedures": "维护程序",
+        "Project Planning": "项目规划",
+        "Contract": "合约",
     }
 
     if st.session_state.get("document_type") not in DOC_TYPES:
