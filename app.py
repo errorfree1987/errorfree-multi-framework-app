@@ -1749,6 +1749,23 @@ def _get_llm_client_for_current_tenant() -> Optional[OpenAI]:
     return _get_llm_client_for_tenant(tas)
 
 
+def _call_llm_chat(
+    llm_client: OpenAI, model: str, messages: list, max_tokens: int = 2500
+) -> str:
+    """
+    Unified LLM call using chat.completions.create for multi-provider compatibility.
+    Works with DeepSeek, Copilot, OpenAI, and any OpenAI-compatible API.
+    """
+    response = llm_client.chat.completions.create(
+        model=model,
+        messages=messages,
+        max_tokens=max_tokens,
+    )
+    if not response.choices:
+        return ""
+    return (response.choices[0].message.content or "").strip()
+
+
 def resolve_model_for_user(role: str) -> str:
     if role in ["admin", "pro", "company_admin"]:
         return "gpt-5.1"
@@ -1760,7 +1777,7 @@ def resolve_model_for_user(role: str) -> str:
 def resolve_model_for_tenant_or_user(role: str) -> str:
     """
     Prefer per-tenant model from tenant_ai_settings.model if present;
-    otherwise fall back to role-based default.
+    otherwise use provider-aware default (DeepSeek -> deepseek-chat) or role-based.
     """
     try:
         tas = st.session_state.get("tenant_ai_settings") or {}
@@ -1770,6 +1787,9 @@ def resolve_model_for_tenant_or_user(role: str) -> str:
     model = (tas.get("model") or "").strip()
     if model:
         return model
+    provider = (tas.get("provider") or "").strip().lower()
+    if provider == "deepseek":
+        return "deepseek-chat"
     return resolve_model_for_user(role)
 
 
@@ -1822,22 +1842,19 @@ def ocr_image_to_text(file_bytes: bytes, filename: str) -> str:
             "Preserve paragraphs and line breaks. Do not add any commentary or summary."
         )
 
-    try:
-        response = llm_client.responses.create(
-            model=model_name,
-            input=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "input_text", "text": prompt},
-                        {"type": "input_image", "image": {"data": b64_data, "format": img_format}},
-                    ],
-                }
+    # Use chat.completions format for vision (DeepSeek/OpenAI-compatible)
+    mime = "image/png" if img_format == "png" else "image/jpeg"
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64_data}"}},
             ],
-            max_output_tokens=2000,
-        )
-        text_out = response.output_text or ""
-        return text_out.strip()
+        }
+    ]
+    try:
+        return _call_llm_chat(llm_client, model_name, messages, max_tokens=2000)
     except Exception as e:
         return f"[圖片 OCR 時發生錯誤: {e}]"
 
@@ -1895,15 +1912,11 @@ def run_llm_analysis(framework_key: str, language: str, document_text: str, mode
         return "[Error] OPENAI_API_KEY 尚未設定，無法連線至 OpenAI。"
 
     try:
-        response = llm_client.responses.create(
-            model=model_name,
-            input=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            max_output_tokens=2500,
-        )
-        return response.output_text
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        return _call_llm_chat(llm_client, model_name, messages, max_tokens=2500)
     except Exception as e:
         msg = str(e)
         low = msg.lower()
@@ -1931,15 +1944,11 @@ def _openai_simple(system_prompt: str, user_prompt: str, model_name: str, max_ou
     if llm_client is None:
         return "[Error] OPENAI_API_KEY 尚未設定，無法連線至 OpenAI。"
     try:
-        response = llm_client.responses.create(
-            model=model_name,
-            input=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            max_output_tokens=max_output_tokens,
-        )
-        return (response.output_text or "").strip()
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        return _call_llm_chat(llm_client, model_name, messages, max_tokens=max_output_tokens)
     except Exception as e:
         msg = str(e)
         low = msg.lower()
@@ -2311,15 +2320,11 @@ def run_followup_qa(
         return "[Error] OPENAI_API_KEY 尚未設定。"
 
     try:
-        response = llm_client.responses.create(
-            model=model_name,
-            input=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
-            max_output_tokens=2000,
-        )
-        return response.output_text
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ]
+        return _call_llm_chat(llm_client, model_name, messages, max_tokens=2000)
     except Exception as e:
         msg = str(e)
         low = msg.lower()
