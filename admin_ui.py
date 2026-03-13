@@ -15,6 +15,8 @@ Phase B1.1: 登入/權限（Streamlit MVP 版本）
 - Railway 部署
 """
 
+from typing import Optional
+
 import streamlit as st
 import os
 import hashlib
@@ -2693,41 +2695,59 @@ def upsert_tenant_ai_settings(
     base_url: str,
     model: str,
     api_key_ref: str,
-    max_tokens_per_request: int,
+    max_tokens_per_request: Optional[int],
     supabase_url: str,
     service_key: str
-) -> bool:
-    """新增或更新租戶 AI 設定。"""
+) -> tuple[bool, str]:
+    """
+    新增或更新租戶 AI 設定。
+    Returns: (success, error_message). error_message 為空表示成功。
+    """
     from datetime import datetime, timezone
     try:
         headers = {
             "apikey": service_key,
             "Authorization": f"Bearer {service_key}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal",  # PATCH/POST 成功時回傳 204
         }
+        # 只包含可寫入欄位，避免傳入 id/created_at 等
+        mt = max_tokens_per_request if max_tokens_per_request is not None and max_tokens_per_request > 0 else None
         payload = {
             "tenant": tenant_slug,
             "provider": (provider or "").strip() or None,
             "base_url": (base_url or "").strip() or None,
             "model": (model or "").strip() or None,
-            "api_key_ref": (api_key_ref or "").strip() or None,
-            "max_tokens_per_request": max_tokens_per_request if max_tokens_per_request is not None and max_tokens_per_request > 0 else None,
+            "api_key_ref": (api_key_ref or "").strip() if (api_key_ref or "").strip() else None,
+            "max_tokens_per_request": mt,
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "last_modified_by": st.session_state.get("admin_email", "admin")
         }
         existing = get_tenant_ai_settings_one(tenant_slug, supabase_url, service_key)
         if existing:
-            # 表已存在此租戶設定 → 用 tenant 做 PATCH
             endpoint = f"{supabase_url}/rest/v1/tenant_ai_settings?tenant=eq.{tenant_slug}"
             resp = requests.patch(endpoint, json=payload, headers=headers, timeout=10)
-            return resp.status_code in [200, 204]
         else:
-            # 無既有資料 → INSERT 一筆新設定
             endpoint = f"{supabase_url}/rest/v1/tenant_ai_settings"
             resp = requests.post(endpoint, json=payload, headers=headers, timeout=10)
-            return resp.status_code in [200, 201]
-    except Exception:
-        return False
+
+        if resp.status_code in (200, 201, 204):
+            return True, ""
+
+        # 失敗：解析錯誤訊息
+        err_body = ""
+        try:
+            data = resp.json() if resp.text else {}
+            err_body = data.get("message") or data.get("msg") or data.get("error_description") or resp.text[:300]
+        except Exception:
+            err_body = (resp.text or str(resp))[:300]
+        return False, f"HTTP {resp.status_code}: {err_body}"
+    except requests.exceptions.Timeout:
+        return False, "Request timeout. Check Supabase connectivity."
+    except requests.exceptions.ConnectionError as e:
+        return False, f"Connection error: {str(e)[:150]}"
+    except Exception as e:
+        return False, str(e)[:200]
 
 
 def show_tenant_ai_settings():
@@ -2836,15 +2856,18 @@ def show_tenant_ai_settings():
                 final_ref = api_key_ref_value
                 if final_ref == "(other)":
                     final_ref = (st.session_state.get("ai_api_key_ref_other") or "").strip() or None
-                if upsert_tenant_ai_settings(
+                ok, err_msg = upsert_tenant_ai_settings(
                     tenant_slug, provider_value, base_url, model, final_ref,
                     max_tokens if max_tokens > 0 else None,
                     supabase_url, service_key
-                ):
+                )
+                if ok:
                     st.success(f"✅ Saved AI settings for tenant **{tenant_slug}**.")
                     _log_audit_event("tenant_ai_settings_updated", "success", tenant=tenant_slug, context={"provider": provider_value or "(default)"})
+                    st.rerun()  # 重新載入讓 Current Settings 即時顯示
                 else:
-                    st.error("Failed to save. Check Supabase table tenant_ai_settings exists (run sql_tenant_ai_settings.sql if needed).")
+                    st.error(f"Failed to save: {err_msg}")
+                    st.caption("Tip: Ensure sql_tenant_ai_settings.sql has been run in Supabase. See GUIDE_TENANT_AI_COPILOT_DEEPSEEK.md.")
 
 # ==========================================
 # 主程式入口

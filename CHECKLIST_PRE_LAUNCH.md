@@ -153,7 +153,8 @@
 ### 7.2 Tenant AI 設定
 
 - [ ] Admin UI → Tenant AI Settings 可查看 Current Settings
-- [ ] （Save 若失敗，可改用 SQL 直接寫入 tenant_ai_settings，見 GUIDE_TENANT_AI_COPILOT_DEEPSEEK.md）
+- [ ] Admin UI → Edit/Add → Save 成功（錯誤時會顯示具體 HTTP 訊息）
+- [ ] （Save 若失敗，見 TROUBLESHOOT_ADMIN_TENANT_AI_SAVE.md；或改用 SQL 直接寫入，見 GUIDE_TENANT_AI_COPILOT_DEEPSEEK.md）
 
 ---
 
