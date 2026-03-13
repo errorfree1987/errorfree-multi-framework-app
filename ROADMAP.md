@@ -447,17 +447,20 @@
 
 ---
 
-## 🔧 Analyzer 多 Provider 支援（DeepSeek / Copilot）
+## 🔧 Analyzer 多 Provider 支援（DeepSeek / Copilot）✅ 已完成
 
-> **時機**：在修改 Analyzer 內容時處理，可早於 Phase B 完美版或 Phase C。  
-> **目的**：大陸客戶用 DeepSeek、其他客戶用 Copilot/OpenAI，依 tenant 切換分析模型。
+> **目的**：大陸客戶用 DeepSeek、其他客戶用 Copilot/OpenAI，依 tenant 切換分析模型。  
+> **Provider 策略（2026-03-12）**：現行開放 Copilot / ChatGPT；DeepSeek 預留但暫不開放，有客戶再啟用。
 
-### 現況
-- `tenant_ai_settings` 表與 `load_tenant_ai_settings_from_supabase()` 已存在（D4）
-- 欄位：`provider`, `base_url`, `model`, `api_key_ref`, `max_tokens_per_request`
-- 登入時已載入並顯示於 sidebar，但 LLM 呼叫仍固定使用 `OpenAI` 全域 client
+### 已完成（2026-03-12）
+- ✅ `_get_llm_client_for_tenant()` 依 `tenant_ai_settings` 建立 tenant 專屬 client
+- ✅ 支援 `copilot`、`openai_compatible`、`deepseek`（deepseek 程式已支援，暫不開放）
+- ✅ `chat.completions.create` 統一呼叫層（DeepSeek 等 OpenAI 相容 API 皆可用）
+- ✅ `run_llm_analysis`、`_openai_simple`、OCR、`run_followup_qa` 改為使用 tenant client
+- ✅ `resolve_model_for_tenant_or_user()` 支援 provider-aware 預設（DeepSeek → deepseek-chat）
+- ✅ Copilot 測試通過，共用 `OPENAI_API_KEY`
 
-### 修改位置（app.py）
+### 架構（app.py）
 | 區塊 | 檔案 | 說明 |
 |------|------|------|
 | LLM 呼叫層 | `app.py` | `run_llm_analysis()`, `_openai_simple()` 等改為依 `tenant_ai_settings` 建立 client |
@@ -475,9 +478,11 @@
 - 在 Supabase `tenant_ai_settings` 為各 tenant 寫入 `provider`, `base_url`, `model`, `api_key_ref`
 - 未來可在 Admin UI 新增「Tenant AI 設定」頁面（可放在 Phase B 或 C）
 
-### Company Admin BYOK 設定頁（已決定要做，尚未實作）
+### Company Admin BYOK 設定頁（已決定要做，尚未實作）⭐ 千人企業優先
 
-**目的**：讓企業客戶的 Company Admin 可自行在 Portal / Admin UI 中設定本租戶專用的 AI Provider / Base URL / API Key，而不是由 Error-Free 運維代為手動寫入。
+> 📋 **整體規劃**：見 `PLAN_BYOK_ENTERPRISE.md`
+
+**目的**：讓千人企業的 Company Admin 登入後自行設定本租戶的 AI Provider / Base URL / API Key，無需 Error-Free 運維手動寫入。
 
 **範圍（Phase C: Mode B BYOK 子項目）**：
 - 新增「Company Admin Settings」或類似頁面（僅 `company_admin` 角色可見）
@@ -567,6 +572,7 @@ errorfree-multi-framework-app/
 ├── sql_tenant_members_phone.sql        # 成員手機欄位（國際格式）
 ├── sql_tenant_ai_settings.sql          # 租戶 AI Provider 表
 ├── TROUBLESHOOT_ADMIN_TENANT_AI_SAVE.md # Admin Save 故障排除
+├── PLAN_BYOK_ENTERPRISE.md              # 千人企業 BYOK 與 Company Admin 自管規劃 consolidated
 ├── PLAN_MEMBER_LEVEL_CAPS.md           # Member caps 設計與實作說明
 ├── CHECKLIST_PRE_LAUNCH.md             # 月底上線前必測清單（含學員 email+手機 收集驗證）
 ├── QUICK_REFERENCE.md                  # Epoch 快速參考卡（D3）
@@ -698,6 +704,11 @@ errorfree-multi-framework-app/
 - ✅ 支援國際手機格式（+1, +886, +86, +44 等）
 - ✅ 成員詳情顯示 Phone、Display name
 - ✅ 新增 CHECKLIST_PRE_LAUNCH.md（月底上線必測清單）
+
+### 2026-03-12 Analyzer 多 Provider 完成 + BYOK 規劃 consolidated
+- ✅ Analyzer 多 Provider 實作完成（chat.completions 統一、tenant client 切換、provider-aware model）
+- ✅ Copilot 測試通過；DeepSeek 預留但暫不開放
+- 📝 新增 `PLAN_BYOK_ENTERPRISE.md`：千人企業 BYOK、Company Admin 自管設定 consolidated 規劃
 
 ### 2026-03-12 tenant_ai_settings Admin Save 強化
 - ✅ `upsert_tenant_ai_settings()` 改為回傳 `(success, error_message)`，Save 失敗時顯示具體 HTTP 錯誤
