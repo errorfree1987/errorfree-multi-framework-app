@@ -3978,20 +3978,19 @@ def main():
         )
 
     # Sync recommended frameworks when document_type changes (for Step 4 auto pre-select)
+    # Do NOT use st.rerun() here - it causes UI freeze. Instead, directly set checkbox
+    # state in session_state so checkboxes pick up new values when they render below.
     doc_type = st.session_state.document_type or DOC_TYPES[0]
     last_doc_type = st.session_state.get("_last_doc_type_for_framework_suggest")
     if doc_type != last_doc_type:
         recommended = DOC_TYPE_TO_RECOMMENDED_FRAMEWORKS.get(doc_type, fw_keys)
-        st.session_state.selected_framework_keys = [k for k in recommended if k in fw_keys]
+        recommended_set = set(k for k in recommended if k in fw_keys)
+        st.session_state.selected_framework_keys = list(recommended_set)
         st.session_state._last_doc_type_for_framework_suggest = doc_type
         if st.session_state.selected_framework_key not in st.session_state.selected_framework_keys:
             st.session_state.selected_framework_key = st.session_state.selected_framework_keys[0] if st.session_state.selected_framework_keys else fw_keys[0]
         for k in fw_keys:
-            _k = f"fw_cb_{k}"
-            if _k in st.session_state:
-                del st.session_state[_k]
-        save_state_to_disk()
-        st.rerun()
+            st.session_state[f"fw_cb_{k}"] = k in recommended_set
 
     save_state_to_disk()
 
