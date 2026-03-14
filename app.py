@@ -1479,6 +1479,33 @@ def load_frameworks() -> Dict[str, Dict]:
 FRAMEWORKS: Dict[str, Dict] = load_frameworks()
 
 
+def _framework_docs_dir() -> Path:
+    """Directory containing framework .docx files (fixed mapping per frameworks.json)."""
+    return Path(__file__).resolve().parent / "framework_docs"
+
+
+def load_framework_prompt_from_docx(framework_key: str) -> str:
+    """
+    Load the framework prompt/system instructions from the mapped .docx file.
+    Uses framework_file from frameworks.json; file must exist in framework_docs/.
+    """
+    if framework_key not in FRAMEWORKS:
+        return ""
+    fw = FRAMEWORKS[framework_key]
+    filename = fw.get("framework_file")
+    if not filename or not isinstance(filename, str):
+        return ""
+    docs_dir = _framework_docs_dir()
+    filepath = docs_dir / filename.strip()
+    if not filepath.exists():
+        return ""
+    try:
+        doc = Document(filepath)
+        return "\n".join(p.text for p in doc.paragraphs).strip()
+    except Exception:
+        return ""
+
+
 
 
 
@@ -1902,8 +1929,9 @@ def run_llm_analysis(framework_key: str, language: str, document_text: str, mode
     if framework_key not in FRAMEWORKS:
         return f"[Error] Framework '{framework_key}' not found in frameworks.json."
 
-    fw = FRAMEWORKS[framework_key]
-    system_prompt = fw["wrapper_zh"] if language == "zh" else fw["wrapper_en"]
+    system_prompt = load_framework_prompt_from_docx(framework_key)
+    if not system_prompt:
+        return f"[Error] Framework '{framework_key}' prompt file not found or empty. Check framework_docs/."
     prefix = "以下是要分析的文件內容：\n\n" if language == "zh" else "Here is the document to analyze:\n\n"
     user_prompt = prefix + (document_text or "")
 

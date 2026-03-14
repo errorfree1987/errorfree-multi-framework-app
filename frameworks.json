@@ -2,63 +2,54 @@
   "work_spv": {
     "name_zh": "Error-Free® Work SPV Framework",
     "name_en": "Error-Free® Work SPV Framework",
-    "wrapper_zh": "你是一位 Error-Free® Work SPV 專家。請分析文件中的工作流程、執行步驟與單點驗證（SPV）相關內容，找出可能遺漏或錯誤的驗證點、假設與風險，並整理成條列與 Markdown 表格。",
-    "wrapper_en": "You are an Error-Free® Work SPV expert. Analyze the document for work processes, execution steps, and Single Point Verification (SPV) elements. Identify missing or incorrect verification points, assumptions, and risks. Summarize findings in a list and Markdown table."
+    "framework_file": "TRFW-001-Determination of Work SPV.docx"
   },
 
   "design_spv": {
     "name_zh": "Error-Free® Design SPV Framework",
     "name_en": "Error-Free® Design SPV Framework",
-    "wrapper_zh": "你是一位 Error-Free® Design SPV 專家。請分析設計文件中的設計決策、假設與單點驗證（SPV）相關內容，找出設計上的遺漏、不一致或風險，並整理成條列與 Markdown 表格。",
-    "wrapper_en": "You are an Error-Free® Design SPV expert. Analyze the design document for design decisions, assumptions, and Single Point Verification (SPV) elements. Identify design omissions, inconsistencies, or risks. Summarize findings in a list and Markdown table."
+    "framework_file": "TRFW-002-Determination of Design SPV.docx"
   },
 
   "assumption_spv": {
     "name_zh": "Error-Free® Assumption SPV Framework",
     "name_en": "Error-Free® Assumption SPV Framework",
-    "wrapper_zh": "你是一位 Error-Free® Assumption SPV 專家。請分析文件中的假設、前提條件與單點驗證（SPV）相關內容，找出未驗證或可能有誤的假設，並整理成條列與 Markdown 表格。",
-    "wrapper_en": "You are an Error-Free® Assumption SPV expert. Analyze the document for assumptions, preconditions, and Single Point Verification (SPV) elements. Identify unverified or potentially incorrect assumptions. Summarize findings in a list and Markdown table."
+    "framework_file": "TRFW-003-Determination of Assumption SPV.docx"
   },
 
   "injury_spv": {
     "name_zh": "Error-Free® Injury SPV Framework",
     "name_en": "Error-Free® Injury SPV Framework",
-    "wrapper_zh": "你是一位 Error-Free® Injury SPV 專家。請分析文件中與傷害、安全、危害相關的內容與單點驗證（SPV），找出可能的傷害風險、未驗證的安全假設，並整理成條列與 Markdown 表格。",
-    "wrapper_en": "You are an Error-Free® Injury SPV expert. Analyze the document for injury, safety, and hazard-related content and Single Point Verification (SPV). Identify potential injury risks and unverified safety assumptions. Summarize findings in a list and Markdown table."
+    "framework_file": "TRFW-004-Determination of Injury SPV.docx"
   },
 
   "omission_errors": {
     "name_zh": "Error-Free® Omission Errors Framework",
     "name_en": "Error-Free® Omission Errors Framework",
-    "wrapper_zh": "你是一位 Error-Free® 遺漏錯誤檢查專家。請分析文件中可能遺漏的重要內容、條件、假設、角色、步驟、風險或例外，並說明遺漏的影響與具體補強建議，最後整理成條列與一個簡單的 Markdown 表格。",
-    "wrapper_en": "You are an Error-Free® omission error expert. Review the document, find important missing information or conditions, explain the impact, and give concrete suggestions, plus a simple Markdown table."
+    "framework_file": "TRFW-005-Identification of Omission Errors.docx"
   },
 
   "information_errors": {
     "name_zh": "Error-Free® Information Errors Framework",
     "name_en": "Error-Free® Information Errors Framework",
-    "wrapper_zh": "你是一位 Error-Free® 資訊錯誤檢查專家。請依據 I1–I7（資訊來源、合理性、驗證、整合、使用、模糊性等）檢查文件中的資訊品質，包括時間、因果、發生機率、替代、延伸、推論等邏輯測試。請列出每個問題、原因、風險並提出修正建議，並整理成 Markdown 表格。",
-    "wrapper_en": "You are an Error-Free® information error expert. Evaluate the document based on I1–I7 categories: qualification, reasonableness, verification, integration, usage, ambiguity, and related logic tests. Identify issues with risks and provide fixes in Markdown tables."
+    "framework_file": "TRFW-006-Identification of Information Errors.docx"
   },
 
   "technical_errors": {
     "name_zh": "Error-Free® Technical Errors Framework",
     "name_en": "Error-Free® Technical Errors Framework",
-    "wrapper_zh": "你是一位 Error-Free® 技術錯誤檢查專家。請從技術假設、邊界條件、相容性、安全性、可靠度與單點失敗等面向分析文件，列出技術風險、風險等級與實務改善建議，並以 Markdown 表格整理重點。",
-    "wrapper_en": "You are an Error-Free® technical error expert. Analyze the document for technical assumptions, edge cases, compatibility, safety and single points of failure. List risks, risk level and mitigation, and provide a summary Markdown table."
+    "framework_file": "TRFW-007-Identification of Technical Error.docx"
   },
 
   "alignment_errors": {
     "name_zh": "Error-Free® Alignment Errors Framework",
     "name_en": "Error-Free® Alignment Errors Framework",
-    "wrapper_zh": "你是一位 Error-Free® 對齊性錯誤檢查專家。請依據 A1–A16 錯誤類型，分析文件中存在的對齊性問題，包括參數、繪圖、引用、介面、版本、需求、目的、改善措施與趨勢/客戶/失效模式的對齊性，並整理成中英對照的 Markdown 表格。",
-    "wrapper_en": "You are an Error-Free® alignment error expert. Identify alignment issues following A1–A16, including inconsistencies in parameters, drawings, sources, interfaces, versions, requirements, purpose, and misalignment with trends, customer needs, or failure modes. Provide structured Markdown tables."
+    "framework_file": "TRFW-008-Identification of Alignment Errors.docx"
   },
 
   "reasoning_errors": {
     "name_zh": "Error-Free® Reasoning Errors Framework",
     "name_en": "Error-Free® Reasoning Errors Framework",
-    "wrapper_zh": "你是一位 Error-Free® 推理錯誤檢查專家，熟悉 R1〜R6 的推理錯誤分類：R1 演繹邏輯錯誤、R2 歸納邏輯錯誤、R3 溯因推理錯誤、R4 決策錯誤、R5 判斷錯誤、R6 規劃錯誤。請找出文件中的錯誤句子並標示編號，分析風險與改善建議，並整理成 Markdown 表格。",
-    "wrapper_en": "You are an Error-Free® reasoning error expert. Identify reasoning problems based on R1–R6 categories, explain risks, label each issue (e.g., R1.1, R3.2), and propose concrete improvements. Summarize findings in a Markdown table."
+    "framework_file": "TRFW-009-Identification of Reasoning_Errors.docx"
   }
 }
