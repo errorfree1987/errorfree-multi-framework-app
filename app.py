@@ -1621,6 +1621,8 @@ def save_state_to_disk():
         "document_type": st.session_state.get("document_type"),
         "framework_states": st.session_state.get("framework_states", {}),
         "selected_framework_key": st.session_state.get("selected_framework_key"),
+        "selected_framework_keys": st.session_state.get("selected_framework_keys", []),
+        "_last_doc_type_for_framework_suggest": st.session_state.get("_last_doc_type_for_framework_suggest"),
         "current_doc_id": st.session_state.get("current_doc_id"),
         "show_admin": st.session_state.get("show_admin", False),
 
@@ -3341,6 +3343,8 @@ def _reset_whole_document():
 
     # Also reset selection states so Step 2/Step 4 show FIRST option after reset
     st.session_state.selected_framework_key = None
+    st.session_state.selected_framework_keys = []
+    st.session_state._last_doc_type_for_framework_suggest = None
 
     # Clear Streamlit uploader widget states so UI is truly reset
     for _k in list(st.session_state.keys()):
@@ -3410,6 +3414,8 @@ def main():
         ("document_type", None),
         ("framework_states", {}),
         ("selected_framework_key", None),
+        ("selected_framework_keys", []),
+        ("_last_doc_type_for_framework_suggest", None),
         ("current_doc_id", None),
         ("company_code", None),
         ("show_admin", False),
@@ -3893,6 +3899,23 @@ def main():
         "Contract": "合约",
     }
 
+    # Document type → recommended framework keys (for Step 4 auto pre-select)
+    DOC_TYPE_TO_RECOMMENDED_FRAMEWORKS = {
+        "Specifications and Requirements": ["work_spv", "omission_errors", "information_errors", "alignment_errors", "reasoning_errors"],
+        "Conceptual Design": ["design_spv", "assumption_spv", "omission_errors", "information_errors", "alignment_errors", "reasoning_errors"],
+        "Preliminary Design": ["design_spv", "assumption_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
+        "Final Design": ["work_spv", "design_spv", "assumption_spv", "injury_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
+        "Equivalency Engineering Evaluation": ["omission_errors", "information_errors", "technical_errors", "alignment_errors"],
+        "Root Cause Analysis": ["design_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors"],
+        "Calculation and Analysis": ["design_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
+        "Safety Analysis": ["design_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
+        "Justification for Continued Operation": ["work_spv", "design_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
+        "Operation Procedures": ["work_spv", "assumption_spv", "injury_spv", "omission_errors", "information_errors", "alignment_errors", "reasoning_errors"],
+        "Maintenance Procedures": ["work_spv", "assumption_spv", "injury_spv", "omission_errors", "information_errors", "alignment_errors", "reasoning_errors"],
+        "Project Planning": ["work_spv", "assumption_spv", "injury_spv", "omission_errors", "information_errors", "alignment_errors", "reasoning_errors"],
+        "Contract": ["work_spv", "assumption_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
+    }
+
     if st.session_state.get("document_type") not in DOC_TYPES:
         st.session_state.document_type = DOC_TYPES[0]
 
@@ -3927,6 +3950,17 @@ def main():
             key="document_type_select",
             disabled=doc_type_disabled,
         )
+
+    # Sync recommended frameworks when document_type changes (for Step 4 auto pre-select)
+    doc_type = st.session_state.document_type or DOC_TYPES[0]
+    last_doc_type = st.session_state.get("_last_doc_type_for_framework_suggest")
+    if doc_type != last_doc_type:
+        recommended = DOC_TYPE_TO_RECOMMENDED_FRAMEWORKS.get(doc_type, fw_keys)
+        st.session_state.selected_framework_keys = [k for k in recommended if k in fw_keys]
+        st.session_state._last_doc_type_for_framework_suggest = doc_type
+        if st.session_state.selected_framework_key not in st.session_state.selected_framework_keys:
+            st.session_state.selected_framework_key = st.session_state.selected_framework_keys[0] if st.session_state.selected_framework_keys else fw_keys[0]
+
     save_state_to_disk()
 
     # Step 3: Reference docs split (更正2)
@@ -4030,21 +4064,45 @@ def main():
     st.markdown("---")
 
     # Step 4: select framework (lock after Step 5)
-    st.subheader("Step 4: Select Framework" if lang == "en" else zh("步驟四：選擇分析框架（僅單選）", "步骤四：选择分析框架（仅单选）"))
+    st.subheader("Step 4: Select Framework" if lang == "en" else zh("步驟四：選擇分析框架", "步骤四：选择分析框架"))
     st.caption(
         "Single selection only. After Step 5, the framework will be locked until Reset Whole Document." if lang == "en"
         else zh("僅單選。一旦按下步驟五開始分析後，框架會被鎖住，需 Reset Whole Document 才能重新選擇，避免來回切換造成混淆。", "仅单选。一旦按下步骤五开始分析后，框架会被锁住，需 Reset Whole Document 才能重新选择，避免来回切换造成混淆。")
     )
+    st.info(
+        zh("以下為系統依文件類型自動勾選的建議選項，您仍可自行加選或取消。", "以下为系统依文件类型自动勾选的建议选项，您仍可自行加选或取消。")
+        if lang == "zh" else "Below are suggested options auto-selected by document type. You may add or uncheck as needed."
+    )
 
-    current_label = key_to_label.get(current_fw_key, fw_labels[0])
+    sel_keys = st.session_state.get("selected_framework_keys") or []
+    sel_keys_set = set(sel_keys)
+    new_sel_keys = []
+    for i, k in enumerate(fw_keys):
+        lbl = fw_labels[i]
+        checked = st.checkbox(lbl, value=(k in sel_keys_set), key=f"fw_cb_{k}", disabled=step5_done)
+        if checked:
+            new_sel_keys.append(k)
+    st.session_state.selected_framework_keys = new_sel_keys
+
+    if not new_sel_keys:
+        new_sel_keys = list(fw_keys)
+        st.session_state.selected_framework_keys = new_sel_keys
+    if st.session_state.selected_framework_key not in new_sel_keys:
+        st.session_state.selected_framework_key = new_sel_keys[0]
+
+    pick_labels = [fw_labels[fw_keys.index(k)] for k in new_sel_keys]
+    pick_label_to_key = {fw_labels[fw_keys.index(k)]: k for k in new_sel_keys}
+    current_label = key_to_label.get(current_fw_key, pick_labels[0] if pick_labels else fw_labels[0])
+    if current_label not in pick_labels:
+        current_label = pick_labels[0]
     selected_label = st.selectbox(
         "Select framework" if lang == "en" else zh("選擇框架", "选择框架"),
-        fw_labels,
-        index=fw_labels.index(current_label) if current_label in fw_labels else 0,
+        pick_labels,
+        index=pick_labels.index(current_label) if current_label in pick_labels else 0,
         key="framework_selectbox",
         disabled=step5_done,
     )
-    selected_key = label_to_key[selected_label]
+    selected_key = pick_label_to_key.get(selected_label, new_sel_keys[0])
     st.session_state.selected_framework_key = selected_key
 
     if selected_key != current_fw_key:
