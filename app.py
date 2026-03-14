@@ -4005,6 +4005,7 @@ def main():
         recommended_set = set(k for k in recommended if k in fw_keys)
         st.session_state.selected_framework_keys = list(recommended_set)
         st.session_state._last_doc_type_for_framework_suggest = doc_type
+        st.session_state["_step4_auto_expand"] = True  # auto-expand Step 4 to show suggested frameworks
         if st.session_state.selected_framework_key not in st.session_state.selected_framework_keys:
             st.session_state.selected_framework_key = st.session_state.selected_framework_keys[0] if st.session_state.selected_framework_keys else fw_keys[0]
         for k in fw_keys:
@@ -4113,16 +4114,20 @@ def main():
     st.markdown("---")
 
     # Step 4: select framework (lock after Step 5) — collapsible for cleaner UI
+    should_expand = st.session_state.pop("_step4_auto_expand", False)
+    if should_expand:
+        st.markdown('<div id="step4-framework-section"></div>', unsafe_allow_html=True)
+    st.subheader("Step 4: Select Framework" if lang == "en" else zh("步驟四：選擇分析框架", "步骤四：选择分析框架"))
+    st.caption(
+        "Single selection only. After Step 5, the framework will be locked until Reset Whole Document." if lang == "en"
+        else zh("僅單選。一旦按下步驟五開始分析後，框架會被鎖住，需 Reset Whole Document 才能重新選擇。", "仅单选。一旦按下步骤五开始分析后，框架会被锁住，需 Reset Whole Document 才能重新选择。")
+    )
     doc_type = st.session_state.get("document_type") or DOC_TYPES[0]
     expander_label = (
-        zh("選擇分析框架（依文件類型已建議）", "选择分析框架（依文件类型已建议）")
-        if lang == "zh" else f"Select Framework (suggested for {doc_type})"
+        zh("展開查看／修改依文件類型建議的框架選項", "展开查看／修改依文件类型建议的框架选项")
+        if lang == "zh" else f"Expand to view/edit framework options (suggested for {doc_type})"
     )
-    with st.expander(expander_label, expanded=False):
-        st.caption(
-            "Single selection only. After Step 5, the framework will be locked until Reset Whole Document." if lang == "en"
-            else zh("僅單選。一旦按下步驟五開始分析後，框架會被鎖住，需 Reset Whole Document 才能重新選擇。", "仅单选。一旦按下步骤五开始分析后，框架会被锁住，需 Reset Whole Document 才能重新选择。")
-        )
+    with st.expander(expander_label, expanded=should_expand):
         st.info(
             zh("以下為系統依文件類型自動勾選的建議選項，您仍可自行加選或取消。", "以下为系统依文件类型自动勾选的建议选项，您仍可自行加选或取消。")
             if lang == "zh" else "Below are suggested options auto-selected by document type. You may add or uncheck as needed."
@@ -4144,6 +4149,22 @@ def main():
             st.session_state.selected_framework_keys = new_sel_keys
         selected_key = new_sel_keys[0]
         st.session_state.selected_framework_key = selected_key
+
+    if should_expand:
+        try:
+            import streamlit.components.v1 as components
+            components.html("""
+            <script>
+            (function(){
+              try {
+                var el = window.parent.document.getElementById('step4-framework-section');
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              } catch(e) {}
+            })();
+            </script>
+            """, height=0)
+        except Exception:
+            pass
 
     if selected_key != current_fw_key:
         if selected_key not in framework_states:
