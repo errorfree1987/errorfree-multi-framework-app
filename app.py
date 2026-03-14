@@ -3359,9 +3359,11 @@ def _reset_whole_document():
     for _k in [
         "document_type_select",      # EN Step 2 selectbox key
         "document_type_select_zh",   # ZH Step 2 selectbox key
-        "framework_selectbox",       # Step 4 selectbox key
     ]:
         if _k in st.session_state:
+            del st.session_state[_k]
+    for _k in list(st.session_state.keys()):
+        if _k.startswith("fw_cb_"):
             del st.session_state[_k]
 
     # also clear legacy single-key uploaders (older deployments)
@@ -3960,6 +3962,11 @@ def main():
         st.session_state._last_doc_type_for_framework_suggest = doc_type
         if st.session_state.selected_framework_key not in st.session_state.selected_framework_keys:
             st.session_state.selected_framework_key = st.session_state.selected_framework_keys[0] if st.session_state.selected_framework_keys else fw_keys[0]
+        # Clear checkbox widget states so they re-initialize with new recommended values
+        for k in fw_keys:
+            _k = f"fw_cb_{k}"
+            if _k in st.session_state:
+                del st.session_state[_k]
 
     save_state_to_disk()
 
@@ -4087,22 +4094,7 @@ def main():
     if not new_sel_keys:
         new_sel_keys = list(fw_keys)
         st.session_state.selected_framework_keys = new_sel_keys
-    if st.session_state.selected_framework_key not in new_sel_keys:
-        st.session_state.selected_framework_key = new_sel_keys[0]
-
-    pick_labels = [fw_labels[fw_keys.index(k)] for k in new_sel_keys]
-    pick_label_to_key = {fw_labels[fw_keys.index(k)]: k for k in new_sel_keys}
-    current_label = key_to_label.get(current_fw_key, pick_labels[0] if pick_labels else fw_labels[0])
-    if current_label not in pick_labels:
-        current_label = pick_labels[0]
-    selected_label = st.selectbox(
-        "Select framework" if lang == "en" else zh("選擇框架", "选择框架"),
-        pick_labels,
-        index=pick_labels.index(current_label) if current_label in pick_labels else 0,
-        key="framework_selectbox",
-        disabled=step5_done,
-    )
-    selected_key = pick_label_to_key.get(selected_label, new_sel_keys[0])
+    selected_key = new_sel_keys[0]
     st.session_state.selected_framework_key = selected_key
 
     if selected_key != current_fw_key:
