@@ -1458,11 +1458,19 @@ def save_guest_accounts(data: Dict[str, Dict]):
 
 def _framework_file() -> Path:
     """
-    Frameworks are normally shipped with the app as ./frameworks.json (repo file).
+    Frameworks are normally shipped with the app as frameworks.json next to app.py.
     D3-B: allow optional tenant override at tenants/<tenant>/data/frameworks.json.
+    Uses __file__ to resolve path so it works regardless of cwd (e.g. in deployment).
     """
-    tenant_f = _tenant_data_file("frameworks.json")
-    return tenant_f if tenant_f.exists() else Path("frameworks.json")
+    app_dir = Path(__file__).resolve().parent
+    default_path = app_dir / "frameworks.json"
+    try:
+        tenant_f = _tenant_data_file("frameworks.json")
+        if tenant_f.exists():
+            return tenant_f
+    except Exception:
+        pass
+    return default_path
 
 
 def load_frameworks() -> Dict[str, Dict]:
@@ -1474,7 +1482,13 @@ def load_frameworks() -> Dict[str, Dict]:
         raw = json.loads(f.read_text(encoding="utf-8"))
         if not isinstance(raw, dict):
             return {}
-        return {k: v for k, v in raw.items() if isinstance(v, dict) and isinstance(v.get("name_zh"), str) and isinstance(v.get("name_en"), str)}
+        out = {}
+        for k, v in raw.items():
+            if isinstance(v, dict):
+                name_zh = v.get("name_zh") if isinstance(v.get("name_zh"), str) else k
+                name_en = v.get("name_en") if isinstance(v.get("name_en"), str) else k
+                out[k] = {**v, "name_zh": name_zh, "name_en": name_en}
+        return out
     except Exception:
         return {}
 
@@ -3972,7 +3986,6 @@ def main():
         st.session_state._last_doc_type_for_framework_suggest = doc_type
         if st.session_state.selected_framework_key not in st.session_state.selected_framework_keys:
             st.session_state.selected_framework_key = st.session_state.selected_framework_keys[0] if st.session_state.selected_framework_keys else fw_keys[0]
-        # Clear checkbox widget states and rerun so checkboxes re-initialize with new recommended values
         for k in fw_keys:
             _k = f"fw_cb_{k}"
             if _k in st.session_state:
