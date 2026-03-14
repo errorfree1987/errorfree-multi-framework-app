@@ -1471,7 +1471,10 @@ def load_frameworks() -> Dict[str, Dict]:
     if not f.exists():
         return {}
     try:
-        return json.loads(f.read_text(encoding="utf-8"))
+        raw = json.loads(f.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            return {}
+        return {k: v for k, v in raw.items() if isinstance(v, dict) and isinstance(v.get("name_zh"), str) and isinstance(v.get("name_en"), str)}
     except Exception:
         return {}
 
@@ -3762,7 +3765,14 @@ def main():
         return
 
     fw_keys = list(FRAMEWORKS.keys())
-    fw_labels = [FRAMEWORKS[k]["name_zh"] if lang == "zh" else FRAMEWORKS[k]["name_en"] for k in fw_keys]
+    fw_labels = []
+    for k in fw_keys:
+        fw = FRAMEWORKS.get(k)
+        if isinstance(fw, dict):
+            lbl = fw.get("name_zh") if lang == "zh" else fw.get("name_en")
+            fw_labels.append(lbl if isinstance(lbl, str) else k)
+        else:
+            fw_labels.append(k)
     key_to_label = dict(zip(fw_keys, fw_labels))
     label_to_key = dict(zip(fw_labels, fw_keys))
 
@@ -3962,11 +3972,13 @@ def main():
         st.session_state._last_doc_type_for_framework_suggest = doc_type
         if st.session_state.selected_framework_key not in st.session_state.selected_framework_keys:
             st.session_state.selected_framework_key = st.session_state.selected_framework_keys[0] if st.session_state.selected_framework_keys else fw_keys[0]
-        # Clear checkbox widget states so they re-initialize with new recommended values
+        # Clear checkbox widget states and rerun so checkboxes re-initialize with new recommended values
         for k in fw_keys:
             _k = f"fw_cb_{k}"
             if _k in st.session_state:
                 del st.session_state[_k]
+        save_state_to_disk()
+        st.rerun()
 
     save_state_to_disk()
 
