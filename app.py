@@ -1674,6 +1674,8 @@ def restore_state_from_disk():
     SECURITY NOTE:
     Never restore authentication identity from disk.
     Only restore workflow/UI state.
+    Called AFTER SSO so user identity is available for correct file path.
+    Overwrites defaults with saved workflow state so refresh preserves content.
     """
     f = _user_state_file()
     if not f.exists():
@@ -1683,14 +1685,26 @@ def restore_state_from_disk():
     except Exception:
         return
 
-    # Strip any legacy auth keys that might exist from older files
+    # Strip any legacy auth keys
     for bad_key in ["user_email", "user_role", "is_authenticated", "company_code", "_portal_sso_checked"]:
         if bad_key in data:
             data.pop(bad_key, None)
 
-    for k, v in data.items():
-        if k not in st.session_state:
-            st.session_state[k] = v
+    # Workflow keys to restore (overwrite so refresh brings back saved content)
+    workflow_keys = [
+        "lang", "zh_variant", "usage_date", "usage_count",
+        "last_doc_text", "last_doc_name", "document_type",
+        "framework_states", "selected_framework_key", "selected_framework_keys",
+        "_last_doc_type_for_framework_suggest", "current_doc_id", "show_admin",
+        "upstream_reference", "quote_current", "quote_history",
+        "quote_upload_nonce", "review_upload_nonce", "upstream_upload_nonce",
+        "quote_upload_finalized", "upstream_step6_done", "upstream_step6_output",
+        "quote_step6_done_current", "step7_history", "integration_history",
+        "_pending_clear_followup_key",
+    ]
+    for k in workflow_keys:
+        if k in data:
+            st.session_state[k] = data[k]
 
 
 
@@ -3416,7 +3430,6 @@ def _reset_whole_document():
 
 def main():
     st.set_page_config(page_title=BRAND_TITLE_EN, layout="wide")
-    restore_state_from_disk()
 
     inject_ui_css()
 
@@ -3469,7 +3482,12 @@ def main():
     # Critical: run SSO right after session defaults are ready,
     # and BEFORE any login UI is rendered.
     try_portal_sso_login()
-    
+
+    # Restore workflow state AFTER SSO so user identity is available
+    # (saved file path depends on user_email). Overwrites defaults with saved content
+    # so refresh preserves document type, frameworks, uploads, analysis results.
+    restore_state_from_disk()
+
     # -------------------------
     # Phase A2-2: Analyzer launch logging + caps check
     # -------------------------
@@ -4094,32 +4112,38 @@ def main():
 
     st.markdown("---")
 
-    # Step 4: select framework (lock after Step 5)
-    st.subheader("Step 4: Select Framework" if lang == "en" else zh("步驟四：選擇分析框架", "步骤四：选择分析框架"))
-    st.caption(
-        "Single selection only. After Step 5, the framework will be locked until Reset Whole Document." if lang == "en"
-        else zh("僅單選。一旦按下步驟五開始分析後，框架會被鎖住，需 Reset Whole Document 才能重新選擇，避免來回切換造成混淆。", "仅单选。一旦按下步骤五开始分析后，框架会被锁住，需 Reset Whole Document 才能重新选择，避免来回切换造成混淆。")
+    # Step 4: select framework (lock after Step 5) — collapsible for cleaner UI
+    doc_type = st.session_state.get("document_type") or DOC_TYPES[0]
+    expander_label = (
+        zh("選擇分析框架（依文件類型已建議）", "选择分析框架（依文件类型已建议）")
+        if lang == "zh" else f"Select Framework (suggested for {doc_type})"
     )
-    st.info(
-        zh("以下為系統依文件類型自動勾選的建議選項，您仍可自行加選或取消。", "以下为系统依文件类型自动勾选的建议选项，您仍可自行加选或取消。")
-        if lang == "zh" else "Below are suggested options auto-selected by document type. You may add or uncheck as needed."
-    )
+    with st.expander(expander_label, expanded=False):
+        st.caption(
+            "Single selection only. After Step 5, the framework will be locked until Reset Whole Document." if lang == "en"
+            else zh("僅單選。一旦按下步驟五開始分析後，框架會被鎖住，需 Reset Whole Document 才能重新選擇。", "仅单选。一旦按下步骤五开始分析后，框架会被锁住，需 Reset Whole Document 才能重新选择。")
+        )
+        st.info(
+            zh("以下為系統依文件類型自動勾選的建議選項，您仍可自行加選或取消。", "以下为系统依文件类型自动勾选的建议选项，您仍可自行加选或取消。")
+            if lang == "zh" else "Below are suggested options auto-selected by document type. You may add or uncheck as needed."
+        )
 
-    sel_keys = st.session_state.get("selected_framework_keys") or []
-    sel_keys_set = set(sel_keys)
-    new_sel_keys = []
-    for i, k in enumerate(fw_keys):
-        lbl = fw_labels[i]
-        checked = st.checkbox(lbl, value=(k in sel_keys_set), key=f"fw_cb_{k}", disabled=step5_done)
-        if checked:
-            new_sel_keys.append(k)
-    st.session_state.selected_framework_keys = new_sel_keys
+        sel_keys = st.session_state.get("selected_framework_keys") or []
+        sel_keys_set = set(sel_keys)
+        new_sel_keys = []
+        for i, k in enumerate(fw_keys):
+            lbl = fw_labels[i]
+            checked = st.checkbox(lbl, value=(k in sel_keys_set), key=f"fw_cb_{k}", disabled=step5_done)
+            if checked:
+                new_sel_keys.append(k)
 
-    if not new_sel_keys:
-        new_sel_keys = list(fw_keys)
         st.session_state.selected_framework_keys = new_sel_keys
-    selected_key = new_sel_keys[0]
-    st.session_state.selected_framework_key = selected_key
+
+        if not new_sel_keys:
+            new_sel_keys = list(fw_keys)
+            st.session_state.selected_framework_keys = new_sel_keys
+        selected_key = new_sel_keys[0]
+        st.session_state.selected_framework_key = selected_key
 
     if selected_key != current_fw_key:
         if selected_key not in framework_states:
