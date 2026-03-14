@@ -1669,6 +1669,11 @@ def save_state_to_disk():
         pass
 
 
+def _set_step4_auto_expand_on_doc_type_change():
+    """Called when user changes document type in Step 2; ensures jump to Step 4 for ALL options."""
+    st.session_state["_step4_auto_expand"] = True
+
+
 def restore_state_from_disk():
     """
     SECURITY NOTE:
@@ -3897,6 +3902,7 @@ def main():
     st.caption("Single selection" if lang == "en" else zh("單選", "单选"))
 
     DOC_TYPES = [
+        "None",
         "Specifications and Requirements",
         "Conceptual Design",
         "Preliminary Design",
@@ -3913,6 +3919,7 @@ def main():
     ]
 
     DOC_TYPE_LABELS_ZH_TW = {
+        "None": "未選擇",
         "Specifications and Requirements": "規格與需求",
         "Conceptual Design": "概念設計",
         "Preliminary Design": "初步設計",
@@ -3928,6 +3935,7 @@ def main():
         "Contract": "合約",
     }
     DOC_TYPE_LABELS_ZH_CN = {
+        "None": "未选择",
         "Specifications and Requirements": "规格与需求",
         "Conceptual Design": "概念设计",
         "Preliminary Design": "初步设计",
@@ -3945,6 +3953,7 @@ def main():
 
     # Document type → recommended framework keys (for Step 4 auto pre-select)
     DOC_TYPE_TO_RECOMMENDED_FRAMEWORKS = {
+        "None": [],
         "Specifications and Requirements": ["work_spv", "omission_errors", "information_errors", "alignment_errors", "reasoning_errors"],
         "Conceptual Design": ["design_spv", "assumption_spv", "omission_errors", "information_errors", "alignment_errors", "reasoning_errors"],
         "Preliminary Design": ["design_spv", "assumption_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
@@ -3984,15 +3993,17 @@ def main():
             index=labels.index(current_label) if current_label in labels else 0,
             key="document_type_select_zh",
             disabled=doc_type_disabled,
+            on_change=_set_step4_auto_expand_on_doc_type_change,
         )
         st.session_state.document_type = label_to_value.get(picked_label, DOC_TYPES[0])
     else:
         st.session_state.document_type = st.selectbox(
             "Select document type",
             DOC_TYPES,
-            index=DOC_TYPES.index(st.session_state.document_type),
+            index=DOC_TYPES.index(st.session_state.document_type) if st.session_state.document_type in DOC_TYPES else 0,
             key="document_type_select",
             disabled=doc_type_disabled,
+            on_change=_set_step4_auto_expand_on_doc_type_change,
         )
 
     # Sync recommended frameworks when document_type changes (for Step 4 auto pre-select)
@@ -4207,7 +4218,7 @@ def main():
     if run_step5:
         if not st.session_state.last_doc_text:
             st.error("Please upload a review document first (Step 1)." if lang == "en" else zh("請先上傳審閱文件（Step 1）", "请先上传审阅文件（Step 1）"))
-        elif not st.session_state.get("document_type"):
+        elif not st.session_state.get("document_type") or st.session_state.get("document_type") == "None":
             st.error("Please select a document type first (Step 2)." if lang == "en" else zh("請先選擇文件類型（Step 2）", "请先选择文件类型（Step 2）"))
         else:
             # Phase A2-2: Check usage cap before proceeding
