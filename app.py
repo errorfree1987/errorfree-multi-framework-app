@@ -899,7 +899,7 @@ def _render_portal_only_block(reason: str = ""):
 
 def _portal_verify_via_api(portal_token: str) -> (bool, str, dict):
     """
-    Call Portal /sso/verify once. Token is one-time (consumed by Portal); do not retry with same token.
+    Call Portal /sso/verify. Same logic as when login was working (single timeout value, retries on timeout).
     Expect response JSON: { "status":"ok", "email":"...", "company_id":"...", "analyzer_id":"..." }
     """
     if not portal_token:
@@ -911,22 +911,38 @@ def _portal_verify_via_api(portal_token: str) -> (bool, str, dict):
             return False, "Missing PORTAL_BASE_URL (or PORTAL_SSO_VERIFY_URL)", {}
         verify_url = f"{PORTAL_BASE_URL}/sso/verify"
 
-    # Single attempt only: Portal token is one-time. (connect_timeout, read_timeout) to fail fast on unreachable host.
-    try:
-        r = requests.post(
-            verify_url,
-            json={"token": portal_token},
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
-            timeout=(15, 35),
-        )
-    except Exception as e:
-        err_lower = str(e).lower()
-        if "timed out" in err_lower or "timeout" in err_lower or "connection" in err_lower:
-            return False, (
-                "Connection to Portal timed out. "
-                "請稍候再點「回到 Portal」重新進入。 / Click « Back to Portal » and try again."
-            ), {}
-        return False, f"Portal verify request failed: {e}", {}
+    # Restored: single timeout 30s, up to 2 retries with short delay (matches behavior when login worked).
+    _timeout_sec = 30
+    _delays = (2, 4)
+    r = None
+    last_err = None
+    for attempt in range(1 + len(_delays)):
+        try:
+            r = requests.post(
+                verify_url,
+                json={"token": portal_token},
+                headers={"Content-Type": "application/json", "Accept": "application/json"},
+                timeout=_timeout_sec,
+            )
+            last_err = None
+            break
+        except Exception as e:
+            last_err = e
+            err_lower = str(e).lower()
+            if attempt < len(_delays) and ("timed out" in err_lower or "timeout" in err_lower or "connection" in err_lower):
+                time.sleep(_delays[attempt])
+                continue
+            if "timed out" in err_lower or "timeout" in err_lower or "connection" in err_lower:
+                return False, (
+                    "Connection to Portal timed out. "
+                    "請稍候再點「回到 Portal」重新進入。 / Click « Back to Portal » and try again."
+                ), {}
+            return False, f"Portal verify request failed: {e}", {}
+    if r is None and last_err is not None:
+        return False, (
+            "Connection to Portal timed out. "
+            "請稍候再點「回到 Portal」重新進入。 / Click « Back to Portal » and try again."
+        ), {}
 
     if r.status_code != 200:
         try:
