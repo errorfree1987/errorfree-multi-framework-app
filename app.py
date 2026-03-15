@@ -4019,8 +4019,8 @@ def main():
         st.session_state["_step4_auto_expand"] = True  # auto-expand Step 4 to show suggested frameworks
         if st.session_state.selected_framework_key not in st.session_state.selected_framework_keys:
             st.session_state.selected_framework_key = st.session_state.selected_framework_keys[0] if st.session_state.selected_framework_keys else fw_keys[0]
-        for k in fw_keys:
-            st.session_state[f"fw_cb_{k}"] = k in recommended_set
+        # Do NOT set st.session_state[f"fw_cb_{k}"] here — it conflicts with checkbox value= and triggers
+        # "widget was created with default value but also had its value set via Session State API".
 
     save_state_to_disk()
 
@@ -4126,6 +4126,9 @@ def main():
 
     # Step 4: select framework (lock after Step 5) — collapsible for cleaner UI
     should_expand = st.session_state.pop("_step4_auto_expand", False)
+    # Keep expander open when user has selected frameworks so add/uncheck doesn't collapse (stays in place)
+    keep_step4_open = bool(st.session_state.get("selected_framework_keys"))
+    step4_expanded = should_expand or keep_step4_open
     if should_expand:
         st.markdown('<div id="step4-framework-section"></div>', unsafe_allow_html=True)
     st.subheader("Step 4: Select Framework" if lang == "en" else zh("步驟四：選擇分析框架", "步骤四：选择分析框架"))
@@ -4138,7 +4141,7 @@ def main():
         zh("展開查看／修改依文件類型建議的框架選項", "展开查看／修改依文件类型建议的框架选项")
         if lang == "zh" else f"Expand to view/edit framework options (suggested for {doc_type})"
     )
-    with st.expander(expander_label, expanded=should_expand):
+    with st.expander(expander_label, expanded=step4_expanded):
         st.info(
             zh("以下為系統依文件類型自動勾選的建議選項，您仍可自行加選或取消。", "以下为系统依文件类型自动勾选的建议选项，您仍可自行加选或取消。")
             if lang == "zh" else "Below are suggested options auto-selected by document type. You may add or uncheck as needed."
