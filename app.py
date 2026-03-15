@@ -1733,8 +1733,9 @@ def restore_state_from_disk():
         if k in data:
             st.session_state[k] = data[k]
 
-
-
+    # Step 4 multiselect must re-initialize from restored selected_framework_keys
+    if "step4_framework_multiselect" in st.session_state:
+        del st.session_state["step4_framework_multiselect"]
 
 
 # =========================
@@ -3423,6 +3424,8 @@ def _reset_whole_document():
     for _k in list(st.session_state.keys()):
         if _k.startswith("fw_cb_"):
             del st.session_state[_k]
+    if "step4_framework_multiselect" in st.session_state:
+        del st.session_state["step4_framework_multiselect"]
 
     # also clear legacy single-key uploaders (older deployments)
     for _legacy in ["review_doc_uploader", "upstream_uploader"]:
@@ -4042,10 +4045,8 @@ def main():
                 st.session_state.selected_framework_key = st.session_state.selected_framework_keys[0]
         else:
             st.session_state.selected_framework_key = fw_keys[0] if fw_keys else None
-        for k in fw_keys:
-            key = f"fw_cb_{k}"
-            if key in st.session_state:
-                del st.session_state[key]
+        if "step4_framework_multiselect" in st.session_state:
+            del st.session_state["step4_framework_multiselect"]
         save_state_to_disk()
         st.rerun()
 
@@ -4177,21 +4178,20 @@ def main():
                 if lang == "zh" else "Below are suggested options auto-selected by document type. You may add or uncheck as needed."
             )
 
-        sel_keys = st.session_state.get("selected_framework_keys") or []
-        sel_keys_set = set(sel_keys)
-        new_sel_keys = []
-        for i, k in enumerate(fw_keys):
-            lbl = fw_labels[i]
-            checked = st.checkbox(lbl, value=(k in sel_keys_set), key=f"fw_cb_{k}", disabled=step5_done)
-            if checked:
-                new_sel_keys.append(k)
-
-        st.session_state.selected_framework_keys = new_sel_keys
+        # Use multiselect (single key) so selection always reflects selected_framework_keys after rerun; no per-checkbox session conflict
+        default_sel = st.session_state.get("selected_framework_keys") or []
+        new_sel_keys = st.multiselect(
+            zh("選擇框架（可多選）", "选择框架（可多选）"),
+            options=fw_keys,
+            default=default_sel,
+            format_func=lambda k: key_to_label.get(k, k),
+            key="step4_framework_multiselect",
+            disabled=step5_done,
+        )
 
         doc_type_step4 = st.session_state.get("document_type") or DOC_TYPES[0]
         if not new_sel_keys:
             if doc_type_step4 == "None":
-                # Step 2 "None" => Step 4 stays empty (no suggested options); keep current key for app state
                 st.session_state.selected_framework_keys = []
                 st.session_state.selected_framework_key = st.session_state.selected_framework_key if st.session_state.selected_framework_key in fw_keys else fw_keys[0]
                 selected_key = st.session_state.selected_framework_key
@@ -4201,6 +4201,7 @@ def main():
                 selected_key = new_sel_keys[0]
                 st.session_state.selected_framework_key = selected_key
         else:
+            st.session_state.selected_framework_keys = new_sel_keys
             selected_key = new_sel_keys[0]
             st.session_state.selected_framework_key = selected_key
 
