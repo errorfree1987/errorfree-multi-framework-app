@@ -3969,22 +3969,22 @@ def main():
         "Contract": "合约",
     }
 
-    # Document type → recommended framework keys (for Step 4 auto pre-select)
+    # Document type → recommended framework keys (Step 4), per "Types of Document and Recommended Review Areas" matrix
     DOC_TYPE_TO_RECOMMENDED_FRAMEWORKS = {
         "None": [],
         "Specifications and Requirements": ["work_spv", "omission_errors", "information_errors", "alignment_errors", "reasoning_errors"],
-        "Conceptual Design": ["design_spv", "assumption_spv", "omission_errors", "information_errors", "alignment_errors", "reasoning_errors"],
-        "Preliminary Design": ["design_spv", "assumption_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
+        "Conceptual Design": ["design_spv", "assumption_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
+        "Preliminary Design": ["design_spv", "assumption_spv", "injury_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
         "Final Design": ["work_spv", "design_spv", "assumption_spv", "injury_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
         "Equivalency Engineering Evaluation": ["omission_errors", "information_errors", "technical_errors", "alignment_errors"],
         "Root Cause Analysis": ["design_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors"],
         "Calculation and Analysis": ["design_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
         "Safety Analysis": ["design_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
         "Justification for Continued Operation": ["work_spv", "design_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
-        "Operation Procedures": ["work_spv", "assumption_spv", "injury_spv", "omission_errors", "information_errors", "alignment_errors", "reasoning_errors"],
-        "Maintenance Procedures": ["work_spv", "assumption_spv", "injury_spv", "omission_errors", "information_errors", "alignment_errors", "reasoning_errors"],
-        "Project Planning": ["work_spv", "assumption_spv", "injury_spv", "omission_errors", "information_errors", "alignment_errors", "reasoning_errors"],
-        "Contract": ["work_spv", "assumption_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
+        "Operation Procedures": ["work_spv", "assumption_spv", "injury_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
+        "Maintenance Procedures": ["work_spv", "assumption_spv", "injury_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
+        "Project Planning": ["work_spv", "assumption_spv", "injury_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
+        "Contract": ["work_spv", "design_spv", "assumption_spv", "injury_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
     }
 
     if st.session_state.get("document_type") not in DOC_TYPES:
@@ -4005,19 +4005,21 @@ def main():
         value_to_label = {x: mapping.get(x, x) for x in DOC_TYPES}
         current_label = value_to_label.get(st.session_state.document_type, labels[0])
 
+        _idx_zh = labels.index(current_label) if current_label in labels else 0
         picked_label = st.selectbox(
             zh("選擇文件類型", "选择文件类型"),
             labels,
-            index=labels.index(current_label) if current_label in labels else 0,
+            index=_idx_zh,
             key="document_type_select_zh",
             disabled=doc_type_disabled,
         )
         st.session_state.document_type = label_to_value.get(picked_label, DOC_TYPES[0])
     else:
+        _idx = DOC_TYPES.index(st.session_state.document_type) if st.session_state.document_type in DOC_TYPES else 0
         st.session_state.document_type = st.selectbox(
             "Select document type",
             DOC_TYPES,
-            index=DOC_TYPES.index(st.session_state.document_type),
+            index=_idx,
             key="document_type_select",
             disabled=doc_type_disabled,
         )
@@ -4158,10 +4160,16 @@ def main():
         if lang == "zh" else f"Expand to view/edit framework options (suggested for {doc_type})"
     )
     with st.expander(expander_label, expanded=should_expand):
-        st.info(
-            zh("以下為系統依文件類型自動勾選的建議選項，您仍可自行加選或取消。", "以下为系统依文件类型自动勾选的建议选项，您仍可自行加选或取消。")
-            if lang == "zh" else "Below are suggested options auto-selected by document type. You may add or uncheck as needed."
-        )
+        if doc_type == "None":
+            st.info(
+                zh("目前未選擇文件類型，無建議選項；您可自行勾選需要的框架。", "目前未选择文件类型，无建议选项；您可自行勾选需要的框架。")
+                if lang == "zh" else "No document type selected — no suggested options. You may check the frameworks you need."
+            )
+        else:
+            st.info(
+                zh("以下為系統依文件類型自動勾選的建議選項，您仍可自行加選或取消。", "以下为系统依文件类型自动勾选的建议选项，您仍可自行加选或取消。")
+                if lang == "zh" else "Below are suggested options auto-selected by document type. You may add or uncheck as needed."
+            )
 
         sel_keys = st.session_state.get("selected_framework_keys") or []
         sel_keys_set = set(sel_keys)
@@ -4174,11 +4182,21 @@ def main():
 
         st.session_state.selected_framework_keys = new_sel_keys
 
+        doc_type_step4 = st.session_state.get("document_type") or DOC_TYPES[0]
         if not new_sel_keys:
-            new_sel_keys = list(fw_keys)
-            st.session_state.selected_framework_keys = new_sel_keys
-        selected_key = new_sel_keys[0]
-        st.session_state.selected_framework_key = selected_key
+            if doc_type_step4 == "None":
+                # Step 2 "None" => Step 4 stays empty (no suggested options); keep current key for app state
+                st.session_state.selected_framework_keys = []
+                st.session_state.selected_framework_key = st.session_state.selected_framework_key if st.session_state.selected_framework_key in fw_keys else fw_keys[0]
+                selected_key = st.session_state.selected_framework_key
+            else:
+                new_sel_keys = list(fw_keys)
+                st.session_state.selected_framework_keys = new_sel_keys
+                selected_key = new_sel_keys[0]
+                st.session_state.selected_framework_key = selected_key
+        else:
+            selected_key = new_sel_keys[0]
+            st.session_state.selected_framework_key = selected_key
 
     if should_expand:
         try:
