@@ -890,6 +890,8 @@ def _render_portal_only_block(reason: str = ""):
     st.error("請從 Error-Free® Portal 進入此分析框架（Portal-only）。")
     if reason:
         st.caption(f"Reason: {reason}")
+        if "timeout" in reason.lower() or "timed out" in reason.lower():
+            st.caption("If Portal was just started, wait a moment and try again from the Portal link.")
     if PORTAL_BASE_URL:
         st.link_button("回到 Portal / Back to Portal", PORTAL_BASE_URL)
     else:
@@ -912,15 +914,27 @@ def _portal_verify_via_api(portal_token: str) -> (bool, str, dict):
             return False, "Missing PORTAL_BASE_URL (or PORTAL_SSO_VERIFY_URL)", {}
         verify_url = f"{PORTAL_BASE_URL}/sso/verify"
 
-    try:
-        r = requests.post(
-            verify_url,
-            json={"token": portal_token},
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
-            timeout=15,
-        )
-    except Exception as e:
-        return False, f"Portal verify request failed: {e}", {}
+    # Use longer timeout and one retry for cold-start / slow Portal (e.g. Railway)
+    timeout_sec = 30
+    last_err = None
+    for attempt in range(2):
+        try:
+            r = requests.post(
+                verify_url,
+                json={"token": portal_token},
+                headers={"Content-Type": "application/json", "Accept": "application/json"},
+                timeout=timeout_sec,
+            )
+            last_err = None
+            break
+        except (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError) as e:
+            last_err = e
+            if attempt == 0:
+                timeout_sec = 45
+                continue
+            return False, f"Portal verify request failed: {e}", {}
+        except Exception as e:
+            return False, f"Portal verify request failed: {e}", {}
 
     if r.status_code != 200:
         try:
