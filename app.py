@@ -890,8 +890,6 @@ def _render_portal_only_block(reason: str = ""):
     st.error("請從 Error-Free® Portal 進入此分析框架（Portal-only）。")
     if reason:
         st.caption(f"Reason: {reason}")
-        if "timeout" in reason.lower() or "timed out" in reason.lower():
-            st.caption("If Portal was just started, wait a moment and try again from the Portal link.")
     if PORTAL_BASE_URL:
         st.link_button("回到 Portal / Back to Portal", PORTAL_BASE_URL)
     else:
@@ -914,27 +912,15 @@ def _portal_verify_via_api(portal_token: str) -> (bool, str, dict):
             return False, "Missing PORTAL_BASE_URL (or PORTAL_SSO_VERIFY_URL)", {}
         verify_url = f"{PORTAL_BASE_URL}/sso/verify"
 
-    # Use longer timeout and one retry for cold-start / slow Portal (e.g. Railway)
-    timeout_sec = 30
-    last_err = None
-    for attempt in range(2):
-        try:
-            r = requests.post(
-                verify_url,
-                json={"token": portal_token},
-                headers={"Content-Type": "application/json", "Accept": "application/json"},
-                timeout=timeout_sec,
-            )
-            last_err = None
-            break
-        except (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError) as e:
-            last_err = e
-            if attempt == 0:
-                timeout_sec = 45
-                continue
-            return False, f"Portal verify request failed: {e}", {}
-        except Exception as e:
-            return False, f"Portal verify request failed: {e}", {}
+    try:
+        r = requests.post(
+            verify_url,
+            json={"token": portal_token},
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            timeout=15,
+        )
+    except Exception as e:
+        return False, f"Portal verify request failed: {e}", {}
 
     if r.status_code != 200:
         try:
@@ -1683,11 +1669,6 @@ def save_state_to_disk():
         pass
 
 
-def _set_step4_auto_expand_on_doc_type_change():
-    """Called when user changes document type in Step 2; ensures jump to Step 4 for ALL options."""
-    st.session_state["_step4_auto_expand"] = True
-
-
 def restore_state_from_disk():
     """
     SECURITY NOTE:
@@ -1709,27 +1690,18 @@ def restore_state_from_disk():
         if bad_key in data:
             data.pop(bad_key, None)
 
-    # Workflow keys to restore (overwrite so refresh brings back saved content).
-    # Do NOT restore _last_doc_type_for_framework_suggest: we need sync to run when doc_type
-    # is set so Step 4 gets correct recommended frameworks.
-    # When landing from Portal (portal_token in URL), do NOT restore document_type / selected_framework_keys
-    # so the first view is None + Step 4 collapsed (user requirement).
-    qp = _read_query_params()
-    skip_doc_and_fw = bool(qp.get("portal_token"))
+    # Workflow keys to restore (overwrite so refresh brings back saved content)
     workflow_keys = [
         "lang", "zh_variant", "usage_date", "usage_count",
-        "last_doc_text", "last_doc_name",
-        "current_doc_id", "show_admin",
+        "last_doc_text", "last_doc_name", "document_type",
+        "framework_states", "selected_framework_key", "selected_framework_keys",
+        "_last_doc_type_for_framework_suggest", "current_doc_id", "show_admin",
         "upstream_reference", "quote_current", "quote_history",
         "quote_upload_nonce", "review_upload_nonce", "upstream_upload_nonce",
         "quote_upload_finalized", "upstream_step6_done", "upstream_step6_output",
         "quote_step6_done_current", "step7_history", "integration_history",
         "_pending_clear_followup_key",
     ]
-    if not skip_doc_and_fw:
-        workflow_keys = [
-            "document_type", "framework_states", "selected_framework_key", "selected_framework_keys",
-        ] + workflow_keys
     for k in workflow_keys:
         if k in data:
             st.session_state[k] = data[k]
@@ -3424,9 +3396,6 @@ def _reset_whole_document():
     for _k in list(st.session_state.keys()):
         if _k.startswith("fw_cb_"):
             del st.session_state[_k]
-    for _k in ["_step4_auto_expand", "_step4_ever_expanded"]:
-        if _k in st.session_state:
-            del st.session_state[_k]
 
     # also clear legacy single-key uploaders (older deployments)
     for _legacy in ["review_doc_uploader", "upstream_uploader"]:
@@ -3945,7 +3914,7 @@ def main():
     ]
 
     DOC_TYPE_LABELS_ZH_TW = {
-        "None": "未選擇",
+        "None": "無",
         "Specifications and Requirements": "規格與需求",
         "Conceptual Design": "概念設計",
         "Preliminary Design": "初步設計",
@@ -3961,7 +3930,7 @@ def main():
         "Contract": "合約",
     }
     DOC_TYPE_LABELS_ZH_CN = {
-        "None": "未选择",
+        "None": "无",
         "Specifications and Requirements": "规格与需求",
         "Conceptual Design": "概念设计",
         "Preliminary Design": "初步设计",
@@ -3996,7 +3965,7 @@ def main():
     }
 
     if st.session_state.get("document_type") not in DOC_TYPES:
-        st.session_state.document_type = DOC_TYPES[0]
+        st.session_state.document_type = DOC_TYPES[0]  # "None" so UI shows no pre-selection
 
     if st.session_state.document_type == "Specifications and Requirements" and not step5_done:
         st.warning(
@@ -4019,22 +3988,18 @@ def main():
             index=labels.index(current_label) if current_label in labels else 0,
             key="document_type_select_zh",
             disabled=doc_type_disabled,
-            on_change=_set_step4_auto_expand_on_doc_type_change,
         )
         st.session_state.document_type = label_to_value.get(picked_label, DOC_TYPES[0])
     else:
         st.session_state.document_type = st.selectbox(
             "Select document type",
             DOC_TYPES,
-            index=DOC_TYPES.index(st.session_state.document_type) if st.session_state.document_type in DOC_TYPES else 0,
+            index=DOC_TYPES.index(st.session_state.document_type),
             key="document_type_select",
             disabled=doc_type_disabled,
-            on_change=_set_step4_auto_expand_on_doc_type_change,
         )
 
     # Sync recommended frameworks when document_type changes (for Step 4 auto pre-select)
-    # Do NOT use st.rerun() here - it causes UI freeze. Instead, directly set checkbox
-    # state in session_state so checkboxes pick up new values when they render below.
     doc_type = st.session_state.document_type or DOC_TYPES[0]
     last_doc_type = st.session_state.get("_last_doc_type_for_framework_suggest")
     if doc_type != last_doc_type:
@@ -4042,15 +4007,13 @@ def main():
         recommended_set = set(k for k in recommended if k in fw_keys)
         st.session_state.selected_framework_keys = list(recommended_set)
         st.session_state._last_doc_type_for_framework_suggest = doc_type
-        st.session_state["_step4_auto_expand"] = True  # auto-expand Step 4 to show suggested frameworks
+        st.session_state["_step4_auto_expand"] = True  # auto-expand and scroll to Step 4 for any doc type change
         if st.session_state.selected_framework_key not in st.session_state.selected_framework_keys:
             st.session_state.selected_framework_key = st.session_state.selected_framework_keys[0] if st.session_state.selected_framework_keys else fw_keys[0]
-        # Clear stale checkbox widget state so checkboxes use value=(k in sel_keys_set) and show new recommendations.
-        # (Setting fw_cb_* here would trigger "widget created with default value but also set via Session State API".)
         for k in fw_keys:
-            key = f"fw_cb_{k}"
-            if key in st.session_state:
-                del st.session_state[key]
+            st.session_state[f"fw_cb_{k}"] = k in recommended_set
+        save_state_to_disk()
+        st.rerun()  # rerun so Step 4 expand + scroll runs in same cycle for every selection (not only some)
 
     save_state_to_disk()
 
@@ -4155,23 +4118,7 @@ def main():
     st.markdown("---")
 
     # Step 4: select framework (lock after Step 5) — collapsible for cleaner UI
-    # Ensure Step 4 always shows recommendations for current document_type (fix: blank checkboxes).
-    _doc_type = st.session_state.get("document_type") or DOC_TYPES[0]
-    _sel = st.session_state.get("selected_framework_keys") or []
-    if _doc_type and _doc_type != "None" and not _sel:
-        _rec = DOC_TYPE_TO_RECOMMENDED_FRAMEWORKS.get(_doc_type, fw_keys)
-        _rec_set = set(k for k in _rec if k in fw_keys)
-        st.session_state.selected_framework_keys = list(_rec_set)
-        if st.session_state.get("selected_framework_key") not in st.session_state.selected_framework_keys:
-            st.session_state.selected_framework_key = (st.session_state.selected_framework_keys[0] if st.session_state.selected_framework_keys else fw_keys[0])
-
     should_expand = st.session_state.pop("_step4_auto_expand", False)
-    if should_expand:
-        st.session_state["_step4_ever_expanded"] = True
-    # Keep expander open after user has triggered it (Step 2 change) so add/uncheck doesn't collapse.
-    # Don't auto-expand on first load so login lands at top of Analyzer.
-    keep_step4_open = bool(st.session_state.get("selected_framework_keys")) and st.session_state.get("_step4_ever_expanded")
-    step4_expanded = should_expand or keep_step4_open
     if should_expand:
         st.markdown('<div id="step4-framework-section"></div>', unsafe_allow_html=True)
     st.subheader("Step 4: Select Framework" if lang == "en" else zh("步驟四：選擇分析框架", "步骤四：选择分析框架"))
@@ -4184,7 +4131,7 @@ def main():
         zh("展開查看／修改依文件類型建議的框架選項", "展开查看／修改依文件类型建议的框架选项")
         if lang == "zh" else f"Expand to view/edit framework options (suggested for {doc_type})"
     )
-    with st.expander(expander_label, expanded=step4_expanded):
+    with st.expander(expander_label, expanded=should_expand):
         st.info(
             zh("以下為系統依文件類型自動勾選的建議選項，您仍可自行加選或取消。", "以下为系统依文件类型自动勾选的建议选项，您仍可自行加选或取消。")
             if lang == "zh" else "Below are suggested options auto-selected by document type. You may add or uncheck as needed."
@@ -4192,13 +4139,10 @@ def main():
 
         sel_keys = st.session_state.get("selected_framework_keys") or []
         sel_keys_set = set(sel_keys)
-        # Drive checkbox display from selected_framework_keys (avoids stale widget state showing blank).
-        for _k in fw_keys:
-            st.session_state[f"fw_cb_{_k}"] = _k in sel_keys_set
         new_sel_keys = []
         for i, k in enumerate(fw_keys):
             lbl = fw_labels[i]
-            checked = st.checkbox(lbl, key=f"fw_cb_{k}", disabled=step5_done)
+            checked = st.checkbox(lbl, value=(k in sel_keys_set), key=f"fw_cb_{k}", disabled=step5_done)
             if checked:
                 new_sel_keys.append(k)
 
@@ -4210,11 +4154,7 @@ def main():
         selected_key = new_sel_keys[0]
         st.session_state.selected_framework_key = selected_key
 
-    if step4_expanded:
-        st.session_state["_step4_ever_expanded"] = True
-
-    # Only scroll when user just changed Step 2 (should_expand), not on first load after login.
-    if should_expand and st.session_state.get("_analyzer_launch_logged"):
+    if should_expand:
         try:
             import streamlit.components.v1 as components
             components.html("""
