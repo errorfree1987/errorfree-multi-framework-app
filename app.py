@@ -4148,6 +4148,20 @@ def main():
     st.markdown("---")
 
     # Step 4: select framework (lock after Step 5) — collapsible for cleaner UI
+    # Ensure Step 4 always shows recommendations for current document_type (fix: blank checkboxes).
+    _doc_type = st.session_state.get("document_type") or DOC_TYPES[0]
+    _sel = st.session_state.get("selected_framework_keys") or []
+    if _doc_type and _doc_type != "None" and not _sel:
+        _rec = DOC_TYPE_TO_RECOMMENDED_FRAMEWORKS.get(_doc_type, fw_keys)
+        _rec_set = set(k for k in _rec if k in fw_keys)
+        st.session_state.selected_framework_keys = list(_rec_set)
+        if st.session_state.get("selected_framework_key") not in st.session_state.selected_framework_keys:
+            st.session_state.selected_framework_key = (st.session_state.selected_framework_keys[0] if st.session_state.selected_framework_keys else fw_keys[0])
+        for _k in fw_keys:
+            _key = f"fw_cb_{_k}"
+            if _key in st.session_state:
+                del st.session_state[_key]
+
     should_expand = st.session_state.pop("_step4_auto_expand", False)
     if should_expand:
         st.session_state["_step4_ever_expanded"] = True
@@ -4189,6 +4203,9 @@ def main():
             st.session_state.selected_framework_keys = new_sel_keys
         selected_key = new_sel_keys[0]
         st.session_state.selected_framework_key = selected_key
+
+    if step4_expanded:
+        st.session_state["_step4_ever_expanded"] = True
 
     # Only scroll when user just changed Step 2 (should_expand), not on first load after login.
     if should_expand and st.session_state.get("_analyzer_launch_logged"):
