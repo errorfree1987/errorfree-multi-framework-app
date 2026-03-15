@@ -4033,7 +4033,11 @@ def main():
         st.session_state["_step4_auto_expand"] = True  # auto-expand and scroll to Step 4 for any doc type change
         if st.session_state.selected_framework_key not in st.session_state.selected_framework_keys:
             st.session_state.selected_framework_key = st.session_state.selected_framework_keys[0] if st.session_state.selected_framework_keys else fw_keys[0]
-        # Do not set st.session_state["fw_cb_*"] here; Step 4 checkboxes use value=(k in sel_keys_set) from selected_framework_keys to avoid widget/session_state conflict warning
+        # Clear old checkbox widget state so Step 4 checkboxes re-initialize from selected_framework_keys (avoids stale "all checked" and avoids setting fw_cb_* before render which caused the yellow warning)
+        for k in fw_keys:
+            key = f"fw_cb_{k}"
+            if key in st.session_state:
+                del st.session_state[key]
         save_state_to_disk()
         st.rerun()  # rerun so Step 4 expand + scroll runs in same cycle for every selection (not only some)
 
