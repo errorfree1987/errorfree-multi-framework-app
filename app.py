@@ -899,7 +899,7 @@ def _render_portal_only_block(reason: str = ""):
 
 def _portal_verify_via_api(portal_token: str) -> (bool, str, dict):
     """
-    Call Portal /sso/verify
+    Call Portal /sso/verify (with retry on timeout/connection error for cold starts).
     Expect response JSON like:
     { "status":"ok", "email":"...", "company_id":"...", "analyzer_id":"..." }
     """
@@ -912,15 +912,25 @@ def _portal_verify_via_api(portal_token: str) -> (bool, str, dict):
             return False, "Missing PORTAL_BASE_URL (or PORTAL_SSO_VERIFY_URL)", {}
         verify_url = f"{PORTAL_BASE_URL}/sso/verify"
 
-    try:
-        r = requests.post(
-            verify_url,
-            json={"token": portal_token},
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
-            timeout=15,
-        )
-    except Exception as e:
-        return False, f"Portal verify request failed: {e}", {}
+    _VERIFY_TIMEOUT = 30
+    r = None
+    for attempt in range(2):
+        try:
+            r = requests.post(
+                verify_url,
+                json={"token": portal_token},
+                headers={"Content-Type": "application/json", "Accept": "application/json"},
+                timeout=_VERIFY_TIMEOUT,
+            )
+            break
+        except Exception as e:
+            err_lower = str(e).lower()
+            if attempt == 0 and ("timed out" in err_lower or "timeout" in err_lower or "connection" in err_lower):
+                time.sleep(3)
+                continue
+            return False, f"Portal verify request failed: {e}", {}
+    if r is None:
+        return False, "Portal verify request failed: connection timeout (Portal may be starting). Try again in a moment.", {}
 
     if r.status_code != 200:
         try:
@@ -1200,7 +1210,7 @@ def try_portal_sso_login():
                 "Cannot mint analyzer_session: missing ANALYZER_SESSION_SECRET (or PORTAL_SSO_SECRET)"
             )
 
-        # Rewrite URL to keep only analyzer_session (so Refresh works, and portal_token disappears)
+        # Rewrite URL to Analyzer top page with only analyzer_session (so Refresh works; portal_token removed)
         try:
             st.query_params.clear()
             st.query_params[_QP_SESSION_KEY] = session_token
