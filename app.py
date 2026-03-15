@@ -1711,11 +1711,14 @@ def restore_state_from_disk():
 
     # Workflow keys to restore (overwrite so refresh brings back saved content).
     # Do NOT restore _last_doc_type_for_framework_suggest: we need sync to run when doc_type
-    # is set (from restore or from UI) so Step 4 gets correct recommended frameworks.
+    # is set so Step 4 gets correct recommended frameworks.
+    # When landing from Portal (portal_token in URL), do NOT restore document_type / selected_framework_keys
+    # so the first view is None + Step 4 collapsed (user requirement).
+    qp = _read_query_params()
+    skip_doc_and_fw = bool(qp.get("portal_token"))
     workflow_keys = [
         "lang", "zh_variant", "usage_date", "usage_count",
-        "last_doc_text", "last_doc_name", "document_type",
-        "framework_states", "selected_framework_key", "selected_framework_keys",
+        "last_doc_text", "last_doc_name",
         "current_doc_id", "show_admin",
         "upstream_reference", "quote_current", "quote_history",
         "quote_upload_nonce", "review_upload_nonce", "upstream_upload_nonce",
@@ -1723,6 +1726,10 @@ def restore_state_from_disk():
         "quote_step6_done_current", "step7_history", "integration_history",
         "_pending_clear_followup_key",
     ]
+    if not skip_doc_and_fw:
+        workflow_keys = [
+            "document_type", "framework_states", "selected_framework_key", "selected_framework_keys",
+        ] + workflow_keys
     for k in workflow_keys:
         if k in data:
             st.session_state[k] = data[k]
@@ -4157,10 +4164,6 @@ def main():
         st.session_state.selected_framework_keys = list(_rec_set)
         if st.session_state.get("selected_framework_key") not in st.session_state.selected_framework_keys:
             st.session_state.selected_framework_key = (st.session_state.selected_framework_keys[0] if st.session_state.selected_framework_keys else fw_keys[0])
-        for _k in fw_keys:
-            _key = f"fw_cb_{_k}"
-            if _key in st.session_state:
-                del st.session_state[_key]
 
     should_expand = st.session_state.pop("_step4_auto_expand", False)
     if should_expand:
@@ -4189,10 +4192,13 @@ def main():
 
         sel_keys = st.session_state.get("selected_framework_keys") or []
         sel_keys_set = set(sel_keys)
+        # Drive checkbox display from selected_framework_keys (avoids stale widget state showing blank).
+        for _k in fw_keys:
+            st.session_state[f"fw_cb_{_k}"] = _k in sel_keys_set
         new_sel_keys = []
         for i, k in enumerate(fw_keys):
             lbl = fw_labels[i]
-            checked = st.checkbox(lbl, value=(k in sel_keys_set), key=f"fw_cb_{k}", disabled=step5_done)
+            checked = st.checkbox(lbl, key=f"fw_cb_{k}", disabled=step5_done)
             if checked:
                 new_sel_keys.append(k)
 
