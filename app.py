@@ -953,7 +953,8 @@ def _portal_verify_via_api(portal_token: str) -> (bool, str, dict):
     if status not in ("ok", "success", "200", "true"):
         return False, f"Portal verify returned non-ok: {data}", data
 
-    info = data.get("info") if isinstance(data.get("info"), dict) else data
+    raw_info = data.get("info") if isinstance(data.get("info"), dict) else data
+    info = dict(raw_info) if isinstance(raw_info, dict) else {}
 
     # Ensure tenant_epoch is an int (default 0)
     try:
