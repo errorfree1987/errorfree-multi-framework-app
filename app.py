@@ -912,9 +912,11 @@ def _portal_verify_via_api(portal_token: str) -> (bool, str, dict):
             return False, "Missing PORTAL_BASE_URL (or PORTAL_SSO_VERIFY_URL)", {}
         verify_url = f"{PORTAL_BASE_URL}/sso/verify"
 
-    _VERIFY_TIMEOUT = 30
+    _VERIFY_TIMEOUT = 45
+    _RETRY_DELAYS = (3, 6)
     r = None
-    for attempt in range(2):
+    last_exc = None
+    for attempt in range(1 + len(_RETRY_DELAYS)):
         try:
             r = requests.post(
                 verify_url,
@@ -922,15 +924,26 @@ def _portal_verify_via_api(portal_token: str) -> (bool, str, dict):
                 headers={"Content-Type": "application/json", "Accept": "application/json"},
                 timeout=_VERIFY_TIMEOUT,
             )
+            last_exc = None
             break
         except Exception as e:
+            last_exc = e
             err_lower = str(e).lower()
-            if attempt == 0 and ("timed out" in err_lower or "timeout" in err_lower or "connection" in err_lower):
-                time.sleep(3)
+            is_retryable = "timed out" in err_lower or "timeout" in err_lower or "connection" in err_lower
+            if attempt < len(_RETRY_DELAYS) and is_retryable:
+                time.sleep(_RETRY_DELAYS[attempt])
                 continue
+            if is_retryable:
+                return False, (
+                    "Connection to Portal timed out (Portal may be starting). "
+                    "請稍候再點「回到 Portal」重新進入分析框架。 / Wait a moment, then click « Back to Portal » and try again."
+                ), {}
             return False, f"Portal verify request failed: {e}", {}
-    if r is None:
-        return False, "Portal verify request failed: connection timeout (Portal may be starting). Try again in a moment.", {}
+    if r is None and last_exc is not None:
+        return False, (
+            "Connection to Portal timed out (Portal may be starting). "
+            "請稍候再點「回到 Portal」重新進入分析框架。 / Wait a moment, then click « Back to Portal » and try again."
+        ), {}
 
     if r.status_code != 200:
         try:
