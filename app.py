@@ -3401,6 +3401,9 @@ def _reset_whole_document():
     for _k in list(st.session_state.keys()):
         if _k.startswith("fw_cb_"):
             del st.session_state[_k]
+    for _k in ["_step4_auto_expand", "_step4_ever_expanded"]:
+        if _k in st.session_state:
+            del st.session_state[_k]
 
     # also clear legacy single-key uploaders (older deployments)
     for _legacy in ["review_doc_uploader", "upstream_uploader"]:
@@ -4019,8 +4022,12 @@ def main():
         st.session_state["_step4_auto_expand"] = True  # auto-expand Step 4 to show suggested frameworks
         if st.session_state.selected_framework_key not in st.session_state.selected_framework_keys:
             st.session_state.selected_framework_key = st.session_state.selected_framework_keys[0] if st.session_state.selected_framework_keys else fw_keys[0]
-        # Do NOT set st.session_state[f"fw_cb_{k}"] here — it conflicts with checkbox value= and triggers
-        # "widget was created with default value but also had its value set via Session State API".
+        # Clear stale checkbox widget state so checkboxes use value=(k in sel_keys_set) and show new recommendations.
+        # (Setting fw_cb_* here would trigger "widget created with default value but also set via Session State API".)
+        for k in fw_keys:
+            key = f"fw_cb_{k}"
+            if key in st.session_state:
+                del st.session_state[key]
 
     save_state_to_disk()
 
@@ -4126,8 +4133,11 @@ def main():
 
     # Step 4: select framework (lock after Step 5) — collapsible for cleaner UI
     should_expand = st.session_state.pop("_step4_auto_expand", False)
-    # Keep expander open when user has selected frameworks so add/uncheck doesn't collapse (stays in place)
-    keep_step4_open = bool(st.session_state.get("selected_framework_keys"))
+    if should_expand:
+        st.session_state["_step4_ever_expanded"] = True
+    # Keep expander open after user has triggered it (Step 2 change) so add/uncheck doesn't collapse.
+    # Don't auto-expand on first load so login lands at top of Analyzer.
+    keep_step4_open = bool(st.session_state.get("selected_framework_keys")) and st.session_state.get("_step4_ever_expanded")
     step4_expanded = should_expand or keep_step4_open
     if should_expand:
         st.markdown('<div id="step4-framework-section"></div>', unsafe_allow_html=True)
@@ -4164,7 +4174,8 @@ def main():
         selected_key = new_sel_keys[0]
         st.session_state.selected_framework_key = selected_key
 
-    if should_expand:
+    # Only scroll when user just changed Step 2 (should_expand), not on first load after login.
+    if should_expand and st.session_state.get("_analyzer_launch_logged"):
         try:
             import streamlit.components.v1 as components
             components.html("""
