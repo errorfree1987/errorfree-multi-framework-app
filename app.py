@@ -1207,6 +1207,10 @@ def try_portal_sso_login():
         lang_raw = _qp_get("lang", "en")
         _apply_portal_lang(lang_raw)
 
+        # On Portal login: clear all workflow so user starts fresh (upload/select anew).
+        # Refresh with analyzer_session will later restore from disk; logout → Catalog → re-enter also gets new portal_token so we clear again.
+        _reset_whole_document()
+
         # Mint refresh-safe analyzer_session
         claims = {
             "email": verified_email,
@@ -3386,7 +3390,7 @@ def _reset_whole_document():
     st.session_state.framework_states = {}
     st.session_state.last_doc_text = ""
     st.session_state.last_doc_name = ""
-    st.session_state.document_type = None
+    st.session_state.document_type = "None"  # string so Step 2/Step 4 "None" logic is consistent
     st.session_state.current_doc_id = None
 
     # Step 3 references (更正2)
@@ -3395,10 +3399,10 @@ def _reset_whole_document():
     st.session_state.quote_history = []
     st.session_state.quote_upload_nonce = 0
 
-    # Also reset selection states so Step 2/Step 4 show FIRST option after reset
+    # Also reset selection states so Step 2/Step 4 show "None" / empty after reset
     st.session_state.selected_framework_key = None
     st.session_state.selected_framework_keys = []
-    st.session_state._last_doc_type_for_framework_suggest = None
+    st.session_state._last_doc_type_for_framework_suggest = "None"
 
     # Clear Streamlit uploader widget states so UI is truly reset
     for _k in list(st.session_state.keys()):
@@ -3506,9 +3510,9 @@ def main():
     # and BEFORE any login UI is rendered.
     try_portal_sso_login()
 
-    # Restore workflow state AFTER SSO so user identity is available
-    # (saved file path depends on user_email). Overwrites defaults with saved content
-    # so refresh preserves document type, frameworks, uploads, analysis results.
+    # Restore workflow state AFTER SSO (file path depends on user_email).
+    # Portal login: we cleared and saved above, so this loads fresh state.
+    # Refresh (analyzer_session): this restores last document type, frameworks, uploads, analysis.
     restore_state_from_disk()
 
     # -------------------------
