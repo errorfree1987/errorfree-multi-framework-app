@@ -3983,15 +3983,15 @@ def main():
         "Conceptual Design": ["design_spv", "assumption_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
         "Preliminary Design": ["design_spv", "assumption_spv", "injury_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
         "Final Design": ["work_spv", "design_spv", "assumption_spv", "injury_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
-        "Equivalency Engineering Evaluation": ["omission_errors", "information_errors", "technical_errors", "alignment_errors"],
-        "Root Cause Analysis": ["design_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors"],
+        "Equivalency Engineering Evaluation": ["omission_errors", "information_errors", "alignment_errors", "reasoning_errors"],
+        "Root Cause Analysis": ["design_spv", "omission_errors", "information_errors", "alignment_errors", "reasoning_errors"],
         "Calculation and Analysis": ["design_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
         "Safety Analysis": ["design_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
         "Justification for Continued Operation": ["work_spv", "design_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
         "Operation Procedures": ["work_spv", "assumption_spv", "injury_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
         "Maintenance Procedures": ["work_spv", "assumption_spv", "injury_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
         "Project Planning": ["work_spv", "assumption_spv", "injury_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
-        "Contract": ["work_spv", "design_spv", "assumption_spv", "injury_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
+        "Contract": ["work_spv", "design_spv", "omission_errors", "information_errors", "alignment_errors", "reasoning_errors"],
     }
 
     if st.session_state.get("document_type") not in DOC_TYPES:
@@ -4178,12 +4178,12 @@ def main():
                 if lang == "zh" else "Below are suggested options auto-selected by document type. You may add or uncheck as needed."
             )
 
-        # Use multiselect (single key) so selection always reflects selected_framework_keys after rerun; no per-checkbox session conflict
-        default_sel = st.session_state.get("selected_framework_keys") or []
+        # Sync multiselect widget with selected_framework_keys when key is missing (after doc_type change or refresh), so Step 4 shows correct pre-selection / restored state
+        if "step4_framework_multiselect" not in st.session_state:
+            st.session_state["step4_framework_multiselect"] = list(st.session_state.get("selected_framework_keys") or [])
         new_sel_keys = st.multiselect(
             zh("選擇框架（可多選）", "选择框架（可多选）"),
             options=fw_keys,
-            default=default_sel,
             format_func=lambda k: key_to_label.get(k, k),
             key="step4_framework_multiselect",
             disabled=step5_done,
@@ -4212,7 +4212,7 @@ def main():
             <script>
             (function(){
               try {
-                var el = window.parent.document.getElementById('step4-framework-section');
+                var el = document.getElementById('step4-framework-section');
                 if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
               } catch(e) {}
             })();
