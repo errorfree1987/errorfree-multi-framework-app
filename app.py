@@ -15,8 +15,8 @@ def load_tenant_ai_settings_from_supabase(tenant: str) -> dict:
     """
     Server-side only. Reads public.tenant_ai_settings by tenant.
     Requires Railway env:
-      - SUPABASE_URL
-      - SUPABASE_SERVICE_KEY   (service_role key; DO NOT expose to frontend)
+    - SUPABASE_URL
+    - SUPABASE_SERVICE_KEY   (service_role key; DO NOT expose to frontend)
     """
     supabase_url = os.getenv("SUPABASE_URL", "").strip()
     service_key = os.getenv("SUPABASE_SERVICE_KEY", "").strip()
@@ -85,6 +85,122 @@ def load_tenant_ai_settings_from_supabase(tenant: str) -> dict:
             "max_tokens_per_request": None,
             "source": f"exception:{type(e).__name__}",
         }
+
+# =========================
+# Tenant Reviews (D3) — Supabase history storage (server-side)
+# =========================
+
+def insert_tenant_review_to_supabase(row: dict) -> dict | None:
+    """
+    Server-side only. Inserts one row into public.tenant_reviews.
+    Requires Railway env:
+    - SUPABASE_URL
+    - SUPABASE_SERVICE_KEY (service_role key; DO NOT expose to frontend)
+    """
+    supabase_url = (os.getenv("SUPABASE_URL", "") or "").strip().rstrip("/")
+    service_key = (os.getenv("SUPABASE_SERVICE_KEY", "") or "").strip()
+
+    if not supabase_url or not service_key:
+        return None
+
+    endpoint = f"{supabase_url}/rest/v1/tenant_reviews"
+    headers = {
+        "apikey": service_key,
+        "Authorization": f"Bearer {service_key}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+
+    # never send internal helper keys to DB
+    row = dict(row or {})
+    row.pop("_fingerprint", None)
+
+    try:
+        resp = requests.post(endpoint, headers=headers, json=row, timeout=12)
+        if resp.status_code not in (200, 201):
+            # keep app running; caller can decide whether to retry
+            st.session_state["_last_reviews_write_error"] = {
+                "status": resp.status_code,
+                "body": resp.text[:500],
+            }
+            return None
+
+        data = resp.json()
+        if isinstance(data, list) and data:
+            return data[0]
+        if isinstance(data, dict):
+            return data
+        return None
+    except Exception as e:
+        st.session_state["_last_reviews_write_error"] = {
+            "status": "exception",
+            "type": type(e).__name__,
+        }
+        return None
+
+
+def _save_pending_review_to_supabase():
+    """
+    Called on download click (best-effort).
+    Uses st.session_state["_pending_tenant_review_row"] prepared right before rendering the download button.
+    """
+    pending = st.session_state.get("_pending_tenant_review_row")
+    if not pending:
+        return
+
+    fp = (pending.get("_fingerprint") or "").strip()
+    if fp and st.session_state.get("_last_saved_review_fp") == fp:
+        return  # dedupe same report within the session
+
+    inserted = insert_tenant_review_to_supabase(pending)
+    if inserted:
+        st.session_state["_last_saved_review_fp"] = fp
+        st.session_state["_last_saved_review_id"] = inserted.get("id")
+def fetch_tenant_reviews_from_supabase(tenant: str, limit: int = 20) -> list[dict]:
+    """
+    Server-side only. Reads public.tenant_reviews filtered by tenant.
+    Uses SUPABASE_URL + SUPABASE_SERVICE_KEY (service_role).
+    Returns a list of rows (dict).
+    """
+    tenant = (tenant or "").strip() or "unknown"
+
+    supabase_url = (os.getenv("SUPABASE_URL", "") or "").strip().rstrip("/")
+    service_key = (os.getenv("SUPABASE_SERVICE_KEY", "") or "").strip()
+    if not supabase_url or not service_key:
+        return []
+
+    endpoint = f"{supabase_url}/rest/v1/tenant_reviews"
+    headers = {
+        "apikey": service_key,
+        "Authorization": f"Bearer {service_key}",
+        "Content-Type": "application/json",
+    }
+
+    params = {
+        "tenant": f"eq.{tenant}",
+        "order": "created_at.desc",
+        "limit": str(int(limit)),
+        # keep payload small (no report_md here)
+        "select": "id,created_at,framework_key,document_name,download_filename,created_by",
+    }
+
+    try:
+        resp = requests.get(endpoint, headers=headers, params=params, timeout=12)
+        if resp.status_code != 200:
+            st.session_state["_last_reviews_read_error"] = {
+                "status": resp.status_code,
+                "body": resp.text[:500],
+            }
+            return []
+        data = resp.json()
+        return data if isinstance(data, list) else []
+    except Exception as e:
+        st.session_state["_last_reviews_read_error"] = {
+            "status": "exception",
+            "type": type(e).__name__,
+        }
+        return []
+
 
 # ===== Error-Free® Portal-only SSO (Portal is the ONLY entry) =====
 # Analyzer MUST NOT show any internal login UI when Portal SSO is enforced.
@@ -231,14 +347,326 @@ def _sign_payload(payload_b64: str, secret: str) -> str:
     return hmac.new(secret.encode("utf-8"), payload_b64.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
+def _check_tenant_and_member_access(tenant: str, email: str) -> tuple[bool, str]:
+    """
+    Phase A2 Enforcement: Check tenant and member access.
+    Returns (allow: bool, deny_reason: str)
+    deny_reason examples: tenant_inactive, trial_expired, member_inactive, member_not_found
+    """
+    supabase_url = (os.getenv("SUPABASE_URL", "") or "").strip().rstrip("/")
+    service_key = (os.getenv("SUPABASE_SERVICE_KEY", "") or "").strip()
+    
+    if not supabase_url or not service_key:
+        # Fail open (allow) if env not configured - avoid breaking existing deployments
+        return True, ""
+    
+    headers = {
+        "apikey": service_key,
+        "Authorization": f"Bearer {service_key}",
+        "Accept": "application/json",
+    }
+    
+    # 1. Check tenant status
+    try:
+        tenant_endpoint = f"{supabase_url}/rest/v1/tenants"
+        tenant_params = {
+            "select": "slug,is_active,status,trial_end",
+            "slug": f"eq.{tenant}",
+            "limit": "1",
+        }
+        resp = requests.get(tenant_endpoint, params=tenant_params, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            rows = resp.json() or []
+            if rows:
+                tenant_data = rows[0]
+                
+                # Debug: Print tenant data (will be visible in logs)
+                print(f"[DEBUG] Tenant check for '{tenant}': {tenant_data}")
+                
+                # Check is_active
+                if not tenant_data.get("is_active", True):
+                    print(f"[DEBUG] Tenant '{tenant}' is_active=False, denying access")
+                    return False, "tenant_inactive"
+                
+                # Check trial_end (if set)
+                trial_end_str = tenant_data.get("trial_end")
+                if trial_end_str:
+                    from datetime import datetime, timezone
+                    try:
+                        trial_end = datetime.fromisoformat(trial_end_str.replace('Z', '+00:00'))
+                        now = datetime.now(timezone.utc)
+                        print(f"[DEBUG] Tenant '{tenant}' trial_end={trial_end}, now={now}, expired={trial_end < now}")
+                        if trial_end < now:
+                            return False, "trial_expired"
+                    except Exception as e:
+                        print(f"[DEBUG] Failed to parse trial_end for '{tenant}': {e}")
+                        pass  # If parsing fails, allow access
+            else:
+                print(f"[DEBUG] Tenant '{tenant}' not found in tenants table")
+        else:
+            print(f"[DEBUG] Supabase tenants query failed with status {resp.status_code}")
+    except Exception as e:
+        # Network error or API down - fail open (allow)
+        print(f"[DEBUG] Exception in tenant check: {type(e).__name__}: {e}")
+        pass
+    
+    # 2. Check member status
+    try:
+        # First get tenant_id from slug
+        tenant_endpoint = f"{supabase_url}/rest/v1/tenants"
+        tenant_params = {
+            "select": "id",
+            "slug": f"eq.{tenant}",
+            "limit": "1",
+        }
+        resp = requests.get(tenant_endpoint, params=tenant_params, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            rows = resp.json() or []
+            if rows:
+                tenant_id = rows[0].get("id")
+                
+                # Check member
+                member_endpoint = f"{supabase_url}/rest/v1/tenant_members"
+                member_params = {
+                    "select": "is_active",
+                    "tenant_id": f"eq.{tenant_id}",
+                    "email": f"eq.{email}",
+                    "limit": "1",
+                }
+                resp = requests.get(member_endpoint, params=member_params, headers=headers, timeout=10)
+                if resp.status_code == 200:
+                    members = resp.json() or []
+                    if not members:
+                        # Member not found in tenant_members - allow (not all tenants may have members table populated yet)
+                        return True, ""
+                    
+                    member_data = members[0]
+                    if not member_data.get("is_active", True):
+                        return False, "member_inactive"
+    except Exception:
+        # Network error or API down - fail open (allow)
+        pass
+    
+    return True, ""
+
+
+def _log_audit_event(action: str, tenant: str, email: str, result: str, deny_reason: str = "", context: dict = None, actor_email: str = None):
+    """
+    Phase A2: Log audit event to Supabase audit_events table.
+    Best-effort (silent fail if env not configured or network error).
+    """
+    supabase_url = (os.getenv("SUPABASE_URL", "") or "").strip().rstrip("/")
+    service_key = (os.getenv("SUPABASE_SERVICE_KEY", "") or "").strip()
+    
+    if not supabase_url or not service_key:
+        return  # Silent fail if not configured
+    
+    try:
+        endpoint = f"{supabase_url}/rest/v1/audit_events"
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal",
+        }
+        
+        payload = {
+            "action": action,
+            "tenant_slug": tenant,
+            "email": email,
+            "result": result,
+        }
+        
+        if deny_reason:
+            payload["deny_reason"] = deny_reason
+        
+        if context:
+            payload["context"] = context
+        
+        if actor_email:
+            payload["actor_email"] = actor_email
+        
+        requests.post(endpoint, json=payload, headers=headers, timeout=10)
+    except Exception:
+        # Silent fail - don't break the app if audit logging fails
+        pass
+
+
+def _check_usage_cap(tenant: str, usage_type: str, email: str = "") -> tuple[bool, int, int, str]:
+    """
+    Phase A2-2 + Member-level caps: Check if tenant/member has reached usage cap for today.
+    Returns (allow: bool, cap: int, current_usage: int, message: str)
+    
+    Member-level: when email is provided, checks member_usage_caps first. If member has a cap,
+    uses that and counts only that member's usage. Otherwise falls back to tenant cap.
+    
+    Args:
+        tenant: tenant slug
+        usage_type: 'review' or 'download'
+        email: user email (optional). When set, checks member-level cap first.
+    """
+    supabase_url = (os.getenv("SUPABASE_URL", "") or "").strip().rstrip("/")
+    service_key = (os.getenv("SUPABASE_SERVICE_KEY", "") or "").strip()
+    
+    if not supabase_url or not service_key:
+        return True, 0, 0, ""
+    
+    headers = {
+        "apikey": service_key,
+        "Authorization": f"Bearer {service_key}",
+        "Accept": "application/json",
+    }
+    
+    try:
+        from datetime import datetime, timezone
+        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        # 1. Get tenant_id from slug
+        tenant_endpoint = f"{supabase_url}/rest/v1/tenants"
+        resp = requests.get(tenant_endpoint, params={"select": "id", "slug": f"eq.{tenant}", "limit": "1"}, headers=headers, timeout=10)
+        if resp.status_code != 200:
+            return True, 0, 0, ""
+        rows = resp.json() or []
+        if not rows:
+            return True, 0, 0, ""
+        tenant_id = rows[0].get("id")
+        
+        # 2. Member-level cap: if email provided, check member_usage_caps first
+        cap = None
+        usage_filter_email = None  # None = tenant total, else filter by this email
+        if email and (email or "").strip():
+            mem_endpoint = f"{supabase_url}/rest/v1/member_usage_caps"
+            mem_params = {"tenant_id": f"eq.{tenant_id}", "email": f"eq.{email.strip()}", "limit": "1"}
+            resp = requests.get(mem_endpoint, params=mem_params, headers=headers, timeout=10)
+            if resp.status_code == 200 and resp.json():
+                mem_cap = resp.json()[0].get(f"daily_{usage_type}_cap")
+                if mem_cap == 0:
+                    return False, 0, 0, f"Your {usage_type} access has been disabled. Please contact your administrator."
+                if mem_cap is not None and mem_cap > 0:
+                    cap = mem_cap
+                    usage_filter_email = email.strip()
+        
+        # 3. Fallback to tenant cap if no member cap
+        if cap is None:
+            usage_filter_email = email.strip() if email and (email or "").strip() else None
+            resp = requests.get(
+                f"{supabase_url}/rest/v1/tenant_usage_caps",
+                params={"tenant_id": f"eq.{tenant_id}", "select": "daily_review_cap,daily_download_cap", "limit": "1"},
+                headers=headers, timeout=10
+            )
+            if resp.status_code != 200 or not resp.json():
+                return True, 0, 0, ""
+            caps_data = resp.json()[0]
+            tenant_cap_val = caps_data.get(f"daily_{usage_type}_cap")
+            if tenant_cap_val is None:
+                return True, 0, 0, ""
+            if tenant_cap_val == 0:
+                return False, 0, 0, f"Your organization's {usage_type} access has been disabled. Please contact your administrator."
+            # Individual: cap = tenant cap (per-member). Company: 0 until member has explicit row (admin must increase total & Save to allocate)
+            if tenant == "individual" or not usage_filter_email:
+                cap = tenant_cap_val
+            else:
+                cap = 0
+        
+        # 4. Get today's usage (filter by email if member-level)
+        usage_params = {
+            "select": "quantity",
+            "tenant_id": f"eq.{tenant_id}",
+            "usage_type": f"eq.{usage_type}",
+            "created_at": f"gte.{today_start.isoformat()}",
+        }
+        if usage_filter_email:
+            usage_params["email"] = f"eq.{usage_filter_email}"
+        resp = requests.get(f"{supabase_url}/rest/v1/tenant_usage_events", params=usage_params, headers=headers, timeout=10)
+        if resp.status_code != 200:
+            return True, cap, 0, ""
+        usage_rows = resp.json() or []
+        current_usage = sum(row.get("quantity", 1) for row in usage_rows)
+        
+        # 5. Check if cap reached
+        if current_usage >= cap:
+            if cap == 0:
+                message = "You have no allocation. Please ask your administrator to increase the total cap and allocate a share."
+            else:
+                message = f"Daily {usage_type} limit reached ({current_usage}/{cap}). Please try again tomorrow or contact support to upgrade."
+            return False, cap, current_usage, message
+        return True, cap, current_usage, ""
+        
+    except Exception as e:
+        print(f"[DEBUG] Exception in usage cap check: {type(e).__name__}: {e}")
+        return True, 0, 0, ""
+
+
+def _record_usage_event(tenant: str, email: str, usage_type: str, quantity: int = 1, context: dict = None):
+    """
+    Phase A2-2: Record usage event to tenant_usage_events table.
+    Best-effort (silent fail if env not configured or network error).
+    
+    Args:
+        tenant: tenant slug
+        email: user email
+        usage_type: 'review' or 'download'
+        quantity: number of units (default 1)
+        context: optional JSON context
+    """
+    supabase_url = (os.getenv("SUPABASE_URL", "") or "").strip().rstrip("/")
+    service_key = (os.getenv("SUPABASE_SERVICE_KEY", "") or "").strip()
+    
+    if not supabase_url or not service_key:
+        return
+    
+    try:
+        # 1. Get tenant_id from slug
+        tenant_endpoint = f"{supabase_url}/rest/v1/tenants"
+        tenant_params = {
+            "select": "id",
+            "slug": f"eq.{tenant}",
+            "limit": "1",
+        }
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Accept": "application/json",
+        }
+        resp = requests.get(tenant_endpoint, params=tenant_params, headers=headers, timeout=10)
+        if resp.status_code != 200:
+            return
+        
+        rows = resp.json() or []
+        if not rows:
+            return
+        
+        tenant_id = rows[0].get("id")
+        
+        # 2. Insert usage event
+        usage_endpoint = f"{supabase_url}/rest/v1/tenant_usage_events"
+        headers["Content-Type"] = "application/json"
+        headers["Prefer"] = "return=minimal"
+        
+        payload = {
+            "tenant_id": tenant_id,
+            "email": email,
+            "usage_type": usage_type,
+            "quantity": quantity,
+        }
+        
+        if context:
+            payload["context"] = context
+        
+        requests.post(usage_endpoint, json=payload, headers=headers, timeout=10)
+    except Exception:
+        # Silent fail
+        pass
+
+
 def _get_tenant_epoch_from_supabase(tenant: str) -> int | None:
     """
     Read tenant_session_epoch.epoch for a tenant.
     Returns:
-      - int epoch (>=0) if query succeeds (even if row missing -> 0)
-      - None if cannot check (missing env / request error)
+    - int epoch (>=0) if query succeeds (even if row missing -> 0)
+    - None if cannot check (missing env / request error)
     Security/availability tradeoff:
-      - If None -> we skip epoch check (best-effort), so system won't lock everyone out on transient DB issues.
+    - If None -> we skip epoch check (best-effort), so system won't lock everyone out on transient DB issues.
     """
     tenant = (tenant or "").strip()
     if not tenant:
@@ -307,8 +735,8 @@ def mint_analyzer_session(claims: dict) -> str:
 def verify_analyzer_session(token: str) -> dict | None:
     """
     Verify signature + exp + required fields.
-    Then (best-effort) verify tenant epoch matches Supabase.
-    If epoch mismatches -> revoked -> reject.
+    Epoch check is performed separately by _enforce_epoch_or_block to provide
+    specific revoke messaging (instead of generic "No valid Portal SSO" error).
     """
     if not token or "." not in token:
         return None
@@ -341,19 +769,12 @@ def verify_analyzer_session(token: str) -> dict | None:
     if not email or not tenant or not role:
         return None
 
-    # Epoch check (best-effort)
+    # Include epoch in payload (for later check by _enforce_epoch_or_block)
     try:
-        token_epoch = int(payload.get("epoch", 0) or 0)
+        payload["epoch"] = int(payload.get("epoch", 0) or 0)
     except Exception:
-        token_epoch = 0
+        payload["epoch"] = 0
 
-    current_epoch = _get_tenant_epoch_from_supabase(tenant)
-    if current_epoch is not None:
-        if token_epoch != int(current_epoch):
-            # revoked / rotated
-            return None
-
-    payload["epoch"] = token_epoch
     return payload
 
 
@@ -365,9 +786,9 @@ def _store_session_to_browser(session_token: str):
         f"""
 <script>
 (function(){{
-  try {{
+try {{
     localStorage.setItem({json.dumps(_BROWSER_LS_KEY)}, {json.dumps(session_token)});
-  }} catch(e) {{}}
+}} catch(e) {{}}
 }})();
 </script>
         """,
@@ -384,7 +805,7 @@ def _inject_restore_session_js():
         f"""
 <script>
 (function(){{
-  try {{
+try {{
     const k = {json.dumps(_BROWSER_LS_KEY)};
     const qpKey = {json.dumps(_QP_SESSION_KEY)};
     const t = localStorage.getItem(k);
@@ -396,7 +817,7 @@ def _inject_restore_session_js():
 
     u.searchParams.set(qpKey, t);
     window.location.replace(u.toString());
-  }} catch(e) {{}}
+}} catch(e) {{}}
 }})();
 </script>
         """,
@@ -478,9 +899,9 @@ def _render_portal_only_block(reason: str = ""):
 
 def _portal_verify_via_api(portal_token: str) -> (bool, str, dict):
     """
-    Call Portal /sso/verify
+    Call Portal /sso/verify (with retry on timeout/connection error for cold starts).
     Expect response JSON like:
-      { "status":"ok", "email":"...", "company_id":"...", "analyzer_id":"..." }
+    { "status":"ok", "email":"...", "company_id":"...", "analyzer_id":"..." }
     """
     if not portal_token:
         return False, "Missing portal_token", {}
@@ -491,15 +912,38 @@ def _portal_verify_via_api(portal_token: str) -> (bool, str, dict):
             return False, "Missing PORTAL_BASE_URL (or PORTAL_SSO_VERIFY_URL)", {}
         verify_url = f"{PORTAL_BASE_URL}/sso/verify"
 
-    try:
-        r = requests.post(
-            verify_url,
-            json={"token": portal_token},
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
-            timeout=15,
-        )
-    except Exception as e:
-        return False, f"Portal verify request failed: {e}", {}
+    _VERIFY_TIMEOUT = 45
+    _RETRY_DELAYS = (3, 6)
+    r = None
+    last_exc = None
+    for attempt in range(1 + len(_RETRY_DELAYS)):
+        try:
+            r = requests.post(
+                verify_url,
+                json={"token": portal_token},
+                headers={"Content-Type": "application/json", "Accept": "application/json"},
+                timeout=_VERIFY_TIMEOUT,
+            )
+            last_exc = None
+            break
+        except Exception as e:
+            last_exc = e
+            err_lower = str(e).lower()
+            is_retryable = "timed out" in err_lower or "timeout" in err_lower or "connection" in err_lower
+            if attempt < len(_RETRY_DELAYS) and is_retryable:
+                time.sleep(_RETRY_DELAYS[attempt])
+                continue
+            if is_retryable:
+                return False, (
+                    "Connection to Portal timed out (Portal may be starting). "
+                    "請稍候再點「回到 Portal」重新進入分析框架。 / Wait a moment, then click « Back to Portal » and try again."
+                ), {}
+            return False, f"Portal verify request failed: {e}", {}
+    if r is None and last_exc is not None:
+        return False, (
+            "Connection to Portal timed out (Portal may be starting). "
+            "請稍候再點「回到 Portal」重新進入分析框架。 / Wait a moment, then click « Back to Portal » and try again."
+        ), {}
 
     if r.status_code != 200:
         try:
@@ -514,11 +958,27 @@ def _portal_verify_via_api(portal_token: str) -> (bool, str, dict):
     except Exception:
         return False, "Portal verify: invalid JSON response", {}
 
+    # Normalize payload:
+    # Portal may return either:
+    #  A) {"status":"ok", ...fields...}
+    #  B) {"status":"ok", "info": {...fields...}}
     status = str(data.get("status", "")).lower()
     if status not in ("ok", "success", "200", "true"):
         return False, f"Portal verify returned non-ok: {data}", data
 
-    return True, "OK", data
+    raw_info = data.get("info") if isinstance(data.get("info"), dict) else data
+    info = dict(raw_info) if isinstance(raw_info, dict) else {}
+
+    # Ensure tenant_epoch is an int (default 0)
+    try:
+        info["tenant_epoch"] = int(info.get("tenant_epoch") or 0)
+    except Exception:
+        info["tenant_epoch"] = 0
+
+    # Keep tenant as string
+    info["tenant"] = str(info.get("tenant") or "")
+
+    return True, "OK", info
 
 def try_portal_sso_login():
     """
@@ -526,7 +986,7 @@ def try_portal_sso_login():
 
     ✅ 核心策略：
     - 第一次由 Portal 帶 portal_token 進來 -> Portal /sso/verify 成功後
-      mint analyzer_session，並把 URL 改成只保留 ?analyzer_session=...
+    mint analyzer_session，並把 URL 改成只保留 ?analyzer_session=...
     - Refresh 時 URL 還在 -> 用 analyzer_session 放行
     - ✅ Revoke：比對 tenant_session_epoch.epoch，不一致立刻拒絕（舊 token 立即失效）
     """
@@ -594,11 +1054,20 @@ def try_portal_sso_login():
             _render_portal_only_block("Session revoked (tenant epoch mismatch). Please re-enter from Portal.")
 
     # 0) Already authenticated in this Streamlit session
+    #    We STILL enforce epoch-based revoke here using stored tenant/epoch,
+    #    so that bumping tenant_session_epoch immediately invalidates old sessions.
+    #    If we don't have a stored epoch yet (older sessions), we fall through
+    #    to the analyzer_session / portal_token logic below so that epoch can
+    #    be initialized from the token / DB.
     if st.session_state.get("is_authenticated") and st.session_state.get("user_email"):
-        st.session_state["_portal_sso_checked"] = True
-        return
+        tenant = (st.session_state.get("tenant") or "").strip()
+        stored_epoch = st.session_state.get("session_epoch", None)
+        if tenant and stored_epoch is not None:
+            _enforce_epoch_or_block(tenant, int(stored_epoch))
+            st.session_state["_portal_sso_checked"] = True
+            return
 
-    # Only check once per Streamlit session
+    # Only check once per Streamlit session (for non-authenticated visitors)
     if st.session_state.get("_portal_sso_checked", False):
         return
 
@@ -608,7 +1077,19 @@ def try_portal_sso_login():
         payload = verify_analyzer_session(sess_tok)
         if payload:
             tenant_from_payload = (payload.get("tenant") or "").strip()
-            token_epoch = _extract_epoch_from_session_token(sess_tok)
+            # Use epoch from verified payload to avoid any mismatch in claim name/type.
+            try:
+                token_epoch = int(payload.get("epoch", 0) or 0)
+            except Exception:
+                token_epoch = 0
+
+            # Optional debug: show tenant / token_epoch / current_epoch
+            if _qp_get("debug_epoch", "") != "":
+                current_epoch_dbg = _get_epoch_strict(tenant_from_payload)
+                st.sidebar.caption(
+                    f"[debug_epoch] tenant={tenant_from_payload} "
+                    f"token_epoch={token_epoch} current_epoch={current_epoch_dbg}"
+                )
 
             # ✅ ENFORCE revoke here (THIS is what makes old tokens die immediately)
             _enforce_epoch_or_block(tenant_from_payload, token_epoch)
@@ -620,6 +1101,8 @@ def try_portal_sso_login():
             st.session_state["email"] = st.session_state["user_email"]
             st.session_state["tenant"] = tenant_from_payload
             st.session_state["user_role"] = (payload.get("role") or "").strip() or "member"
+            # Remember epoch for future strict checks even when already authenticated
+            st.session_state["session_epoch"] = token_epoch
 
             # ✅ Load tenant AI settings (once per tenant)
             if (
@@ -661,12 +1144,52 @@ def try_portal_sso_login():
             st.session_state["is_authenticated"] = False
             _render_portal_only_block("Portal verify succeeded but tenant is missing")
 
+        # Phase A2 Enforcement: Check tenant and member access
+        allow, deny_reason = _check_tenant_and_member_access(tenant, verified_email)
+        if not allow:
+            # Log denial
+            _log_audit_event(
+                action="sso_verify",
+                tenant=tenant,
+                email=verified_email,
+                result="denied",
+                deny_reason=deny_reason,
+                context={"source": "portal_sso"}
+            )
+            
+            # Block access with specific message
+            st.session_state["_portal_sso_checked"] = True
+            st.session_state["is_authenticated"] = False
+            
+            deny_messages = {
+                "tenant_inactive": "Access denied: Your organization's account is currently inactive. Please contact your administrator.",
+                "trial_expired": "Access denied: Your trial period has expired. Please contact support to upgrade your account.",
+                "member_inactive": "Access denied: Your account has been deactivated. Please contact your administrator.",
+            }
+            message = deny_messages.get(deny_reason, f"Access denied: {deny_reason}")
+            _render_portal_only_block(message)
+
+        # Fetch current tenant epoch once (strict) and reuse it for both
+        # session_state bookkeeping and minted analyzer_session.
+        current_epoch = _get_epoch_strict(tenant)
+
         st.session_state["_portal_sso_checked"] = True
         st.session_state["is_authenticated"] = True
         st.session_state["user_email"] = verified_email
         st.session_state["email"] = verified_email
         st.session_state["tenant"] = tenant
         st.session_state["user_role"] = role
+        # Remember epoch for future strict checks even when already authenticated
+        st.session_state["session_epoch"] = int(current_epoch)
+
+        # Phase A2: Log successful verification
+        _log_audit_event(
+            action="sso_verify",
+            tenant=tenant,
+            email=verified_email,
+            result="success",
+            context={"source": "portal_sso", "epoch": int(current_epoch)}
+        )
 
         # ✅ Load tenant AI settings (once per tenant)
         if (
@@ -685,9 +1208,6 @@ def try_portal_sso_login():
         lang_raw = _qp_get("lang", "en")
         _apply_portal_lang(lang_raw)
 
-        # ✅ IMPORTANT: embed current tenant epoch into the session token (so it can be revoked)
-        current_epoch = _get_epoch_strict(tenant)
-
         # Mint refresh-safe analyzer_session
         claims = {
             "email": verified_email,
@@ -704,7 +1224,7 @@ def try_portal_sso_login():
                 "Cannot mint analyzer_session: missing ANALYZER_SESSION_SECRET (or PORTAL_SSO_SECRET)"
             )
 
-        # Rewrite URL to keep only analyzer_session (so Refresh works, and portal_token disappears)
+        # Rewrite URL to Analyzer top page with only analyzer_session (so Refresh works; portal_token removed)
         try:
             st.query_params.clear()
             st.query_params[_QP_SESSION_KEY] = session_token
@@ -855,28 +1375,69 @@ def ensure_pdf_font():
 
 
 
+# =========================
+# Tenant namespace helper (D3) — MUST be defined BEFORE any use at import time
+# =========================
+def tenant_namespace(*parts: str) -> str:
+    """
+    Build a tenant-scoped namespace path.
 
+    Example:
+      tenant_namespace("reviews", "drafts") -> "tenants/<tenant>/reviews/drafts"
+    """
+    tenant = (st.session_state.get("tenant") or "").strip()
+    if not tenant:
+        return "tenants/unknown"
+
+    safe_parts = []
+    for p in parts:
+        s = (p or "").strip().strip("/")
+        if s:
+            safe_parts.append(s)
+
+    if safe_parts:
+        return "tenants/" + tenant + "/" + "/".join(safe_parts)
+    return "tenants/" + tenant
 # =========================
 # Company multi-tenant support
 # =========================
 
-COMPANY_FILE = Path("companies.json")
+def _tenant_data_file(filename: str) -> Path:
+    """
+    Tenant-scoped local persistence path (D3-B).
+
+    All on-disk JSON files MUST live under:
+      tenants/<tenant>/data/<filename>
+
+    IMPORTANT:
+    - Compute at CALL time (not import time), because tenant may only be known
+      after Portal SSO verification / analyzer_session verification.
+    """
+    p = Path(tenant_namespace("data", filename))
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    return p
 
 
 def load_companies() -> dict:
-    if not COMPANY_FILE.exists():
+    f = _tenant_data_file("companies.json")
+    if not f.exists():
         return {}
     try:
-        return json.loads(COMPANY_FILE.read_text(encoding="utf-8"))
+        return json.loads(f.read_text(encoding="utf-8"))
     except Exception:
         return {}
 
 
 def save_companies(data: dict):
     try:
-        COMPANY_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        f = _tenant_data_file("companies.json")
+        f.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception:
         pass
+
 
 
 
@@ -892,23 +1453,24 @@ ACCOUNTS = {
     "test@errorfree.com": {"password": "3333", "role": "pro"},
 }
 
-GUEST_FILE = Path("guest_accounts.json")
-
 
 def load_guest_accounts() -> Dict[str, Dict]:
-    if not GUEST_FILE.exists():
+    f = _tenant_data_file("guest_accounts.json")
+    if not f.exists():
         return {}
     try:
-        return json.loads(GUEST_FILE.read_text(encoding="utf-8"))
+        return json.loads(f.read_text(encoding="utf-8"))
     except Exception:
         return {}
 
 
 def save_guest_accounts(data: Dict[str, Dict]):
     try:
-        GUEST_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        f = _tenant_data_file("guest_accounts.json")
+        f.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
+
 
 
 
@@ -918,15 +1480,39 @@ def save_guest_accounts(data: Dict[str, Dict]):
 # Framework definitions (external JSON)
 # =========================
 
-FRAMEWORK_FILE = Path("frameworks.json")
+def _framework_file() -> Path:
+    """
+    Frameworks are normally shipped with the app as frameworks.json next to app.py.
+    D3-B: allow optional tenant override at tenants/<tenant>/data/frameworks.json.
+    Uses __file__ to resolve path so it works regardless of cwd (e.g. in deployment).
+    """
+    app_dir = Path(__file__).resolve().parent
+    default_path = app_dir / "frameworks.json"
+    try:
+        tenant_f = _tenant_data_file("frameworks.json")
+        if tenant_f.exists():
+            return tenant_f
+    except Exception:
+        pass
+    return default_path
 
 
 def load_frameworks() -> Dict[str, Dict]:
     """Load framework definitions from an external JSON file."""
-    if not FRAMEWORK_FILE.exists():
+    f = _framework_file()
+    if not f.exists():
         return {}
     try:
-        return json.loads(FRAMEWORK_FILE.read_text(encoding="utf-8"))
+        raw = json.loads(f.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            return {}
+        out = {}
+        for k, v in raw.items():
+            if isinstance(v, dict):
+                name_zh = v.get("name_zh") if isinstance(v.get("name_zh"), str) else k
+                name_en = v.get("name_en") if isinstance(v.get("name_en"), str) else k
+                out[k] = {**v, "name_zh": name_zh, "name_en": name_en}
+        return out
     except Exception:
         return {}
 
@@ -934,44 +1520,73 @@ def load_frameworks() -> Dict[str, Dict]:
 FRAMEWORKS: Dict[str, Dict] = load_frameworks()
 
 
+def _framework_docs_dir() -> Path:
+    """Directory containing framework .docx files (fixed mapping per frameworks.json)."""
+    return Path(__file__).resolve().parent / "framework_docs"
+
+
+def load_framework_prompt_from_docx(framework_key: str) -> str:
+    """
+    Load the framework prompt/system instructions from the mapped .docx file.
+    Uses framework_file from frameworks.json; file must exist in framework_docs/.
+    """
+    if framework_key not in FRAMEWORKS:
+        return ""
+    fw = FRAMEWORKS[framework_key]
+    filename = fw.get("framework_file")
+    if not filename or not isinstance(filename, str):
+        return ""
+    docs_dir = _framework_docs_dir()
+    filepath = docs_dir / filename.strip()
+    if not filepath.exists():
+        return ""
+    try:
+        doc = Document(filepath)
+        return "\n".join(p.text for p in doc.paragraphs).strip()
+    except Exception:
+        return ""
+
+
+
+
+
 
 # =========================
 # State persistence & usage tracking (4A)
 # =========================
 
-STATE_FILE = Path("user_state.json")
-DOC_TRACK_FILE = Path("user_docs.json")
-USAGE_FILE = Path("usage_stats.json")  # 使用量統計
-
-
 def load_doc_tracking() -> Dict[str, List[str]]:
-    if not DOC_TRACK_FILE.exists():
+    f = _tenant_data_file("user_docs.json")
+    if not f.exists():
         return {}
     try:
-        return json.loads(DOC_TRACK_FILE.read_text(encoding="utf-8"))
+        return json.loads(f.read_text(encoding="utf-8"))
     except Exception:
         return {}
 
 
 def save_doc_tracking(data: Dict[str, List[str]]):
     try:
-        DOC_TRACK_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        f = _tenant_data_file("user_docs.json")
+        f.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
 
 
 def load_usage_stats() -> Dict[str, Dict]:
-    if not USAGE_FILE.exists():
+    f = _tenant_data_file("usage_stats.json")
+    if not f.exists():
         return {}
     try:
-        return json.loads(USAGE_FILE.read_text(encoding="utf-8"))
+        return json.loads(f.read_text(encoding="utf-8"))
     except Exception:
         return {}
 
 
 def save_usage_stats(data: Dict[str, Dict]):
     try:
-        USAGE_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        f = _tenant_data_file("usage_stats.json")
+        f.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception:
         pass
 
@@ -1006,12 +1621,27 @@ def record_usage(user_email: str, framework_key: str, kind: str):
     data[user_email] = user_entry
     save_usage_stats(data)
 
+def _user_state_file() -> Path:
+    """
+    D3-B: user_state MUST be tenant-scoped AND user-scoped, otherwise 1000 users
+    in the same tenant will overwrite each other's persisted state.
+    """
+    uid = (st.session_state.get("user_email") or "").strip().lower()
+    if not uid:
+        # fallback to other stable identifiers if email not ready yet
+        uid = (st.session_state.get("analyzer_id") or st.session_state.get("analyzer_session") or "anon").strip()
 
+    h = hashlib.sha256(uid.encode("utf-8")).hexdigest()[:12]
+    return _tenant_data_file(f"user_state_{h}.json")
 def save_state_to_disk():
     """
     SECURITY NOTE:
     Do NOT persist authentication identity to disk on a shared server.
-    user_state.json is shared across users in the same deployment.
+
+    D3-B note:
+    This file is tenant-scoped (tenants/<tenant>/data/user_state.json), but is still
+    shared by ALL users within the same tenant deployment.
+
     Persist only review/session workflow state, NOT login identity.
     """
     data = {
@@ -1032,6 +1662,8 @@ def save_state_to_disk():
         "document_type": st.session_state.get("document_type"),
         "framework_states": st.session_state.get("framework_states", {}),
         "selected_framework_key": st.session_state.get("selected_framework_key"),
+        "selected_framework_keys": st.session_state.get("selected_framework_keys", []),
+        "_last_doc_type_for_framework_suggest": st.session_state.get("_last_doc_type_for_framework_suggest"),
         "current_doc_id": st.session_state.get("current_doc_id"),
         "show_admin": st.session_state.get("show_admin", False),
 
@@ -1055,7 +1687,8 @@ def save_state_to_disk():
         "_pending_clear_followup_key": st.session_state.get("_pending_clear_followup_key"),
     }
     try:
-        STATE_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        f = _user_state_file()
+        f.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
 
@@ -1065,33 +1698,156 @@ def restore_state_from_disk():
     SECURITY NOTE:
     Never restore authentication identity from disk.
     Only restore workflow/UI state.
+    Called AFTER SSO so user identity is available for correct file path.
+    Overwrites defaults with saved workflow state so refresh preserves content.
     """
-    if not STATE_FILE.exists():
+    f = _user_state_file()
+    if not f.exists():
         return
     try:
-        data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        data = json.loads(f.read_text(encoding="utf-8"))
     except Exception:
         return
 
-    # Strip any legacy auth keys that might exist from older files
+    # Strip any legacy auth keys
     for bad_key in ["user_email", "user_role", "is_authenticated", "company_code", "_portal_sso_checked"]:
         if bad_key in data:
             data.pop(bad_key, None)
 
-    for k, v in data.items():
-        if k not in st.session_state:
-            st.session_state[k] = v
+    # Workflow keys to restore (overwrite so refresh brings back saved content)
+    workflow_keys = [
+        "lang", "zh_variant", "usage_date", "usage_count",
+        "last_doc_text", "last_doc_name", "document_type",
+        "framework_states", "selected_framework_key", "selected_framework_keys",
+        "_last_doc_type_for_framework_suggest", "current_doc_id", "show_admin",
+        "upstream_reference", "quote_current", "quote_history",
+        "quote_upload_nonce", "review_upload_nonce", "upstream_upload_nonce",
+        "quote_upload_finalized", "upstream_step6_done", "upstream_step6_output",
+        "quote_step6_done_current", "step7_history", "integration_history",
+        "_pending_clear_followup_key",
+    ]
+    for k in workflow_keys:
+        if k in data:
+            st.session_state[k] = data[k]
 
 
 
 
 
 # =========================
-# OpenAI client & model selection
+# OpenAI / LLM client & model selection (tenant-aware)
 # =========================
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+
+
+def _resolve_api_key_for_tenant(tas: dict | None) -> Optional[str]:
+    """
+    Resolve the effective API key for a given tenant_ai_settings row.
+
+    Priority:
+    1) tas.api_key_ref -> corresponding env var (e.g. DEEPSEEK_API_KEY, OPENAI_API_KEY_TENANT_X, etc.)
+    2) Provider-specific fallback (e.g. DEEPSEEK_API_KEY for provider=deepseek)
+    3) Global OPENAI_API_KEY
+    """
+    tas = tas or {}
+
+    api_key_ref = (tas.get("api_key_ref") or "").strip()
+    if api_key_ref:
+        ref_key = (os.getenv(api_key_ref, "") or "").strip()
+        if ref_key:
+            return ref_key
+
+    provider = (tas.get("provider") or "").strip().lower()
+    if provider == "deepseek":
+        ds_key = (os.getenv("DEEPSEEK_API_KEY", "") or "").strip()
+        if ds_key:
+            return ds_key
+
+    # Fallback: existing global OpenAI key
+    if OPENAI_API_KEY:
+        k = OPENAI_API_KEY.strip()
+        if k:
+            return k
+
+    return None
+
+
+def _get_llm_client_for_tenant(tas: dict | None) -> Optional[OpenAI]:
+    """
+    Build an LLM client for the given tenant_ai_settings dict.
+
+    Supported providers (via tenant_ai_settings.provider):
+    - "openai_compatible" / "copilot": OpenAI-compatible HTTP APIs
+    - "deepseek": DeepSeek API (OpenAI-compatible base URL)
+
+    Unknown/empty provider falls back to the global OpenAI client.
+    """
+    # If we don't have tenant settings at all, just reuse the global client.
+    if not tas:
+        return client
+
+    provider = (tas.get("provider") or "").strip().lower()
+    base_url = (tas.get("base_url") or "").strip() or None
+    api_key = _resolve_api_key_for_tenant(tas)
+
+    # If we couldn't resolve any key, fall back to existing global client
+    if not api_key:
+        return client
+
+    # If provider/base_url are not set and this matches our global client, reuse it
+    if not provider and not base_url and client is not None and api_key == (OPENAI_API_KEY or "").strip():
+        return client
+
+    # DeepSeek (OpenAI-compatible)
+    if provider == "deepseek":
+        if not base_url:
+            base_url = (os.getenv("DEEPSEEK_BASE_URL", "") or "").strip() or "https://api.deepseek.com"
+        return OpenAI(api_key=api_key, base_url=base_url)
+
+    # Generic OpenAI-compatible / Copilot
+    if provider in ("openai_compatible", "copilot"):
+        if base_url:
+            return OpenAI(api_key=api_key, base_url=base_url)
+        return OpenAI(api_key=api_key)
+
+    # Unknown provider: if a base_url is configured, still try using it as OpenAI-compatible
+    if base_url:
+        return OpenAI(api_key=api_key, base_url=base_url)
+
+    # Default: plain OpenAI client (may be different key from global)
+    return OpenAI(api_key=api_key)
+
+
+def _get_llm_client_for_current_tenant() -> Optional[OpenAI]:
+    """
+    Convenience wrapper that reads st.session_state['tenant_ai_settings'] (if any)
+    and returns a tenant-scoped client. Falls back to the global client when
+    tenant_ai_settings is missing or incomplete.
+    """
+    try:
+        tas = st.session_state.get("tenant_ai_settings") or {}
+    except Exception:
+        tas = {}
+    return _get_llm_client_for_tenant(tas)
+
+
+def _call_llm_chat(
+    llm_client: OpenAI, model: str, messages: list, max_tokens: int = 2500
+) -> str:
+    """
+    Unified LLM call using chat.completions.create for multi-provider compatibility.
+    Works with DeepSeek, Copilot, OpenAI, and any OpenAI-compatible API.
+    """
+    response = llm_client.chat.completions.create(
+        model=model,
+        messages=messages,
+        max_tokens=max_tokens,
+    )
+    if not response.choices:
+        return ""
+    return (response.choices[0].message.content or "").strip()
 
 
 def resolve_model_for_user(role: str) -> str:
@@ -1100,6 +1856,25 @@ def resolve_model_for_user(role: str) -> str:
     if role == "free":
         return "gpt-4.1-mini"
     return "gpt-5.1"
+
+
+def resolve_model_for_tenant_or_user(role: str) -> str:
+    """
+    Prefer per-tenant model from tenant_ai_settings.model if present;
+    otherwise use provider-aware default (DeepSeek -> deepseek-chat) or role-based.
+    """
+    try:
+        tas = st.session_state.get("tenant_ai_settings") or {}
+    except Exception:
+        tas = {}
+
+    model = (tas.get("model") or "").strip()
+    if model:
+        return model
+    provider = (tas.get("provider") or "").strip().lower()
+    if provider == "deepseek":
+        return "deepseek-chat"
+    return resolve_model_for_user(role)
 
 
 
@@ -1127,14 +1902,15 @@ def zh(tw: str, cn: str = None) -> str:
 
 def ocr_image_to_text(file_bytes: bytes, filename: str) -> str:
     """Use OpenAI vision model to perform OCR on an image and return plain text."""
-    if client is None:
+    llm_client = _get_llm_client_for_current_tenant()
+    if llm_client is None:
         return "[Error] OPENAI_API_KEY 尚未設定，無法進行圖片 OCR。"
 
     fname = filename.lower()
     img_format = "png" if fname.endswith(".png") else "jpeg"
 
     role = st.session_state.get("user_role", "free")
-    model_name = resolve_model_for_user(role)
+    model_name = resolve_model_for_tenant_or_user(role)
 
     b64_data = base64.b64encode(file_bytes).decode("utf-8")
 
@@ -1150,22 +1926,19 @@ def ocr_image_to_text(file_bytes: bytes, filename: str) -> str:
             "Preserve paragraphs and line breaks. Do not add any commentary or summary."
         )
 
-    try:
-        response = client.responses.create(
-            model=model_name,
-            input=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "input_text", "text": prompt},
-                        {"type": "input_image", "image": {"data": b64_data, "format": img_format}},
-                    ],
-                }
+    # Use chat.completions format for vision (DeepSeek/OpenAI-compatible)
+    mime = "image/png" if img_format == "png" else "image/jpeg"
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64_data}"}},
             ],
-            max_output_tokens=2000,
-        )
-        text_out = response.output_text or ""
-        return text_out.strip()
+        }
+    ]
+    try:
+        return _call_llm_chat(llm_client, model_name, messages, max_tokens=2000)
     except Exception as e:
         return f"[圖片 OCR 時發生錯誤: {e}]"
 
@@ -1213,24 +1986,22 @@ def run_llm_analysis(framework_key: str, language: str, document_text: str, mode
     if framework_key not in FRAMEWORKS:
         return f"[Error] Framework '{framework_key}' not found in frameworks.json."
 
-    fw = FRAMEWORKS[framework_key]
-    system_prompt = fw["wrapper_zh"] if language == "zh" else fw["wrapper_en"]
+    system_prompt = load_framework_prompt_from_docx(framework_key)
+    if not system_prompt:
+        return f"[Error] Framework '{framework_key}' prompt file not found or empty. Check framework_docs/."
     prefix = "以下是要分析的文件內容：\n\n" if language == "zh" else "Here is the document to analyze:\n\n"
     user_prompt = prefix + (document_text or "")
 
-    if client is None:
+    llm_client = _get_llm_client_for_current_tenant()
+    if llm_client is None:
         return "[Error] OPENAI_API_KEY 尚未設定，無法連線至 OpenAI。"
 
     try:
-        response = client.responses.create(
-            model=model_name,
-            input=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            max_output_tokens=2500,
-        )
-        return response.output_text
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        return _call_llm_chat(llm_client, model_name, messages, max_tokens=2500)
     except Exception as e:
         msg = str(e)
         low = msg.lower()
@@ -1254,18 +2025,15 @@ def _openai_simple(system_prompt: str, user_prompt: str, model_name: str, max_ou
     st.session_state["_ef_last_openai_error"] = ""
     st.session_state["_ef_last_openai_error_type"] = ""
 
-    if client is None:
+    llm_client = _get_llm_client_for_current_tenant()
+    if llm_client is None:
         return "[Error] OPENAI_API_KEY 尚未設定，無法連線至 OpenAI。"
     try:
-        response = client.responses.create(
-            model=model_name,
-            input=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            max_output_tokens=max_output_tokens,
-        )
-        return (response.output_text or "").strip()
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        return _call_llm_chat(llm_client, model_name, messages, max_tokens=max_output_tokens)
     except Exception as e:
         msg = str(e)
         low = msg.lower()
@@ -1508,19 +2276,19 @@ Cross-check process (high level):
 1) Obtain review document + framework + prompts + original results
 2) Re-perform the original identification analysis (without referring to original)
 3) Compare original vs cross-check results to classify:
-   - Matching items
-   - Similar matching items
-   - I-only non-matching items
-   - C-only non-matching items
+- Matching items
+- Similar matching items
+- I-only non-matching items
+- C-only non-matching items
 4) Validate similar matching items (re-analyze risk level)
 5) Validate non-matching I-only items (determine correctness; explain why one analysis is wrong)
 6) Validate non-matching C-only items (determine correctness; explain why one analysis is wrong)
 7) Prepare report of results with summary tables:
-   - Table 1: Matching items (same risk)
-   - Table 2: Similar matching items (different risk)
-   - Table 3: I-only non-matching items (include which is correct + why)
-   - Table 4: C-only non-matching items (include which is correct + why)
-   - Table 5: Final validated list (after validation)
+- Table 1: Matching items (same risk)
+- Table 2: Similar matching items (different risk)
+- Table 3: I-only non-matching items (include which is correct + why)
+- Table 4: C-only non-matching items (include which is correct + why)
+- Table 5: Final validated list (after validation)
 """.strip()
 
 
@@ -1632,19 +2400,16 @@ def run_followup_qa(
 
     user_content = "\n\n".join(blocks)
 
-    if client is None:
+    llm_client = _get_llm_client_for_current_tenant()
+    if llm_client is None:
         return "[Error] OPENAI_API_KEY 尚未設定。"
 
     try:
-        response = client.responses.create(
-            model=model_name,
-            input=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
-            max_output_tokens=2000,
-        )
-        return response.output_text
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ]
+        return _call_llm_chat(llm_client, model_name, messages, max_tokens=2000)
     except Exception as e:
         msg = str(e)
         low = msg.lower()
@@ -2174,7 +2939,7 @@ def render_logo(width: int = 260):
         st.warning(f"Logo render failed: {e}")
 
 # --- TEMP DEBUG (disabled) ---
- # with st.sidebar.expander("Logo debug", expanded=False):
+# with st.sidebar.expander("Logo debug", expanded=False):
 #     p = _find_logo_file()
 #     st.write("APP_DIR =", str(APP_DIR))
 #     st.write("CWD =", str(Path.cwd()))
@@ -2182,27 +2947,9 @@ def render_logo(width: int = 260):
 
 # =========================
 # Tenant namespace helper (D3)
+# NOTE: Defined earlier (import-time safe). Do NOT redefine here.
 # =========================
-def tenant_namespace(*parts: str) -> str:
-    """
-    Build a tenant-scoped namespace path.
-    Example:
-      tenant_namespace("reviews", "drafts") -> "tenants/<tenant>/reviews/drafts"
-    """
-    tenant = (st.session_state.get("tenant") or "").strip()
-    if not tenant:
-        return "tenants/unknown"
 
-    safe_parts = []
-    for p in parts:
-        s = (p or "").strip().strip("/")
-        if s:
-            safe_parts.append(s)
-
-    if safe_parts:
-        return "tenants/" + tenant + "/" + "/".join(safe_parts)
-    return "tenants/" + tenant
-    
 # =========================
 # Portal-driven Language Lock + Logout UX
 # =========================
@@ -2295,13 +3042,13 @@ def render_logged_out_page():
     components.html(
         f"""
         <script>
-          (function() {{
+        (function() {{
             try {{
-              window.top.location.replace("{portal_url}");
+            window.top.location.replace("{portal_url}");
             }} catch(e) {{
-              window.location.href = "{portal_url}";
+            window.location.href = "{portal_url}";
             }}
-          }})();
+        }})();
         </script>
         <meta http-equiv="refresh" content="0; url={portal_url}" />
         """,
@@ -2364,9 +3111,9 @@ def do_logout():
             f"""
 <script>
 (function(){{
-  try {{
+try {{
     localStorage.removeItem({json.dumps(_BROWSER_LS_KEY)});
-  }} catch(e) {{}}
+}} catch(e) {{}}
 }})();
 </script>
             """,
@@ -2452,37 +3199,37 @@ def inject_ui_css():
 <style>
 /* Make analysis step titles match RESULTS step titles */
 .stMarkdown h2, .stSubheader, .stHeader {
-  font-size: 24px !important;
+font-size: 24px !important;
 }
 
 /* Strong "RESULTS" banner */
 .ef-results-banner {
-  padding: 14px 16px;
-  border-radius: 12px;
-  border: 1px solid rgba(49, 51, 63, 0.20);
-  background: rgba(49, 51, 63, 0.04);
-  margin: 12px 0 14px 0;
+padding: 14px 16px;
+border-radius: 12px;
+border: 1px solid rgba(49, 51, 63, 0.20);
+background: rgba(49, 51, 63, 0.04);
+margin: 12px 0 14px 0;
 }
 .ef-results-banner .title {
-  font-size: 28px;
-  font-weight: 800;
-  letter-spacing: 0.5px;
-  margin-bottom: 4px;
+font-size: 28px;
+font-weight: 800;
+letter-spacing: 0.5px;
+margin-bottom: 4px;
 }
 .ef-results-banner .subtitle {
-  font-size: 14px;
-  opacity: 0.80;
+font-size: 14px;
+opacity: 0.80;
 }
 
 /* Normalize our Step headers (we render as markdown h3 inside a wrapper) */
 .ef-step-title {
-  font-size: 24px;
-  font-weight: 800;
-  margin: 4px 0 6px 0;
+font-size: 24px;
+font-weight: 800;
+margin: 4px 0 6px 0;
 }
 
 /* Keep analysis content headings from becoming larger than the Step title.
-   (LLM outputs often include markdown H1/H2 which Streamlit renders huge.) */
+(LLM outputs often include markdown H1/H2 which Streamlit renders huge.) */
 div[data-testid="stExpander"] .stMarkdown h1 { font-size: 22px; }
 div[data-testid="stExpander"] .stMarkdown h2 { font-size: 20px; }
 div[data-testid="stExpander"] .stMarkdown h3 { font-size: 18px; }
@@ -2492,36 +3239,36 @@ div[data-testid="stExpander"] .stMarkdown h6 { font-size: 12px; }
 
 /* Make expander header look cleaner */
 div[data-testid="stExpander"] details summary p {
-  font-weight: 700;
+font-weight: 700;
 }
 
 /* Large, obvious "running" indicator (separate from Streamlit's tiny top-right icon) */
 .ef-running {
-  margin: 10px 0 14px 0;
-  padding: 14px 16px;
-  border-radius: 12px;
-  border: 1px solid rgba(255, 75, 75, 0.25);
-  background: rgba(255, 75, 75, 0.06);
+margin: 10px 0 14px 0;
+padding: 14px 16px;
+border-radius: 12px;
+border: 1px solid rgba(255, 75, 75, 0.25);
+background: rgba(255, 75, 75, 0.06);
 }
 .ef-running .row { display: flex; align-items: center; gap: 12px; }
 .ef-running .label { font-size: 16px; font-weight: 800; }
 .ef-spinner {
-  width: 22px; height: 22px;
-  border-radius: 999px;
-  border: 3px solid rgba(49, 51, 63, 0.20);
-  border-top-color: rgba(255, 75, 75, 0.80);
-  animation: efspin 0.9s linear infinite;
+width: 22px; height: 22px;
+border-radius: 999px;
+border: 3px solid rgba(49, 51, 63, 0.20);
+border-top-color: rgba(255, 75, 75, 0.80);
+animation: efspin 0.9s linear infinite;
 }
 @keyframes efspin { to { transform: rotate(360deg); } }
 
 /* Download link styled like a button (avoids 404s from reverse-proxy paths) */
 .ef-download-btn {
-  display: inline-block;
-  padding: 10px 16px;
-  border-radius: 10px;
-  border: 1px solid rgba(49, 51, 63, 0.25);
-  text-decoration: none !important;
-  font-weight: 700;
+display: inline-block;
+padding: 10px 16px;
+border-radius: 10px;
+border: 1px solid rgba(49, 51, 63, 0.25);
+text-decoration: none !important;
+font-weight: 700;
 }
 </style>
         """,
@@ -2539,7 +3286,7 @@ def build_data_download_link(data: bytes, filename: str, mime: str, label: str) 
     b64 = base64.b64encode(data).decode("ascii")
     # Note: onclick returns false to prevent navigation.
     return f"""<a class='ef-download-btn' href='#' onclick="(function(){{
-  try {{
+try {{
     const b64 = '{b64}';
     const byteChars = atob(b64);
     const byteNums = new Array(byteChars.length);
@@ -2554,10 +3301,10 @@ def build_data_download_link(data: bytes, filename: str, mime: str, label: str) 
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }} catch (e) {{
+}} catch (e) {{
     console.error('download failed', e);
-  }}
-  return false;
+}}
+return false;
 }})();" >{label}</a>"""
 
 
@@ -2568,10 +3315,10 @@ def show_running_banner(text: str):
     ph.markdown(
         f"""
 <div class="ef-running">
-  <div class="row">
+<div class="row">
     <div class="ef-spinner"></div>
     <div class="label">{text}</div>
-  </div>
+</div>
 </div>
         """,
         unsafe_allow_html=True,
@@ -2651,6 +3398,8 @@ def _reset_whole_document():
 
     # Also reset selection states so Step 2/Step 4 show FIRST option after reset
     st.session_state.selected_framework_key = None
+    st.session_state.selected_framework_keys = []
+    st.session_state._last_doc_type_for_framework_suggest = None
 
     # Clear Streamlit uploader widget states so UI is truly reset
     for _k in list(st.session_state.keys()):
@@ -2665,9 +3414,11 @@ def _reset_whole_document():
     for _k in [
         "document_type_select",      # EN Step 2 selectbox key
         "document_type_select_zh",   # ZH Step 2 selectbox key
-        "framework_selectbox",       # Step 4 selectbox key
     ]:
         if _k in st.session_state:
+            del st.session_state[_k]
+    for _k in list(st.session_state.keys()):
+        if _k.startswith("fw_cb_"):
             del st.session_state[_k]
 
     # also clear legacy single-key uploaders (older deployments)
@@ -2703,7 +3454,6 @@ def _reset_whole_document():
 
 def main():
     st.set_page_config(page_title=BRAND_TITLE_EN, layout="wide")
-    restore_state_from_disk()
 
     inject_ui_css()
 
@@ -2720,6 +3470,8 @@ def main():
         ("document_type", None),
         ("framework_states", {}),
         ("selected_framework_key", None),
+        ("selected_framework_keys", []),
+        ("_last_doc_type_for_framework_suggest", None),
         ("current_doc_id", None),
         ("company_code", None),
         ("show_admin", False),
@@ -2754,51 +3506,120 @@ def main():
     # Critical: run SSO right after session defaults are ready,
     # and BEFORE any login UI is rendered.
     try_portal_sso_login()
-        # Sidebar (Portal language is locked; do not show mixed-language UI)
-    with st.sidebar:
-        st.header("🧭 " + ("Error-Free® Intelligence Engine" if st.session_state.get("lang", "en") == "en" else "零錯誤智能引擎"))
 
-        ui_lang = st.session_state.get("lang", "en")
-        ui_zhv = st.session_state.get("zh_variant", "tw")
-        is_zh = (ui_lang == "zh")
+    # Restore workflow state AFTER SSO so user identity is available
+    # (saved file path depends on user_email). Overwrites defaults with saved content
+    # so refresh preserves document type, frameworks, uploads, analysis results.
+    restore_state_from_disk()
 
-        # Caption (no mixed language)
-        st.caption("Portal-only SSO (single entry via Portal)" if not is_zh else "Portal-only SSO（單一入口：Portal）")
+    # -------------------------
+    # Phase A2-2: Analyzer launch logging + caps check
+    # -------------------------
+    if st.session_state.get("is_authenticated"):
+        tenant = st.session_state.get("tenant", "")
+        email = st.session_state.get("user_email", "")
+        
+        # Only log once per session (use a flag to avoid repeated logs on every rerun)
+        if "_analyzer_launch_logged" not in st.session_state:
+            # Log analyzer launch
+            _log_audit_event(
+                action="analyzer_launch",
+                tenant=tenant,
+                email=email,
+                result="success",
+                context={
+                    "source": "main_app",
+                    "session_epoch": st.session_state.get("session_epoch", 0)
+                }
+            )
+            st.session_state["_analyzer_launch_logged"] = True
+    
+    # Sidebar (Portal language is locked; do not show mixed-language UI)
+    ui_lang = st.session_state.get("lang", "en")
+    ui_zhv = st.session_state.get("zh_variant", "tw")
+    is_zh = (ui_lang == "zh")
 
-        st.markdown("---")
+    st.sidebar.header("🧭 " + ("Error-Free® Intelligence Engine" if ui_lang == "en" else "零錯誤智能引擎"))
+    st.sidebar.caption("Portal-only SSO (single entry via Portal)" if not is_zh else "Portal-only SSO（單一入口：Portal）")
+    st.sidebar.markdown("---")
 
-        # Language display
-        if not is_zh:
-            st.markdown(f"**Language:** `{ui_lang}` (locked by Portal)")
+    # Language display
+    if not is_zh:
+        st.sidebar.markdown(f"**Language:** `{ui_lang}` (locked by Portal)")
+    else:
+        if ui_zhv == "cn":
+            st.sidebar.markdown("**語言：** `zh-cn`（由 Portal 鎖定）")
         else:
-            if ui_zhv == "cn":
-                st.markdown("**語言：** `zh-cn`（由 Portal 鎖定）")
-            else:
-                st.markdown("**語言：** `zh-tw`（由 Portal 鎖定）")
+            st.sidebar.markdown("**語言：** `zh-tw`（由 Portal 鎖定）")
 
-                # --- Tenant AI settings (safe debug / no secrets) ---
-        tas = st.session_state.get("tenant_ai_settings") or {}
-        tenant_dbg = st.session_state.get("tenant") or ""
-        source = tas.get("source") or "unknown"
-        provider = tas.get("provider") or "(default)"
-        model = tas.get("model") or "(default)"
+    # --- Tenant AI settings (safe debug / no secrets) ---
+    tas = st.session_state.get("tenant_ai_settings") or {}
+    tenant_dbg = st.session_state.get("tenant") or ""
+    source = tas.get("source") or "unknown"
+    provider = tas.get("provider") or "(default)"
+    model = tas.get("model") or "(default)"
 
-        st.caption(f"Tenant: {tenant_dbg}")
-        st.caption(f"AI settings source: {source}")
-        st.caption(f"Provider: {provider}")
-        st.caption(f"Model: {model}")
+    st.sidebar.caption(f"Tenant: {tenant_dbg}")
+    st.sidebar.caption(f"AI settings source: {source}")
+    st.sidebar.caption(f"Provider: {provider}")
+    st.sidebar.caption(f"Model: {model}")
 
-        # Account section (only if authenticated)
-        if st.session_state.get("is_authenticated"):
-            st.markdown("---")
-            st.subheader("Account" if not is_zh else ("帳號資訊" if ui_zhv == "tw" else "账号信息"))
+    # --- Tenant namespace verification (D3) ---
+    # (Step 13 already added tenant_namespace() helper)
+    st.sidebar.caption(f"Namespace: {tenant_namespace()}")
+    st.sidebar.caption(f"Reviews path: {tenant_namespace('reviews')}")
+            # D3-B Step9: Tenant review history (Supabase) — button toggle (no checkbox)
+    if "show_review_history" not in st.session_state:
+        st.session_state["show_review_history"] = False
 
-            email = st.session_state.get("user_email", "")
-            if email:
-                st.markdown(f"Email: [{email}](mailto:{email})" if not is_zh else f"Email：[{email}](mailto:{email})")
+    if st.sidebar.button(
+        "Review\u00A0history\u00A0(Latest\u00A020)",
+        key=tenant_namespace("ui", "toggle_review_history").replace("/", "__"),
+    ):
+        st.session_state["show_review_history"] = not st.session_state["show_review_history"]
 
-            if st.button("Logout" if not is_zh else "登出"):
-                do_logout()
+    show_history = bool(st.session_state.get("show_review_history"))
+
+    if show_history:
+        tenant = (st.session_state.get("tenant") or "unknown").strip() or "unknown"
+        rows = fetch_tenant_reviews_from_supabase(tenant, limit=20)
+
+        if not rows:
+            st.sidebar.caption("No history yet (or not readable).")
+        else:
+            for r in rows:
+                created_at = (r.get("created_at") or "")
+                created_at = created_at.replace("T", " ")[:19] if created_at else "-"
+
+                fw = r.get("framework_key") or "-"
+                doc = r.get("document_name") or "-"
+                dl = r.get("download_filename") or ""
+                short_dl = dl.split("__")[-1] if dl else "-"
+
+                rid = (r.get("id") or "")
+                rid8 = rid[:8] if rid else "-"
+
+                # Markdown + backticks => colored "badge" look like before
+                st.sidebar.markdown(
+                    f"- `{created_at}` **{fw}**  \n"
+                    f"  {doc}  \n"
+                    f"  {short_dl} · `{rid8}`"
+                )
+
+        if st.session_state.get("_last_reviews_read_error"):
+            st.sidebar.caption(f"Read error: {st.session_state.get('_last_reviews_read_error')}")
+            
+    # Account section (only if authenticated)
+    if st.session_state.get("is_authenticated"):
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("Account" if not is_zh else ("帳號資訊" if ui_zhv == "tw" else "账号信息"))
+
+        email = st.session_state.get("user_email", "")
+        if email:
+            st.sidebar.markdown(f"Email: [{email}](mailto:{email})" if not is_zh else f"Email：[{email}](mailto:{email})")
+
+        if st.sidebar.button("Logout" if not is_zh else "登出"):
+            do_logout()
 
 
     # ======= Login screen =======
@@ -2807,7 +3628,7 @@ def main():
 
         render_logo(260)
 
-             # Homepage title (match Catalog)
+            # Homepage title (match Catalog)
         if lang == "zh":
             title = (
                 "AI化零錯誤多輪文件審查/零錯誤文件隱患排查（預防文件審查錯誤）"
@@ -2992,7 +3813,7 @@ def main():
     user_email = st.session_state.user_email
     user_role = st.session_state.user_role
     is_guest = user_role == "free"
-    model_name = resolve_model_for_user(user_role)
+    model_name = resolve_model_for_tenant_or_user(user_role)
 
     # Framework state setup
     if not FRAMEWORKS:
@@ -3000,7 +3821,14 @@ def main():
         return
 
     fw_keys = list(FRAMEWORKS.keys())
-    fw_labels = [FRAMEWORKS[k]["name_zh"] if lang == "zh" else FRAMEWORKS[k]["name_en"] for k in fw_keys]
+    fw_labels = []
+    for k in fw_keys:
+        fw = FRAMEWORKS.get(k)
+        if isinstance(fw, dict):
+            lbl = fw.get("name_zh") if lang == "zh" else fw.get("name_en")
+            fw_labels.append(lbl if isinstance(lbl, str) else k)
+        else:
+            fw_labels.append(k)
     key_to_label = dict(zip(fw_keys, fw_labels))
     label_to_key = dict(zip(fw_labels, fw_keys))
 
@@ -3093,39 +3921,75 @@ def main():
     st.caption("Single selection" if lang == "en" else zh("單選", "单选"))
 
     DOC_TYPES = [
+        "None",
+        "Specifications and Requirements",
         "Conceptual Design",
         "Preliminary Design",
         "Final Design",
         "Equivalency Engineering Evaluation",
         "Root Cause Analysis",
+        "Calculation and Analysis",
         "Safety Analysis",
-        "Specifications and Requirements",
-        "Calculations and Analysis",
+        "Justification for Continued Operation",
+        "Operation Procedures",
+        "Maintenance Procedures",
+        "Project Planning",
+        "Contract",
     ]
 
     DOC_TYPE_LABELS_ZH_TW = {
+        "None": "無",
+        "Specifications and Requirements": "規格與需求",
         "Conceptual Design": "概念設計",
         "Preliminary Design": "初步設計",
         "Final Design": "最終設計",
         "Equivalency Engineering Evaluation": "等效工程評估",
         "Root Cause Analysis": "根本原因分析",
+        "Calculation and Analysis": "計算與分析",
         "Safety Analysis": "安全分析",
-        "Specifications and Requirements": "規格與需求",
-        "Calculations and Analysis": "計算與分析",
+        "Justification for Continued Operation": "持續運轉正當性論證",
+        "Operation Procedures": "操作程序",
+        "Maintenance Procedures": "維護程序",
+        "Project Planning": "專案規劃",
+        "Contract": "合約",
     }
     DOC_TYPE_LABELS_ZH_CN = {
+        "None": "无",
+        "Specifications and Requirements": "规格与需求",
         "Conceptual Design": "概念设计",
         "Preliminary Design": "初步设计",
         "Final Design": "最终设计",
         "Equivalency Engineering Evaluation": "等效工程评估",
         "Root Cause Analysis": "根本原因分析",
+        "Calculation and Analysis": "计算与分析",
         "Safety Analysis": "安全分析",
-        "Specifications and Requirements": "规格与需求",
-        "Calculations and Analysis": "计算与分析",
+        "Justification for Continued Operation": "持续运转正当性论证",
+        "Operation Procedures": "操作程序",
+        "Maintenance Procedures": "维护程序",
+        "Project Planning": "项目规划",
+        "Contract": "合约",
+    }
+
+    # Document type → recommended framework keys (for Step 4 auto pre-select)
+    DOC_TYPE_TO_RECOMMENDED_FRAMEWORKS = {
+        "None": [],
+        "Specifications and Requirements": ["work_spv", "omission_errors", "information_errors", "alignment_errors", "reasoning_errors"],
+        "Conceptual Design": ["design_spv", "assumption_spv", "omission_errors", "information_errors", "alignment_errors", "reasoning_errors"],
+        "Preliminary Design": ["design_spv", "assumption_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
+        "Final Design": ["work_spv", "design_spv", "assumption_spv", "injury_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
+        "Equivalency Engineering Evaluation": ["omission_errors", "information_errors", "technical_errors", "alignment_errors"],
+        "Root Cause Analysis": ["design_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors"],
+        "Calculation and Analysis": ["design_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
+        "Safety Analysis": ["design_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
+        "Justification for Continued Operation": ["work_spv", "design_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
+        "Operation Procedures": ["work_spv", "assumption_spv", "injury_spv", "omission_errors", "information_errors", "alignment_errors", "reasoning_errors"],
+        "Maintenance Procedures": ["work_spv", "assumption_spv", "injury_spv", "omission_errors", "information_errors", "alignment_errors", "reasoning_errors"],
+        "Project Planning": ["work_spv", "assumption_spv", "injury_spv", "omission_errors", "information_errors", "alignment_errors", "reasoning_errors"],
+        "Contract": ["work_spv", "assumption_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
     }
 
     if st.session_state.get("document_type") not in DOC_TYPES:
-        st.session_state.document_type = DOC_TYPES[0]
+        st.session_state.document_type = DOC_TYPES[0]  # "None" so UI shows no pre-selection
 
     if st.session_state.document_type == "Specifications and Requirements" and not step5_done:
         st.warning(
@@ -3158,6 +4022,23 @@ def main():
             key="document_type_select",
             disabled=doc_type_disabled,
         )
+
+    # Sync recommended frameworks when document_type changes (for Step 4 auto pre-select)
+    doc_type = st.session_state.document_type or DOC_TYPES[0]
+    last_doc_type = st.session_state.get("_last_doc_type_for_framework_suggest")
+    if doc_type != last_doc_type:
+        recommended = DOC_TYPE_TO_RECOMMENDED_FRAMEWORKS.get(doc_type, fw_keys)
+        recommended_set = set(k for k in recommended if k in fw_keys)
+        st.session_state.selected_framework_keys = list(recommended_set)
+        st.session_state._last_doc_type_for_framework_suggest = doc_type
+        st.session_state["_step4_auto_expand"] = True  # auto-expand and scroll to Step 4 for any doc type change
+        if st.session_state.selected_framework_key not in st.session_state.selected_framework_keys:
+            st.session_state.selected_framework_key = st.session_state.selected_framework_keys[0] if st.session_state.selected_framework_keys else fw_keys[0]
+        for k in fw_keys:
+            st.session_state[f"fw_cb_{k}"] = k in recommended_set
+        save_state_to_disk()
+        st.rerun()  # rerun so Step 4 expand + scroll runs in same cycle for every selection (not only some)
+
     save_state_to_disk()
 
     # Step 3: Reference docs split (更正2)
@@ -3260,23 +4141,58 @@ def main():
 
     st.markdown("---")
 
-    # Step 4: select framework (lock after Step 5)
-    st.subheader("Step 4: Select Framework" if lang == "en" else zh("步驟四：選擇分析框架（僅單選）", "步骤四：选择分析框架（仅单选）"))
+    # Step 4: select framework (lock after Step 5) — collapsible for cleaner UI
+    should_expand = st.session_state.pop("_step4_auto_expand", False)
+    if should_expand:
+        st.markdown('<div id="step4-framework-section"></div>', unsafe_allow_html=True)
+    st.subheader("Step 4: Select Framework" if lang == "en" else zh("步驟四：選擇分析框架", "步骤四：选择分析框架"))
     st.caption(
         "Single selection only. After Step 5, the framework will be locked until Reset Whole Document." if lang == "en"
-        else zh("僅單選。一旦按下步驟五開始分析後，框架會被鎖住，需 Reset Whole Document 才能重新選擇，避免來回切換造成混淆。", "仅单选。一旦按下步骤五开始分析后，框架会被锁住，需 Reset Whole Document 才能重新选择，避免来回切换造成混淆。")
+        else zh("僅單選。一旦按下步驟五開始分析後，框架會被鎖住，需 Reset Whole Document 才能重新選擇。", "仅单选。一旦按下步骤五开始分析后，框架会被锁住，需 Reset Whole Document 才能重新选择。")
     )
+    doc_type = st.session_state.get("document_type") or DOC_TYPES[0]
+    expander_label = (
+        zh("展開查看／修改依文件類型建議的框架選項", "展开查看／修改依文件类型建议的框架选项")
+        if lang == "zh" else f"Expand to view/edit framework options (suggested for {doc_type})"
+    )
+    with st.expander(expander_label, expanded=should_expand):
+        st.info(
+            zh("以下為系統依文件類型自動勾選的建議選項，您仍可自行加選或取消。", "以下为系统依文件类型自动勾选的建议选项，您仍可自行加选或取消。")
+            if lang == "zh" else "Below are suggested options auto-selected by document type. You may add or uncheck as needed."
+        )
 
-    current_label = key_to_label.get(current_fw_key, fw_labels[0])
-    selected_label = st.selectbox(
-        "Select framework" if lang == "en" else zh("選擇框架", "选择框架"),
-        fw_labels,
-        index=fw_labels.index(current_label) if current_label in fw_labels else 0,
-        key="framework_selectbox",
-        disabled=step5_done,
-    )
-    selected_key = label_to_key[selected_label]
-    st.session_state.selected_framework_key = selected_key
+        sel_keys = st.session_state.get("selected_framework_keys") or []
+        sel_keys_set = set(sel_keys)
+        new_sel_keys = []
+        for i, k in enumerate(fw_keys):
+            lbl = fw_labels[i]
+            checked = st.checkbox(lbl, value=(k in sel_keys_set), key=f"fw_cb_{k}", disabled=step5_done)
+            if checked:
+                new_sel_keys.append(k)
+
+        st.session_state.selected_framework_keys = new_sel_keys
+
+        if not new_sel_keys:
+            new_sel_keys = list(fw_keys)
+            st.session_state.selected_framework_keys = new_sel_keys
+        selected_key = new_sel_keys[0]
+        st.session_state.selected_framework_key = selected_key
+
+    if should_expand:
+        try:
+            import streamlit.components.v1 as components
+            components.html("""
+            <script>
+            (function(){
+              try {
+                var el = window.parent.document.getElementById('step4-framework-section');
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              } catch(e) {}
+            })();
+            </script>
+            """, height=0)
+        except Exception:
+            pass
 
     if selected_key != current_fw_key:
         if selected_key not in framework_states:
@@ -3319,9 +4235,37 @@ def main():
     if run_step5:
         if not st.session_state.last_doc_text:
             st.error("Please upload a review document first (Step 1)." if lang == "en" else zh("請先上傳審閱文件（Step 1）", "请先上传审阅文件（Step 1）"))
-        elif not st.session_state.get("document_type"):
+        elif not st.session_state.get("document_type") or st.session_state.get("document_type") == "None":
             st.error("Please select a document type first (Step 2)." if lang == "en" else zh("請先選擇文件類型（Step 2）", "请先选择文件类型（Step 2）"))
         else:
+            # Phase A2-2: Check usage cap before proceeding
+            tenant = st.session_state.get("tenant", "")
+            email = st.session_state.get("user_email", "")
+            
+            allow, cap, current_usage, cap_message = _check_usage_cap(tenant, "review", email=email)
+            
+            if not allow:
+                # Cap reached - show error and log denial
+                st.error(cap_message)
+                _log_audit_event(
+                    action="review_denied",
+                    tenant=tenant,
+                    email=email,
+                    result="denied",
+                    deny_reason="usage_cap_reached",
+                    context={"cap": cap, "current_usage": current_usage, "usage_type": "review"}
+                )
+                save_state_to_disk()
+                st.stop()
+            
+            # Show usage status if cap is set
+            if cap > 0:
+                remaining = cap - current_usage
+                if remaining <= 5:
+                    st.warning(f"⚠️ Daily review limit: {current_usage}/{cap} used. {remaining} remaining.")
+                else:
+                    st.info(f"📊 Daily review usage: {current_usage}/{cap}")
+            
             banner = show_running_banner(
                 "Analyzing... (main only)" if lang == "en" else zh("分析中...（僅主文件）", "分析中...（仅主文件）")
             )
@@ -3338,6 +4282,16 @@ def main():
 
             current_state["step5_done"] = True
             current_state["step5_output"] = clean_report_text(main_analysis_text)
+            
+            # Phase A2-2: Record usage event
+            _record_usage_event(
+                tenant=tenant,
+                email=email,
+                usage_type="review",
+                quantity=1,
+                context={"framework": selected_key, "step": "step5_main_analysis"}
+            )
+            
             save_state_to_disk()
             record_usage(user_email, selected_key, "analysis")
             st.success("Step 5 completed. Main analysis generated." if lang == "en" else zh("步驟五完成！已產出主文件第一份分析。", "步骤五完成！已产出主文件第一份分析。"))
@@ -3758,8 +4712,8 @@ def main():
     st.markdown(
         f"""
 <div class="ef-results-banner">
-  <div class="title">{'RESULTS' if lang == 'en' else zh('結果總覽', '结果总览')}</div>
-  <div class="subtitle">{'All outputs are grouped below by steps.' if lang == 'en' else zh('所有輸出依步驟整理在此區，點選可展開 / 收起。', '所有输出依步骤整理在此区，点选可展开 / 收起。')}</div>
+<div class="title">{'RESULTS' if lang == 'en' else zh('結果總覽', '结果总览')}</div>
+<div class="subtitle">{'All outputs are grouped below by steps.' if lang == 'en' else zh('所有輸出依步驟整理在此區，點選可展開 / 收起。', '所有输出依步骤整理在此区，点选可展开 / 收起。')}</div>
 </div>
         """,
         unsafe_allow_html=True,
@@ -3875,19 +4829,65 @@ def main():
                     mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
                     now_ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                    framework_key = (selected_key or "unknown").replace("/", "-")
-                    filename = f"Error-Free® IER {framework_key} {now_ts}" + (" +Q&A" if include_qa else "") + ".docx"
+                    framework_key = (selected_key or "unknown").replace("/", "__")
+                    base_filename = f"Error-Free® IER {framework_key} {now_ts}" + (" +Q&A" if include_qa else "") + ".docx"
+                    filename = tenant_namespace("downloads", base_filename).replace("/", "__")
 
+                    # --- Prepare one canonical history row (saved on click, best-effort) ---
+                    tenant = (st.session_state.get("tenant") or "unknown").strip() or "unknown"
+                    email = (st.session_state.get("user_email") or "").strip().lower() or None
+                    doc_name = st.session_state.get("last_doc_name") or None
+                    doc_text = st.session_state.get("last_doc_text") or ""
+                    doc_sha = hashlib.sha256(doc_text.encode("utf-8")).hexdigest() if doc_text else None
 
-                    # Download (DOCX) — use Streamlit native download_button (supports browser save-location prompt).
-                    st.download_button(
-                        label=("Download" if lang == "en" else zh("開始下載", "开始下载")),
-                        data=data,
-                        file_name=filename,
-                        mime=mime,
-                        key=f"download_{framework_key}_{now_ts}",
-                    )
-                    
+                    report_sha = hashlib.sha256(report.encode("utf-8")).hexdigest()
+                    fp = report_sha[:16]
+
+                    st.session_state["_pending_tenant_review_row"] = {
+                        "_fingerprint": fp,
+                        "tenant": tenant,
+                        "created_by": email,
+                        "framework_key": selected_key,
+                        "document_name": doc_name,
+                        "document_sha256": doc_sha,
+                        "report_md": report,
+                        "qa_json": (current_state.get("followup_history") or []) if include_qa else None,
+                        "download_filename": filename,
+                        "meta": {
+                            "lang": lang,
+                            "zh_variant": st.session_state.get("zh_variant"),
+                            "include_qa": bool(include_qa),
+                            "report_sha256": report_sha,
+                            "ai_provider": (st.session_state.get("tenant_ai_settings") or {}).get("provider"),
+                            "ai_model": (st.session_state.get("tenant_ai_settings") or {}).get("model"),
+                            "ai_source": (st.session_state.get("tenant_ai_settings") or {}).get("source"),
+                        },
+                    }
+
+                    # Download (DOCX) — use Streamlit native download_button
+                    try:
+                        st.download_button(
+                            label=("Download" if lang == "en" else zh("開始下載", "开始下载")),
+                            data=data,
+                            file_name=filename,
+                            mime=mime,
+                            key=tenant_namespace("ui", f"download_{framework_key}_{now_ts}").replace("/", "__"),
+                            on_click=_save_pending_review_to_supabase,
+                        )
+                    except TypeError:
+                        # Older Streamlit: download_button may not support on_click
+                        st.download_button(
+                            label=("Download" if lang == "en" else zh("開始下載", "开始下载")),
+                            data=data,
+                            file_name=filename,
+                            mime=mime,
+                            key=tenant_namespace("ui", f"download_{framework_key}_{now_ts}").replace("/", "__"),
+                        )
+                        st.button(
+                            ("Record this download in history" if lang == "en" else zh("將本次下載寫入歷史紀錄", "将本次下载写入历史记录")),
+                            on_click=_save_pending_review_to_supabase,
+                            key=tenant_namespace("ui", f"record_download_{framework_key}_{now_ts}").replace("/", "__"),
+                        )
 
                     st.caption(
                         "Tip: If you want a 'Save As' location prompt, enable 'Ask where to save each file' in your browser settings."
