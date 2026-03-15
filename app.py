@@ -1709,12 +1709,14 @@ def restore_state_from_disk():
         if bad_key in data:
             data.pop(bad_key, None)
 
-    # Workflow keys to restore (overwrite so refresh brings back saved content)
+    # Workflow keys to restore (overwrite so refresh brings back saved content).
+    # Do NOT restore _last_doc_type_for_framework_suggest: we need sync to run when doc_type
+    # is set (from restore or from UI) so Step 4 gets correct recommended frameworks.
     workflow_keys = [
         "lang", "zh_variant", "usage_date", "usage_count",
         "last_doc_text", "last_doc_name", "document_type",
         "framework_states", "selected_framework_key", "selected_framework_keys",
-        "_last_doc_type_for_framework_suggest", "current_doc_id", "show_admin",
+        "current_doc_id", "show_admin",
         "upstream_reference", "quote_current", "quote_history",
         "quote_upload_nonce", "review_upload_nonce", "upstream_upload_nonce",
         "quote_upload_finalized", "upstream_step6_done", "upstream_step6_output",
