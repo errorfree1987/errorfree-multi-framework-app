@@ -1733,9 +1733,10 @@ def restore_state_from_disk():
         if k in data:
             st.session_state[k] = data[k]
 
-    # Step 4 multiselect must re-initialize from restored selected_framework_keys
-    if "step4_framework_multiselect" in st.session_state:
-        del st.session_state["step4_framework_multiselect"]
+    # Step 4 checkboxes must re-initialize from restored selected_framework_keys
+    for _k in list(st.session_state.keys()):
+        if _k.startswith("step4_cb_"):
+            del st.session_state[_k]
 
 
 # =========================
@@ -3424,8 +3425,9 @@ def _reset_whole_document():
     for _k in list(st.session_state.keys()):
         if _k.startswith("fw_cb_"):
             del st.session_state[_k]
-    if "step4_framework_multiselect" in st.session_state:
-        del st.session_state["step4_framework_multiselect"]
+    for _k in list(st.session_state.keys()):
+        if _k.startswith("step4_cb_"):
+            del st.session_state[_k]
 
     # also clear legacy single-key uploaders (older deployments)
     for _legacy in ["review_doc_uploader", "upstream_uploader"]:
@@ -4045,8 +4047,9 @@ def main():
                 st.session_state.selected_framework_key = st.session_state.selected_framework_keys[0]
         else:
             st.session_state.selected_framework_key = fw_keys[0] if fw_keys else None
-        if "step4_framework_multiselect" in st.session_state:
-            del st.session_state["step4_framework_multiselect"]
+        for _k in list(st.session_state.keys()):
+            if _k.startswith("step4_cb_"):
+                del st.session_state[_k]
         save_state_to_disk()
         st.rerun()
 
@@ -4178,16 +4181,18 @@ def main():
                 if lang == "zh" else "Below are suggested options auto-selected by document type. You may add or uncheck as needed."
             )
 
-        # Sync multiselect widget with selected_framework_keys when key is missing (after doc_type change or refresh), so Step 4 shows correct pre-selection / restored state
-        if "step4_framework_multiselect" not in st.session_state:
-            st.session_state["step4_framework_multiselect"] = list(st.session_state.get("selected_framework_keys") or [])
-        new_sel_keys = st.multiselect(
-            zh("選擇框架（可多選）", "选择框架（可多选）"),
-            options=fw_keys,
-            format_func=lambda k: key_to_label.get(k, k),
-            key="step4_framework_multiselect",
-            disabled=step5_done,
-        )
+        # Vertical list of checkboxes so full framework names are visible (one per line); uncheck = remove, check = add
+        sel_keys = st.session_state.get("selected_framework_keys") or []
+        sel_keys_set = set(sel_keys)
+        new_sel_keys = []
+        _step4_label = (zh("**選擇框架（可多選，勾選＝加入、取消勾選＝移除）**", "**选择框架（可多选，勾选＝加入、取消勾选＝移除）**") if lang == "zh" else "**Select frameworks (multi-select; check = add, uncheck = remove)**")
+        st.markdown(_step4_label)
+        for k in fw_keys:
+            full_label = key_to_label.get(k, k)
+            checked = st.checkbox(full_label, value=(k in sel_keys_set), key=f"step4_cb_{k}", disabled=step5_done)
+            if checked:
+                new_sel_keys.append(k)
+        st.session_state.selected_framework_keys = new_sel_keys
 
         doc_type_step4 = st.session_state.get("document_type") or DOC_TYPES[0]
         if not new_sel_keys:
