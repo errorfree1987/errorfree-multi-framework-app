@@ -4181,16 +4181,20 @@ def main():
                 if lang == "zh" else "Below are suggested options auto-selected by document type. You may add or uncheck as needed."
             )
 
+        # Clear add-widget state on next run after we applied an add (must run before multiselect is mounted to avoid StreamlitAPIException)
+        if st.session_state.pop("_step4_clear_add", False) and "step4_add_frameworks" in st.session_state:
+            del st.session_state["step4_add_frameworks"]
+
         # Currently selected frameworks (source of truth)
         selected_list = list(st.session_state.get("selected_framework_keys") or [])
         removed_any = False
 
         if selected_list:
             st.markdown("**Currently selected frameworks:**")
-            cols = st.columns(4)
+            cols = st.columns(5)
             to_remove = []
             for idx, k in enumerate(selected_list):
-                col = cols[idx % 4]
+                col = cols[idx % 5]
                 with col:
                     lbl = key_to_label.get(k, k)
                     st.write(lbl)
@@ -4223,8 +4227,8 @@ def main():
         changed = removed_any or added_any
         if changed:
             st.session_state.selected_framework_keys = selected_list
-            # clear add widget after applying
-            st.session_state["step4_add_frameworks"] = []
+            # Clear add widget on next run (before widget is mounted) so new items only appear in "Currently selected frameworks"
+            st.session_state["_step4_clear_add"] = True
 
         if selected_list:
             selected_key = selected_list[0]
