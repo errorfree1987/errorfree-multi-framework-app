@@ -3977,19 +3977,128 @@ def main():
     # Document type → recommended framework keys (Step 4), per "Types of Document and Recommended Review Areas" matrix
     DOC_TYPE_TO_RECOMMENDED_FRAMEWORKS = {
         "None": [],
-        "Specifications and Requirements": ["work_spv", "omission_errors", "information_errors", "alignment_errors", "reasoning_errors"],
-        "Conceptual Design": ["design_spv", "assumption_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
-        "Preliminary Design": ["design_spv", "assumption_spv", "injury_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
-        "Final Design": ["work_spv", "design_spv", "assumption_spv", "injury_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
-        "Equivalency Engineering Evaluation": ["omission_errors", "information_errors", "alignment_errors", "reasoning_errors"],
-        "Root Cause Analysis": ["design_spv", "omission_errors", "information_errors", "alignment_errors", "reasoning_errors"],
-        "Calculation and Analysis": ["design_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
-        "Safety Analysis": ["design_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
-        "Justification for Continued Operation": ["work_spv", "design_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
-        "Operation Procedures": ["work_spv", "assumption_spv", "injury_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
-        "Maintenance Procedures": ["work_spv", "assumption_spv", "injury_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
-        "Project Planning": ["work_spv", "assumption_spv", "injury_spv", "omission_errors", "information_errors", "technical_errors", "alignment_errors", "reasoning_errors"],
-        "Contract": ["work_spv", "design_spv", "omission_errors", "information_errors", "alignment_errors", "reasoning_errors"],
+        # 1. Specification and Requirements
+        "Specifications and Requirements": [
+            "work_spv",
+            "omission_errors",
+            "information_errors",
+            "alignment_errors",
+            "reasoning_errors",
+        ],
+        # 2. Conceptual Design
+        "Conceptual Design": [
+            "design_spv",
+            "assumption_spv",
+            "omission_errors",
+            "information_errors",
+            "alignment_errors",
+            "reasoning_errors",
+        ],
+        # 3. Preliminary Design
+        "Preliminary Design": [
+            "design_spv",
+            "assumption_spv",
+            "omission_errors",
+            "information_errors",
+            "technical_errors",
+            "alignment_errors",
+            "reasoning_errors",
+        ],
+        # 4. Final Design
+        "Final Design": [
+            "work_spv",
+            "design_spv",
+            "assumption_spv",
+            "injury_spv",
+            "omission_errors",
+            "information_errors",
+            "technical_errors",
+            "alignment_errors",
+            "reasoning_errors",
+        ],
+        # 5. Equivalency Engineering Evaluation
+        "Equivalency Engineering Evaluation": [
+            "omission_errors",
+            "information_errors",
+            "technical_errors",
+            "alignment_errors",
+        ],
+        # 6. Root Cause Analysis
+        "Root Cause Analysis": [
+            "design_spv",
+            "omission_errors",
+            "information_errors",
+            "technical_errors",
+            "alignment_errors",
+        ],
+        # 7. Calculation and Analysis
+        "Calculation and Analysis": [
+            "design_spv",
+            "omission_errors",
+            "information_errors",
+            "technical_errors",
+            "alignment_errors",
+            "reasoning_errors",
+        ],
+        # 8. Safety Analysis
+        "Safety Analysis": [
+            "design_spv",
+            "omission_errors",
+            "information_errors",
+            "technical_errors",
+            "alignment_errors",
+            "reasoning_errors",
+        ],
+        # 9. Justification for Continued Operation
+        "Justification for Continued Operation": [
+            "work_spv",
+            "design_spv",
+            "omission_errors",
+            "information_errors",
+            "technical_errors",
+            "alignment_errors",
+            "reasoning_errors",
+        ],
+        # 10. Operation Procedures
+        "Operation Procedures": [
+            "work_spv",
+            "assumption_spv",
+            "injury_spv",
+            "omission_errors",
+            "information_errors",
+            "alignment_errors",
+            "reasoning_errors",
+        ],
+        # 11. Maintenance Procedures
+        "Maintenance Procedures": [
+            "work_spv",
+            "assumption_spv",
+            "injury_spv",
+            "omission_errors",
+            "information_errors",
+            "alignment_errors",
+            "reasoning_errors",
+        ],
+        # 12. Project Planning
+        "Project Planning": [
+            "work_spv",
+            "assumption_spv",
+            "injury_spv",
+            "omission_errors",
+            "information_errors",
+            "alignment_errors",
+            "reasoning_errors",
+        ],
+        # 13. Contract
+        "Contract": [
+            "work_spv",
+            "assumption_spv",
+            "omission_errors",
+            "information_errors",
+            "technical_errors",
+            "alignment_errors",
+            "reasoning_errors",
+        ],
     }
 
     if st.session_state.get("document_type") not in DOC_TYPES:
