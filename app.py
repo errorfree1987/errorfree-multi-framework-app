@@ -4181,16 +4181,26 @@ def main():
                 if lang == "zh" else "Below are suggested options auto-selected by document type. You may add or uncheck as needed."
             )
 
-        # Vertical list of checkboxes so full framework names are visible (no truncation); add/remove by checking/unchecking
-        sel_keys = st.session_state.get("selected_framework_keys") or []
-        sel_keys_set = set(sel_keys)
-        new_sel_keys = []
-        for i, k in enumerate(fw_keys):
-            lbl = fw_labels[i]  # full name for display
-            checked = st.checkbox(lbl, value=(k in sel_keys_set), key=f"fw_cb_{k}", disabled=step5_done)
-            if checked:
-                new_sel_keys.append(k)
-        st.caption(zh("可勾選／取消勾選以增減框架。", "可勾选／取消勾选以增减框架。") if lang == "zh" else "Check or uncheck to add or remove frameworks.")
+        # Multiselect with red chips (Streamlit default) for current selection,
+        # plus a full-text recommended list below so students can see all framework names.
+        default_sel = st.session_state.get("selected_framework_keys") or []
+        new_sel_keys = st.multiselect(
+            zh("選擇框架（可多選）", "选择框架（可多选）"),
+            options=fw_keys,
+            default=default_sel,
+            format_func=lambda k: key_to_label.get(k, k),
+            key="step4_framework_multiselect",
+            disabled=step5_done,
+        )
+        # Show full names of currently selected frameworks so labels are not truncated in chips
+        if new_sel_keys:
+            st.markdown(
+                zh("**目前選擇的框架（完整名稱）：**", "**目前选择的框架（完整名称）：**")
+                if lang == "zh" else "**Currently selected frameworks (full names):**"
+            )
+            for k in new_sel_keys:
+                lbl = key_to_label.get(k, k)
+                st.markdown(f"- {lbl}")
 
         doc_type_step4 = st.session_state.get("document_type") or DOC_TYPES[0]
         if not new_sel_keys:
