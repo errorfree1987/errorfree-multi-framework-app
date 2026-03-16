@@ -4142,9 +4142,10 @@ def main():
     doc_type = st.session_state.document_type or DOC_TYPES[0]
     last_doc_type = st.session_state.get("_last_doc_type_for_framework_suggest")
     if doc_type != last_doc_type:
+        # Preserve the exact left-to-right order from DOC_TYPE_TO_RECOMMENDED_FRAMEWORKS
         recommended = DOC_TYPE_TO_RECOMMENDED_FRAMEWORKS.get(doc_type, fw_keys)
-        recommended_set = set(k for k in recommended if k in fw_keys)
-        st.session_state.selected_framework_keys = list(recommended_set)
+        ordered_rec = [k for k in recommended if k in fw_keys]
+        st.session_state.selected_framework_keys = ordered_rec
         st.session_state._last_doc_type_for_framework_suggest = doc_type
         st.session_state["_step4_auto_expand"] = True  # kept in session across rerun (not saved to disk) so Step 4 expands
         if st.session_state.selected_framework_keys:
