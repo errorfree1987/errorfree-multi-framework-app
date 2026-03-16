@@ -4309,7 +4309,8 @@ def main():
                 with col:
                     lbl = key_to_label.get(k, k)
                     st.write(lbl)
-                    if st.button("✕", key=f"remove_fw_{k}_{idx}", disabled=step5_done):
+                    # Stable key per framework so Streamlit reliably captures clicks across reruns
+                    if st.button("✕", key=f"remove_fw_{k}", disabled=step5_done):
                         to_remove.append(k)
             if to_remove:
                 removed_any = True
@@ -4346,8 +4347,9 @@ def main():
         changed = removed_any or added_any
         if changed:
             st.session_state.selected_framework_keys = selected_list
-            # Clear add widget on next run (before widget is mounted) so new items only appear in "Currently selected frameworks"
-            st.session_state["_step4_clear_add"] = True
+            # Only when we added do we need to clear the add selectbox next run
+            if added_any:
+                st.session_state["_step4_clear_add"] = True
 
         if selected_list:
             selected_key = selected_list[0]
