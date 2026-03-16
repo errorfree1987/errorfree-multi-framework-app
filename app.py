@@ -4181,39 +4181,64 @@ def main():
                 if lang == "zh" else "Below are suggested options auto-selected by document type. You may add or uncheck as needed."
             )
 
-        # Show full names of selected frameworks ABOVE the dropdown, so chips will not hide labels.
-        current_box = st.container()
-        default_sel = st.session_state.get("selected_framework_keys") or []
-        new_sel_keys = st.multiselect(
-            "Select frameworks (add or remove)",
-            options=fw_keys,
-            default=default_sel,
-            format_func=lambda k: key_to_label.get(k, k),
-            key="step4_framework_multiselect",
-            disabled=step5_done,
-        )
-        with current_box:
-            if new_sel_keys:
-                st.markdown("**Currently selected frameworks:**")
-                for k in new_sel_keys:
-                    lbl = key_to_label.get(k, k)
-                    st.markdown(f"- {lbl}")
+        # Currently selected frameworks (source of truth)
+        selected_list = list(st.session_state.get("selected_framework_keys") or [])
+        removed_any = False
 
+        if selected_list:
+            st.markdown("**Currently selected frameworks:**")
+            cols = st.columns(4)
+            to_remove = []
+            for idx, k in enumerate(selected_list):
+                col = cols[idx % 4]
+                with col:
+                    lbl = key_to_label.get(k, k)
+                    st.write(lbl)
+                    if st.button("✕", key=f"remove_fw_{k}_{idx}", disabled=step5_done):
+                        to_remove.append(k)
+            if to_remove:
+                removed_any = True
+                # remove all marked keys
+                selected_list = [k for k in selected_list if k not in set(to_remove)]
+
+        # Add-only dropdown: only show frameworks that are NOT already selected
+        available_for_add = [k for k in fw_keys if k not in selected_list]
+        add_choices = st.multiselect(
+            "Select frameworks (add)",
+            options=available_for_add,
+            key="step4_add_frameworks",
+            disabled=step5_done or not available_for_add,
+            format_func=lambda k: key_to_label.get(k, k),
+        )
+
+        added_any = False
+        if add_choices:
+            for k in add_choices:
+                if k not in selected_list:
+                    selected_list.append(k)
+                    added_any = True
+
+        # Keep state in sync and decide current selected_key
         doc_type_step4 = st.session_state.get("document_type") or DOC_TYPES[0]
-        if not new_sel_keys:
-            if doc_type_step4 == "None":
-                st.session_state.selected_framework_keys = []
-                st.session_state.selected_framework_key = st.session_state.selected_framework_key if st.session_state.selected_framework_key in fw_keys else fw_keys[0]
-                selected_key = st.session_state.selected_framework_key
-            else:
-                new_sel_keys = list(fw_keys)
-                st.session_state.selected_framework_keys = new_sel_keys
-                selected_key = new_sel_keys[0]
-                st.session_state.selected_framework_key = selected_key
-        else:
-            st.session_state.selected_framework_keys = new_sel_keys
-            selected_key = new_sel_keys[0]
+        changed = removed_any or added_any
+        if changed:
+            st.session_state.selected_framework_keys = selected_list
+            # clear add widget after applying
+            st.session_state["step4_add_frameworks"] = []
+
+        if selected_list:
+            selected_key = selected_list[0]
             st.session_state.selected_framework_key = selected_key
+        else:
+            # No selection left: keep empty even if doc_type != None; fall back to first framework key only for internal state
+            selected_key = fw_keys[0] if fw_keys else None
+            st.session_state.selected_framework_keys = []
+            st.session_state.selected_framework_key = selected_key
+
+        if changed:
+            st.session_state["_step4_auto_expand"] = True
+            save_state_to_disk()
+            st.rerun()
 
     if should_expand:
         try:
