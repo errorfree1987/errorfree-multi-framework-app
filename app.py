@@ -4296,8 +4296,14 @@ def main():
         if st.session_state.pop("_step4_clear_add", False) and "step4_add_framework" in st.session_state:
             del st.session_state["step4_add_framework"]
 
-        # Currently selected frameworks (source of truth)
-        selected_list = list(st.session_state.get("selected_framework_keys") or [])
+        # Currently selected frameworks (source of truth, de-duplicated but order-preserving)
+        _raw_selected = list(st.session_state.get("selected_framework_keys") or [])
+        seen = set()
+        selected_list = []
+        for k in _raw_selected:
+            if k not in seen:
+                seen.add(k)
+                selected_list.append(k)
         removed_any = False
 
         if selected_list:
