@@ -1733,10 +1733,7 @@ def restore_state_from_disk():
         if k in data:
             st.session_state[k] = data[k]
 
-    # Step 4 checkboxes must re-initialize from restored selected_framework_keys
-    for _k in list(st.session_state.keys()):
-        if _k.startswith("step4_cb_"):
-            del st.session_state[_k]
+    # Do not clear step4 widget key here: restore runs on every rerun; clearing would reset user's add/remove. On full refresh session is new so key is missing anyway.
 
 
 # =========================
@@ -3425,9 +3422,8 @@ def _reset_whole_document():
     for _k in list(st.session_state.keys()):
         if _k.startswith("fw_cb_"):
             del st.session_state[_k]
-    for _k in list(st.session_state.keys()):
-        if _k.startswith("step4_cb_"):
-            del st.session_state[_k]
+    if "step4_framework_multiselect" in st.session_state:
+        del st.session_state["step4_framework_multiselect"]
 
     # also clear legacy single-key uploaders (older deployments)
     for _legacy in ["review_doc_uploader", "upstream_uploader"]:
@@ -4047,9 +4043,13 @@ def main():
                 st.session_state.selected_framework_key = st.session_state.selected_framework_keys[0]
         else:
             st.session_state.selected_framework_key = fw_keys[0] if fw_keys else None
-        for _k in list(st.session_state.keys()):
-            if _k.startswith("step4_cb_"):
-                del st.session_state[_k]
+        # Clear Step 4 widget state so it re-inits from selected_framework_keys after rerun (checkboxes use fw_cb_*)
+        for k in fw_keys:
+            key = f"fw_cb_{k}"
+            if key in st.session_state:
+                del st.session_state[key]
+        if "step4_framework_multiselect" in st.session_state:
+            del st.session_state["step4_framework_multiselect"]
         save_state_to_disk()
         st.rerun()
 
@@ -4181,18 +4181,16 @@ def main():
                 if lang == "zh" else "Below are suggested options auto-selected by document type. You may add or uncheck as needed."
             )
 
-        # Vertical list of checkboxes so full framework names are visible (one per line); uncheck = remove, check = add
+        # Vertical list of checkboxes so full framework names are visible (no truncation); add/remove by checking/unchecking
         sel_keys = st.session_state.get("selected_framework_keys") or []
         sel_keys_set = set(sel_keys)
         new_sel_keys = []
-        _step4_label = (zh("**選擇框架（可多選，勾選＝加入、取消勾選＝移除）**", "**选择框架（可多选，勾选＝加入、取消勾选＝移除）**") if lang == "zh" else "**Select frameworks (multi-select; check = add, uncheck = remove)**")
-        st.markdown(_step4_label)
-        for k in fw_keys:
-            full_label = key_to_label.get(k, k)
-            checked = st.checkbox(full_label, value=(k in sel_keys_set), key=f"step4_cb_{k}", disabled=step5_done)
+        for i, k in enumerate(fw_keys):
+            lbl = fw_labels[i]  # full name for display
+            checked = st.checkbox(lbl, value=(k in sel_keys_set), key=f"fw_cb_{k}", disabled=step5_done)
             if checked:
                 new_sel_keys.append(k)
-        st.session_state.selected_framework_keys = new_sel_keys
+        st.caption(zh("可勾選／取消勾選以增減框架。", "可勾选／取消勾选以增减框架。") if lang == "zh" else "Check or uncheck to add or remove frameworks.")
 
         doc_type_step4 = st.session_state.get("document_type") or DOC_TYPES[0]
         if not new_sel_keys:
