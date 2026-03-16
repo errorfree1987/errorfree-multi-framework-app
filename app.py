@@ -4043,13 +4043,14 @@ def main():
                 st.session_state.selected_framework_key = st.session_state.selected_framework_keys[0]
         else:
             st.session_state.selected_framework_key = fw_keys[0] if fw_keys else None
-        # Clear Step 4 widget state so it re-inits from selected_framework_keys after rerun (checkboxes use fw_cb_*)
+        # Clear Step 4 widget/add state so it re-inits from selected_framework_keys after rerun
         for k in fw_keys:
             key = f"fw_cb_{k}"
             if key in st.session_state:
                 del st.session_state[key]
-        if "step4_framework_multiselect" in st.session_state:
-            del st.session_state["step4_framework_multiselect"]
+        for extra_key in ["step4_framework_multiselect", "step4_add_framework", "step4_add_framework_disabled", "_step4_clear_add"]:
+            if extra_key in st.session_state:
+                del st.session_state[extra_key]
         save_state_to_disk()
         st.rerun()
 
@@ -4181,9 +4182,9 @@ def main():
                 if lang == "zh" else "Below are suggested options auto-selected by document type. You may add or uncheck as needed."
             )
 
-        # Clear add-widget state on next run after we applied an add (must run before multiselect is mounted to avoid StreamlitAPIException)
-        if st.session_state.pop("_step4_clear_add", False) and "step4_add_frameworks" in st.session_state:
-            del st.session_state["step4_add_frameworks"]
+        # Clear add-widget state on next run after we applied an add (must run before add selectbox is mounted)
+        if st.session_state.pop("_step4_clear_add", False) and "step4_add_framework" in st.session_state:
+            del st.session_state["step4_add_framework"]
 
         # Currently selected frameworks (source of truth)
         selected_list = list(st.session_state.get("selected_framework_keys") or [])
@@ -4207,20 +4208,28 @@ def main():
 
         # Add-only dropdown: only show frameworks that are NOT already selected
         available_for_add = [k for k in fw_keys if k not in selected_list]
-        add_choices = st.multiselect(
-            "Select frameworks (add)",
-            options=available_for_add,
-            key="step4_add_frameworks",
-            disabled=step5_done or not available_for_add,
-            format_func=lambda k: key_to_label.get(k, k),
-        )
-
         added_any = False
-        if add_choices:
-            for k in add_choices:
-                if k not in selected_list:
-                    selected_list.append(k)
-                    added_any = True
+        add_choice = None
+        sentinel = "__none__"
+        if available_for_add:
+            add_choice = st.selectbox(
+                "Select frameworks (add)",
+                options=[sentinel] + available_for_add,
+                key="step4_add_framework",
+                disabled=step5_done,
+                format_func=lambda v: "No options to select" if v == sentinel else key_to_label.get(v, v),
+            )
+            if add_choice and add_choice != sentinel and add_choice not in selected_list:
+                selected_list.append(add_choice)
+                added_any = True
+        else:
+            st.selectbox(
+                "Select frameworks (add)",
+                options=[sentinel],
+                key="step4_add_framework_disabled",
+                disabled=True,
+                format_func=lambda v: "No options to select",
+            )
 
         # Keep state in sync and decide current selected_key
         doc_type_step4 = st.session_state.get("document_type") or DOC_TYPES[0]
