@@ -4181,26 +4181,23 @@ def main():
                 if lang == "zh" else "Below are suggested options auto-selected by document type. You may add or uncheck as needed."
             )
 
-        # Multiselect with red chips (Streamlit default) for current selection,
-        # plus a full-text recommended list below so students can see all framework names.
+        # Show full names of selected frameworks ABOVE the dropdown, so chips will not hide labels.
+        current_box = st.container()
         default_sel = st.session_state.get("selected_framework_keys") or []
         new_sel_keys = st.multiselect(
-            zh("選擇框架（可多選）", "选择框架（可多选）"),
+            "Select frameworks (add or remove)",
             options=fw_keys,
             default=default_sel,
             format_func=lambda k: key_to_label.get(k, k),
             key="step4_framework_multiselect",
             disabled=step5_done,
         )
-        # Show full names of currently selected frameworks so labels are not truncated in chips
-        if new_sel_keys:
-            st.markdown(
-                zh("**目前選擇的框架（完整名稱）：**", "**目前选择的框架（完整名称）：**")
-                if lang == "zh" else "**Currently selected frameworks (full names):**"
-            )
-            for k in new_sel_keys:
-                lbl = key_to_label.get(k, k)
-                st.markdown(f"- {lbl}")
+        with current_box:
+            if new_sel_keys:
+                st.markdown("**Currently selected frameworks:**")
+                for k in new_sel_keys:
+                    lbl = key_to_label.get(k, k)
+                    st.markdown(f"- {lbl}")
 
         doc_type_step4 = st.session_state.get("document_type") or DOC_TYPES[0]
         if not new_sel_keys:
