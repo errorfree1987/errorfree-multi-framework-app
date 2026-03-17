@@ -3544,6 +3544,13 @@ def _reset_whole_document():
     st.session_state.upstream_step6_done = False
     st.session_state.upstream_step6_output = ""
     st.session_state.quote_step6_done_current = False
+    # Clear per-framework Step 6 state
+    for _rfk in list(st.session_state.get("framework_states", {}).keys()):
+        _rfs = st.session_state.framework_states.get(_rfk, {})
+        _rfs["upstream_step6_done"] = False
+        _rfs["upstream_step6_output"] = ""
+        _rfs["quote_history"] = []
+        _rfs["quote_step6_done_current"] = False
 
     st.session_state.step7_history = []
 
@@ -4014,45 +4021,55 @@ def main():
         current_fw_key = fw_keys[0]
 
     framework_states = st.session_state.framework_states
+
+    # Default template shared by every framework's state dict
+    _fw_state_defaults = [
+        ("analysis_done", False),
+        ("analysis_output", ""),
+        ("followup_history", []),
+        ("download_used", False),
+        ("step5_done", False),
+        ("step5_output", ""),
+        # Step 6 per-framework state (moved out of global session_state)
+        ("upstream_step6_done", False),
+        ("upstream_step6_output", ""),
+        ("quote_history", []),
+        ("quote_step6_done_current", False),
+        # Step 7
+        ("step7_done", False),
+        ("step7_output", ""),
+        ("step7_history", []),
+        ("step7_quote_count", 0),
+        ("integration_history", []),
+        # Step 8
+        ("step8_done", False),
+        ("step8_output", ""),
+    ]
+
+    # Ensure every selected framework has a fully-initialised state dict
+    for _fk in selected_framework_keys:
+        if _fk not in framework_states:
+            framework_states[_fk] = {k: v for k, v in _fw_state_defaults}
+        else:
+            for k, v in _fw_state_defaults:
+                if k not in framework_states[_fk]:
+                    framework_states[_fk][k] = v
+
+    # Also keep current_fw_key initialised (may differ from selected_framework_keys)
     if current_fw_key not in framework_states:
-        framework_states[current_fw_key] = {
-            "analysis_done": False,
-            "analysis_output": "",
-            "followup_history": [],
-            "download_used": False,
-            "step5_done": False,
-            "step5_output": "",
-            "step7_done": False,
-            "step7_output": "",
-            "step7_history": [],
-            "step7_quote_count": 0,
-            "integration_history": [],
-            # Step 8 (NEW)
-            "step8_done": False,
-            "step8_output": "",
-        }
+        framework_states[current_fw_key] = {k: v for k, v in _fw_state_defaults}
     else:
-        state = framework_states[current_fw_key]
-        for k, v in [
-            ("analysis_done", False),
-            ("analysis_output", ""),
-            ("followup_history", []),
-            ("download_used", False),
-            ("step5_done", False),
-            ("step5_output", ""),
-            ("step7_done", False),
-            ("step7_output", ""),
-            ("step7_history", []),
-            ("step7_quote_count", 0),
-            ("integration_history", []),
-            ("step8_done", False),
-            ("step8_output", ""),
-        ]:
-            if k not in state:
-                state[k] = v
+        for k, v in _fw_state_defaults:
+            if k not in framework_states[current_fw_key]:
+                framework_states[current_fw_key][k] = v
 
     current_state = framework_states[current_fw_key]
     step5_done = bool(current_state.get("step5_done", False))
+    # True only when every selected framework has completed Step 5
+    step5_all_done = bool(selected_framework_keys) and all(
+        bool(framework_states.get(k, {}).get("step5_done", False))
+        for k in selected_framework_keys
+    )
 
     # Step 1: upload review doc
     st.subheader("Step 1: Upload Review Document" if lang == "en" else zh("步驟一：上傳審閱文件", "步骤一：上传審閱文件"))
@@ -4410,6 +4427,9 @@ def main():
                 "uploaded_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             }
             st.session_state.quote_step6_done_current = False
+            # Reset per-framework quote_step6_done_current so all frameworks can re-run
+            for _qfk in list(st.session_state.get("framework_states", {}).keys()):
+                st.session_state.framework_states[_qfk]["quote_step6_done_current"] = False
             save_state_to_disk()
             st.rerun()
 
@@ -4423,6 +4443,9 @@ def main():
             # Allow uploading the next quote reference by switching the uploader widget key.
             st.session_state.quote_current = None
             st.session_state.quote_step6_done_current = False
+            # Reset per-framework quote_step6_done_current
+            for _qfk in list(st.session_state.get("framework_states", {}).keys()):
+                st.session_state.framework_states[_qfk]["quote_step6_done_current"] = False
             st.session_state.quote_upload_nonce = int(st.session_state.get("quote_upload_nonce", 0)) + 1
             # Best-effort clear for the prior uploader widget state
             try:
@@ -4439,9 +4462,11 @@ def main():
 
 
     with col_qr3:
-        if st.session_state.get("quote_history"):
-            st.markdown("**Quote relevance history:**" if lang == "en" else "**次要參考文件相關性分析紀錄：**")
-            for i, h in enumerate(st.session_state.quote_history, start=1):
+        # Show quote history from first framework (summary only)
+        _qh_first = framework_states.get(selected_framework_keys[0], {}).get("quote_history") or [] if selected_framework_keys else []
+        if _qh_first:
+            st.markdown("**Quote relevance history (first framework):**" if lang == "en" else "**引用一致性分析紀錄（第一個框架）：**")
+            for i, h in enumerate(_qh_first, start=1):
                 st.markdown(f"- {i}. {h.get('name','(unknown)')} — {h.get('analyzed_at','')}")
 
     st.markdown("---")
@@ -4714,198 +4739,247 @@ button[title="fw-remove"] p {
 
     st.markdown("---")
 
-    # Step 5: main analysis
+    # Step 5: main analysis — one button per framework, sequential unlock
     st.subheader("Step 5: Analyze Main Document" if lang == "en" else zh("步驟五：分析主要文件", "步骤五：分析主要文件"))
     st.caption(
-        "This step analyzes only the main document (without references) to produce an initial result." if lang == "en"
-        else zh("此步驟只分析主要文件，不處理參考文件，先產生第一份分析結果。", "此步骤只分析主要文件，不处理参考文件，先产生第一份分析结果。")
+        "Run each framework's analysis in order. The next button unlocks after the previous one completes." if lang == "en"
+        else zh("請依序執行每個框架的分析，前一個框架完成後，下一個才會開放。", "请依序执行每个框架的分析，前一个框架完成后，下一个才会开放。")
     )
 
-    # Show which framework will be used for analysis (primary = first in selected list)
-    _step5_fw_label = key_to_label.get(selected_key, selected_key) if selected_key else "—"
-    _step5_has_framework = bool(
-        selected_key and list(st.session_state.get("selected_framework_keys") or [])
-    )
-    if _step5_has_framework:
-        st.info(
-            f"Primary framework for this analysis: **{_step5_fw_label}**" if lang == "en"
-            else zh(f"本次分析使用的主要框架：**{_step5_fw_label}**", f"本次分析使用的主要框架：**{_step5_fw_label}**")
-        )
-    else:
+    _step5_has_framework = bool(selected_key and list(st.session_state.get("selected_framework_keys") or []))
+    if not _step5_has_framework:
         st.warning(
             "No framework selected. Please go to Step 4 and select or upload at least one framework." if lang == "en"
             else zh("尚未選擇任何框架，請至步驟四選擇或上傳至少一個框架。", "尚未选择任何框架，请至步骤四选择或上传至少一个框架。")
         )
 
-    run_step5 = st.button(
-        "Run analysis (main only)" if lang == "en" else zh("Run analysis（主文件）", "Run analysis（主文件）"),
-        key="run_step5_btn",
-        disabled=step5_done or not _step5_has_framework,
+    _step5_prereqs_ok = (
+        bool(st.session_state.last_doc_text)
+        and bool(st.session_state.get("document_type"))
+        and st.session_state.get("document_type") != "None"
+        and _step5_has_framework
     )
 
-    if run_step5:
-        if not st.session_state.last_doc_text:
-            st.error("Please upload a review document first (Step 1)." if lang == "en" else zh("請先上傳審閱文件（Step 1）", "请先上传审阅文件（Step 1）"))
-        elif not st.session_state.get("document_type") or st.session_state.get("document_type") == "None":
-            st.error("Please select a document type first (Step 2)." if lang == "en" else zh("請先選擇文件類型（Step 2）", "请先选择文件类型（Step 2）"))
-        elif not _step5_has_framework:
-            st.error("Please select at least one framework in Step 4." if lang == "en" else zh("請先在步驟四選擇至少一個框架。", "请先在步骤四选择至少一个框架。"))
-        else:
-            # Phase A2-2: Check usage cap before proceeding
+    for _s5i, _s5_fw_key in enumerate(selected_framework_keys):
+        _s5_fw_label = key_to_label.get(_s5_fw_key, _s5_fw_key)
+        _s5_fw_state = framework_states.get(_s5_fw_key, {})
+        _s5_fw_done = bool(_s5_fw_state.get("step5_done", False))
+        _s5_prev_done = (
+            _s5i == 0
+            or bool(framework_states.get(selected_framework_keys[_s5i - 1], {}).get("step5_done", False))
+        )
+        _s5_col_btn, _s5_col_status = st.columns([4, 1])
+        with _s5_col_btn:
+            _s5_run = st.button(
+                (f"Run analysis — {_s5_fw_label}") if lang == "en" else zh(f"分析 — {_s5_fw_label}", f"分析 — {_s5_fw_label}"),
+                key=f"run_step5_{_s5_fw_key}_btn",
+                disabled=_s5_fw_done or not _s5_prev_done or not _s5_prereqs_ok,
+            )
+        with _s5_col_status:
+            if _s5_fw_done:
+                st.success("✓ Done" if lang == "en" else "✓ 完成")
+
+        if _s5_run:
+            if not st.session_state.last_doc_text:
+                st.error("Please upload a review document first (Step 1)." if lang == "en" else zh("請先上傳審閱文件（Step 1）", "请先上传审阅文件（Step 1）"))
+                st.stop()
+            if not st.session_state.get("document_type") or st.session_state.get("document_type") == "None":
+                st.error("Please select a document type first (Step 2)." if lang == "en" else zh("請先選擇文件類型（Step 2）", "请先选择文件类型（Step 2）"))
+                st.stop()
+            # Phase A2-2: Check usage cap
             tenant = st.session_state.get("tenant", "")
             email = st.session_state.get("user_email", "")
-            
             allow, cap, current_usage, cap_message = _check_usage_cap(tenant, "review", email=email)
-            
             if not allow:
-                # Cap reached - show error and log denial
                 st.error(cap_message)
                 _log_audit_event(
-                    action="review_denied",
-                    tenant=tenant,
-                    email=email,
-                    result="denied",
+                    action="review_denied", tenant=tenant, email=email, result="denied",
                     deny_reason="usage_cap_reached",
-                    context={"cap": cap, "current_usage": current_usage, "usage_type": "review"}
+                    context={"cap": cap, "current_usage": current_usage, "usage_type": "review"},
                 )
                 save_state_to_disk()
                 st.stop()
-            
-            # Show usage status if cap is set
             if cap > 0:
                 remaining = cap - current_usage
                 if remaining <= 5:
                     st.warning(f"⚠️ Daily review limit: {current_usage}/{cap} used. {remaining} remaining.")
-                else:
-                    st.info(f"📊 Daily review usage: {current_usage}/{cap}")
-            
             banner = show_running_banner(
-                "Analyzing... (main only)" if lang == "en" else zh("分析中...（僅主文件）", "分析中...（仅主文件）")
+                f"Analyzing with {_s5_fw_label}..." if lang == "en"
+                else zh(f"使用 {_s5_fw_label} 分析中...", f"使用 {_s5_fw_label} 分析中...")
             )
             try:
                 with st.spinner(" "):
-                    main_analysis_text = run_llm_analysis(selected_key, lang, st.session_state.last_doc_text, model_name) or ""
+                    _s5_out = run_llm_analysis(_s5_fw_key, lang, st.session_state.last_doc_text, model_name) or ""
             finally:
                 banner.empty()
-
-            if is_openai_error_output(main_analysis_text):
+            if is_openai_error_output(_s5_out):
                 render_openai_error(lang)
                 save_state_to_disk()
                 st.stop()
-
-            current_state["step5_done"] = True
-            current_state["step5_output"] = clean_report_text(main_analysis_text)
-            
-            # Phase A2-2: Record usage event
+            framework_states[_s5_fw_key]["step5_done"] = True
+            framework_states[_s5_fw_key]["step5_output"] = clean_report_text(_s5_out)
             _record_usage_event(
-                tenant=tenant,
-                email=email,
-                usage_type="review",
-                quantity=1,
-                context={"framework": selected_key, "step": "step5_main_analysis"}
+                tenant=tenant, email=email, usage_type="review", quantity=1,
+                context={"framework": _s5_fw_key, "step": "step5_main_analysis"},
             )
-            
             save_state_to_disk()
-            record_usage(user_email, selected_key, "analysis")
-            st.success("Step 5 completed. Main analysis generated." if lang == "en" else zh("步驟五完成！已產出主文件第一份分析。", "步骤五完成！已产出主文件第一份分析。"))
+            record_usage(user_email, _s5_fw_key, "analysis")
+            st.success(
+                f"Step 5 completed for {_s5_fw_label}." if lang == "en"
+                else zh(f"{_s5_fw_label} 分析完成！", f"{_s5_fw_label} 分析完成！")
+            )
             st.rerun()
+
+    # Update step5_done (first framework) for backward-compat with legacy gates
+    step5_done = bool(framework_states.get(selected_framework_keys[0], {}).get("step5_done", False)) if selected_framework_keys else False
 
     st.markdown("---")
 
-    # Step 6: relevance analysis buttons (更正2)
+    # Step 6: relevance analysis — per-framework sequential buttons
     st.subheader("Step 6: Reference Relevance Analysis" if lang == "en" else zh("步驟六：參考文件相關性分析", "步骤六：参考文件相关性分析"))
     st.caption(
-        "Run upstream relevance once (if uploaded). Run quote relevance multiple times by uploading quote references one at a time." if lang == "en"
+        "All Step 5 analyses must complete before Step 6 unlocks. Run upstream and quote relevance for each framework in order." if lang == "en"
         else zh(
-            "上游主要參考文件：只能分析一次；次要參考文件：可透過多次上傳逐次分析（一次一份）。",
-            "上游主要参考文件：只能分析一次；次要参考文件：可透过多次上传逐次分析（一次一份）。",
+            "步驟五所有框架都完成後，步驟六才會開放。請依序對每個框架執行上游及引用相關性分析。",
+            "步骤五所有框架都完成后，步骤六才会开放。请依序对每个框架执行上游及引用相关性分析。",
         )
     )
 
     upstream_exists = bool(st.session_state.get("upstream_reference"))
     quote_exists = bool(st.session_state.get("quote_current"))
 
-    upstream_done = bool(st.session_state.get("upstream_step6_done", False))
-    quote_done_current = bool(st.session_state.get("quote_step6_done_current", False))
-
-    quote_gate = (not upstream_exists) or upstream_done
-
-    col_s6a, col_s6b = st.columns(2)
-
-    with col_s6a:
-        run_upstream = st.button(
-            "Run Analysis (upstream relevance)" if lang == "en" else "Run analysis（上游相關性）",
-            key="run_upstream_btn",
-            disabled=(not step5_done) or (not upstream_exists) or upstream_done,
-        )
-    with col_s6b:
-        run_quote = st.button(
-            "Run Analysis (quote relevance)" if lang == "en" else "Run Analysis（引用一致性）",
-            key="run_quote_btn",
-            disabled=(not step5_done) or (not quote_exists) or quote_done_current or (not quote_gate),
-        )
-
-    if upstream_exists and (not upstream_done) and step5_done:
+    if not step5_all_done:
         st.info(
-            "Upstream relevance can be run once. After completion it will be locked until Reset Whole Document." if lang == "en"
-            else zh("上游相關性分析只能執行一次；完成後會鎖定，需 Reset Whole Document 才能重置。", "上游相关性分析只能执行一次；完成后会锁定，需 Reset Whole Document 才能重置。")
+            "Complete all Step 5 analyses first before running Step 6." if lang == "en"
+            else zh("請先完成所有步驟五分析，再執行步驟六。", "请先完成所有步骤五分析，再执行步骤六。")
         )
 
-    if upstream_exists and (not upstream_done) and quote_exists and step5_done:
-        st.info(
-            "To avoid long runtime, please run upstream relevance first; quote relevance will be enabled afterwards." if lang == "en"
-            else zh("為避免等待過久，建議先完成上游相關性分析，完成後才會開放引用一致性分析。", "为避免等待过久，建议先完成上游相关性分析，完成后才会开放引用一致性分析。")
+    # ── Step 6-A: Upstream Relevance (per framework) ─────────────────────────
+    if upstream_exists:
+        st.markdown(
+            "**Step 6-A: Upstream Reference Relevance**" if lang == "en"
+            else "**步驟六-A：上游主要參考文件相關性**"
         )
+        if upstream_exists and step5_all_done:
+            st.info(
+                "Upstream relevance runs once per framework after Step 5 is complete." if lang == "en"
+                else zh("上游相關性分析在步驟五完成後，每個框架執行一次。", "上游相关性分析在步骤五完成后，每个框架执行一次。")
+            )
+        for _s6ai, _s6a_fw_key in enumerate(selected_framework_keys):
+            _s6a_fw_label = key_to_label.get(_s6a_fw_key, _s6a_fw_key)
+            _s6a_fw_state = framework_states.get(_s6a_fw_key, {})
+            _s6a_done = bool(_s6a_fw_state.get("upstream_step6_done", False))
+            _s6a_prev_done = (
+                _s6ai == 0
+                or bool(framework_states.get(selected_framework_keys[_s6ai - 1], {}).get("upstream_step6_done", False))
+            )
+            _s6a_col_btn, _s6a_col_status = st.columns([4, 1])
+            with _s6a_col_btn:
+                _s6a_run = st.button(
+                    f"Run upstream relevance — {_s6a_fw_label}" if lang == "en"
+                    else zh(f"執行上游相關性 — {_s6a_fw_label}", f"执行上游相关性 — {_s6a_fw_label}"),
+                    key=f"run_upstream_{_s6a_fw_key}_btn",
+                    disabled=(not step5_all_done) or not upstream_exists or _s6a_done or not _s6a_prev_done,
+                )
+            with _s6a_col_status:
+                if _s6a_done:
+                    st.success("✓ Done" if lang == "en" else "✓ 完成")
+            if _s6a_run:
+                banner = show_running_banner(
+                    f"Analyzing upstream relevance for {_s6a_fw_label}..." if lang == "en"
+                    else zh(f"上游相關性分析中（{_s6a_fw_label}）...", f"上游相关性分析中（{_s6a_fw_label}）...")
+                )
+                try:
+                    with st.spinner(" "):
+                        _up_text = st.session_state.upstream_reference.get("text", "") if st.session_state.upstream_reference else ""
+                        _s6a_out = run_upstream_relevance(lang, st.session_state.last_doc_text or "", _up_text, model_name)
+                finally:
+                    banner.empty()
+                if is_openai_error_output(_s6a_out):
+                    render_openai_error(lang)
+                    save_state_to_disk()
+                    st.stop()
+                framework_states[_s6a_fw_key]["upstream_step6_done"] = True
+                framework_states[_s6a_fw_key]["upstream_step6_output"] = clean_report_text(_s6a_out)
+                save_state_to_disk()
+                st.success(
+                    f"Upstream relevance completed for {_s6a_fw_label}." if lang == "en"
+                    else zh(f"{_s6a_fw_label} 上游相關性分析完成。", f"{_s6a_fw_label} 上游相关性分析完成。")
+                )
+                st.rerun()
 
-    if run_upstream:
-        banner = show_running_banner(
-            "Analyzing... (upstream relevance)" if lang == "en" else zh("分析中...（上游相關性）", "分析中...（上游相关性）")
+    # ── Step 6-B: Quote Relevance (per framework) ────────────────────────────
+    if quote_exists:
+        st.markdown(
+            "**Step 6-B: Quote Reference Relevance**" if lang == "en"
+            else "**步驟六-B：次要參考文件引用一致性**"
         )
-        try:
-            with st.spinner(" "):
-                upstream_text = st.session_state.upstream_reference.get("text", "") if st.session_state.upstream_reference else ""
-                out = run_upstream_relevance(lang, st.session_state.last_doc_text or "", upstream_text, model_name)
-        finally:
-            banner.empty()
-        st.session_state.upstream_step6_done = True
-        if is_openai_error_output(out):
-            render_openai_error(lang)
-            save_state_to_disk()
-            st.stop()
+        if quote_exists and step5_all_done:
+            _all_upstream_done = (not upstream_exists) or all(
+                bool(framework_states.get(k, {}).get("upstream_step6_done", False))
+                for k in selected_framework_keys
+            )
+            if upstream_exists and not _all_upstream_done:
+                st.info(
+                    "Complete all upstream relevance analyses first before running quote relevance." if lang == "en"
+                    else zh("請先完成所有框架的上游相關性分析，再執行引用一致性分析。", "请先完成所有框架的上游相关性分析，再执行引用一致性分析。")
+                )
+        for _s6bi, _s6b_fw_key in enumerate(selected_framework_keys):
+            _s6b_fw_label = key_to_label.get(_s6b_fw_key, _s6b_fw_key)
+            _s6b_fw_state = framework_states.get(_s6b_fw_key, {})
+            _s6b_done = bool(_s6b_fw_state.get("quote_step6_done_current", False))
+            _s6b_upstream_ok = (not upstream_exists) or bool(_s6b_fw_state.get("upstream_step6_done", False))
+            _s6b_prev_done = (
+                _s6bi == 0
+                or bool(framework_states.get(selected_framework_keys[_s6bi - 1], {}).get("quote_step6_done_current", False))
+            )
+            _s6b_col_btn, _s6b_col_status = st.columns([4, 1])
+            with _s6b_col_btn:
+                _s6b_run = st.button(
+                    f"Run quote relevance — {_s6b_fw_label}" if lang == "en"
+                    else zh(f"執行引用一致性 — {_s6b_fw_label}", f"执行引用一致性 — {_s6b_fw_label}"),
+                    key=f"run_quote_{_s6b_fw_key}_btn",
+                    disabled=(not step5_all_done) or not quote_exists or _s6b_done or not _s6b_upstream_ok or not _s6b_prev_done,
+                )
+            with _s6b_col_status:
+                if _s6b_done:
+                    st.success("✓ Done" if lang == "en" else "✓ 完成")
+            if _s6b_run:
+                banner = show_running_banner(
+                    f"Analyzing quote relevance for {_s6b_fw_label}..." if lang == "en"
+                    else zh(f"引用一致性分析中（{_s6b_fw_label}）...", f"引用一致性分析中（{_s6b_fw_label}）...")
+                )
+                try:
+                    with st.spinner(" "):
+                        _q_text = st.session_state.quote_current.get("text", "") if st.session_state.quote_current else ""
+                        _s6b_out = run_quote_relevance(lang, st.session_state.last_doc_text or "", _q_text, model_name)
+                finally:
+                    banner.empty()
+                if is_openai_error_output(_s6b_out):
+                    render_openai_error(lang)
+                    save_state_to_disk()
+                    st.stop()
+                _q_rec = {
+                    "name": st.session_state.quote_current.get("name", "(unknown)"),
+                    "ext": st.session_state.quote_current.get("ext", ""),
+                    "uploaded_at": st.session_state.quote_current.get("uploaded_at", ""),
+                    "analyzed_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "output": clean_report_text(_s6b_out),
+                }
+                framework_states[_s6b_fw_key]["quote_history"] = (
+                    (framework_states[_s6b_fw_key].get("quote_history") or []) + [_q_rec]
+                )
+                framework_states[_s6b_fw_key]["quote_step6_done_current"] = True
+                save_state_to_disk()
+                st.success(
+                    f"Quote relevance completed for {_s6b_fw_label}." if lang == "en"
+                    else zh(f"{_s6b_fw_label} 引用一致性分析完成。", f"{_s6b_fw_label} 引用一致性分析完成。")
+                )
+                st.rerun()
 
-        st.session_state.upstream_step6_output = clean_report_text(out)
-        save_state_to_disk()
-        st.success("Upstream relevance completed." if lang == "en" else zh("上游相關性分析完成。", "上游相关性分析完成。"))
-        st.rerun()
-
-    if run_quote:
-        banner = show_running_banner(
-            "Analyzing... (quote relevance)" if lang == "en" else zh("分析中...（引用一致性）", "分析中...（引用一致性）")
-        )
-        try:
-            with st.spinner(" "):
-                quote_text = st.session_state.quote_current.get("text", "") if st.session_state.quote_current else ""
-                out = run_quote_relevance(lang, st.session_state.last_doc_text or "", quote_text, model_name)
-        finally:
-            banner.empty()
-
-        if is_openai_error_output(out):
-            render_openai_error(lang)
-            save_state_to_disk()
-            st.stop()
-
-        rec = {
-            "name": st.session_state.quote_current.get("name", "(unknown)"),
-            "ext": st.session_state.quote_current.get("ext", ""),
-            "uploaded_at": st.session_state.quote_current.get("uploaded_at", ""),
-            "analyzed_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "output": clean_report_text(out),
-        }
-        st.session_state.quote_history = (st.session_state.quote_history or []) + [rec]
-        st.session_state.quote_step6_done_current = True
-        save_state_to_disk()
-        st.success("Quote relevance completed." if lang == "en" else zh("引用一致性分析完成。", "引用一致性分析完成。"))
-        st.rerun()
+    # Convenience aliases used by Step 7 / Step 8 gates (first framework's values)
+    upstream_done = bool(framework_states.get(selected_framework_keys[0], {}).get("upstream_step6_done", False)) if selected_framework_keys else False
+    quote_done_current = bool(framework_states.get(selected_framework_keys[0], {}).get("quote_step6_done_current", False)) if selected_framework_keys else False
 
     st.markdown("---")
 
@@ -4916,152 +4990,153 @@ button[title="fw-remove"] p {
         else zh("整合步驟五與步驟六所有分析結果，輸出正式完整報告（建議以表格呈現重點）。", "整合步骤五与步骤六所有分析结果，输出正式完整报告（建议以表格呈现重点）。")
     )
 
-    step7_done = bool(current_state.get("step7_done", False))
-    current_quote_count = len(st.session_state.get("quote_history") or [])
-    last_step7_quote_count = int(current_state.get("step7_quote_count", 0) or 0)
-    step7_needs_refresh = current_quote_count != last_step7_quote_count
+    # Step 7: Integration analysis — per-framework sequential buttons
+    for _s7i, _s7_fw_key in enumerate(selected_framework_keys):
+        _s7_fw_label = key_to_label.get(_s7_fw_key, _s7_fw_key)
+        _s7_fw_state = framework_states.get(_s7_fw_key, {})
 
-    # Step 7 can be re-run whenever Step 6 quote relevance adds new history entries.
-    # Keep old Step 7 outputs in history, and always use the latest as the current Step 7 result.
-    # Gate Step 7 strictly on Step 6 completion:
-    # - If an upstream reference was uploaded, upstream relevance must be done.
-    # - If a quote reference is currently uploaded, quote relevance must be done for that upload.
-    upstream_ok_for_step7 = (not upstream_exists) or upstream_done
-    quote_ok_for_step7 = (not quote_exists) or bool(st.session_state.get("quote_step6_done_current", False))
+        _s7_quote_hist = _s7_fw_state.get("quote_history") or []
+        _s7_current_quote_count = len(_s7_quote_hist)
+        _s7_last_quote_count = int(_s7_fw_state.get("step7_quote_count", 0) or 0)
+        _s7_done = bool(_s7_fw_state.get("step7_done", False))
+        _s7_needs_refresh = _s7_current_quote_count != _s7_last_quote_count
 
-    step7_can_run = (
-        step5_done
-        and upstream_ok_for_step7
-        and quote_ok_for_step7
-        and (not current_state.get("step8_done", False))
-        and (not quote_finalized)
-        and ((not step7_done) or step7_needs_refresh)
-    )
-
-    run_step7 = st.button(
-        "Run integration analysis" if lang == "en" else "Run analysis（整合分析）",
-        key="run_step7_btn",
-        disabled=not step7_can_run,
-    )
-
-    if run_step7:
-        # Step 7 produces ONE integration analysis per quote reference, and keeps a clean per-quote history.
-        # If multiple quote references are pending, we generate the missing ones in order.
-        integration_history = current_state.get("integration_history") or []
-        quote_hist = st.session_state.get("quote_history") or []
-        upstream_text_snapshot = st.session_state.get("upstream_step6_output", "") if st.session_state.get("upstream_step6_done") else ""
-
-        # When there is no quote reference, still allow generating a single integration item.
-        total_items_needed = len(quote_hist) if len(quote_hist) > 0 else 1
-
-        start_idx = len(integration_history)
-        if start_idx >= total_items_needed:
-            st.info("Step 7 is already up to date." if lang == "en" else zh("步驟七已是最新狀態。", "步骤七已是最新状态。"))
-            st.stop()
-
-        banner = show_running_banner(
-            "Analyzing... (integration)" if lang == "en" else zh("分析中...（整合）", "分析中...（整合）")
+        _s7_upstream_ok = (not upstream_exists) or bool(_s7_fw_state.get("upstream_step6_done", False))
+        _s7_quote_ok = (not quote_exists) or bool(_s7_fw_state.get("quote_step6_done_current", False))
+        _s7_prev_done = (
+            _s7i == 0
+            or bool(framework_states.get(selected_framework_keys[_s7i - 1], {}).get("step7_done", False))
         )
-        try:
-            with st.spinner(" "):
-                for item_idx in range(start_idx, total_items_needed):
-                    parts: List[str] = []
+        _s7_can_run = (
+            step5_all_done
+            and _s7_upstream_ok
+            and _s7_quote_ok
+            and not _s7_fw_state.get("step8_done", False)
+            and not quote_finalized
+            and (_s7_prev_done)
+            and ((not _s7_done) or _s7_needs_refresh)
+        )
 
-                # Build per-quote integration input
-                if lang != "en":
-                    parts.append("[整合分析輸入（步驟七）]")
-                    parts.append(f"- 文件類型：{st.session_state.document_type or '（未選擇）'}")
-                    parts.append(f"- 框架：{key_to_label.get(selected_key, selected_key)}")
-                    parts.append("")
-                    parts.append("=====（步驟五）主文件零錯誤框架分析結果=====")
-                    parts.append(current_state.get("step5_output", ""))
+        _s7_col_btn, _s7_col_status = st.columns([4, 1])
+        with _s7_col_btn:
+            _s7_run = st.button(
+                f"Run integration analysis — {_s7_fw_label}" if lang == "en"
+                else zh(f"整合分析 — {_s7_fw_label}", f"整合分析 — {_s7_fw_label}"),
+                key=f"run_step7_{_s7_fw_key}_btn",
+                disabled=not _s7_can_run,
+            )
+        with _s7_col_status:
+            if _s7_done and not _s7_needs_refresh:
+                st.success("✓ Done" if lang == "en" else "✓ 完成")
 
-                    if st.session_state.get("upstream_reference"):
-                        parts.append("")
-                        parts.append("=====（步驟六-A）上游主要參考文件相關性分析（Upstream relevance）=====")
-                        parts.append(upstream_text_snapshot or "（尚未執行上游相關性分析）")
+        if _s7_run:
+            _s7_integration_history = _s7_fw_state.get("integration_history") or []
+            _s7_upstream_snapshot = (
+                _s7_fw_state.get("upstream_step6_output", "")
+                if _s7_fw_state.get("upstream_step6_done") else ""
+            )
+            _s7_total_needed = len(_s7_quote_hist) if len(_s7_quote_hist) > 0 else 1
+            _s7_start_idx = len(_s7_integration_history)
+            if _s7_start_idx >= _s7_total_needed:
+                st.info("Step 7 is already up to date." if lang == "en" else zh("步驟七已是最新狀態。", "步骤七已是最新状态。"))
+                st.stop()
 
-                    parts.append("")
-                    parts.append("=====（步驟六-B）次要參考文件引用一致性分析（Quote relevance）=====")
-                    if len(quote_hist) > 0:
-                        h = quote_hist[item_idx]
-                        parts.append(f"--- Quote reference {item_idx+1}: {h.get('name','(unknown)')} ---")
-                        parts.append(h.get("output", ""))
-                    else:
-                        parts.append("（未上傳次要參考文件）")
+            banner = show_running_banner(
+                f"Analyzing integration for {_s7_fw_label}..." if lang == "en"
+                else zh(f"整合分析中（{_s7_fw_label}）...", f"整合分析中（{_s7_fw_label}）...")
+            )
+            try:
+                with st.spinner(" "):
+                    for item_idx in range(_s7_start_idx, _s7_total_needed):
+                        parts: List[str] = []
+                        if lang != "en":
+                            parts.append("[整合分析輸入（步驟七）]")
+                            parts.append(f"- 文件類型：{st.session_state.document_type or '（未選擇）'}")
+                            parts.append(f"- 框架：{_s7_fw_label}")
+                            parts.append("")
+                            parts.append("=====（步驟五）主文件零錯誤框架分析結果=====")
+                            parts.append(_s7_fw_state.get("step5_output", ""))
+                            if st.session_state.get("upstream_reference"):
+                                parts.append("")
+                                parts.append("=====（步驟六-A）上游主要參考文件相關性分析（Upstream relevance）=====")
+                                parts.append(_s7_upstream_snapshot or "（尚未執行上游相關性分析）")
+                            parts.append("")
+                            parts.append("=====（步驟六-B）次要參考文件引用一致性分析（Quote relevance）=====")
+                            if len(_s7_quote_hist) > 0:
+                                h = _s7_quote_hist[item_idx]
+                                parts.append(f"--- Quote reference {item_idx+1}: {h.get('name','(unknown)')} ---")
+                                parts.append(h.get("output", ""))
+                            else:
+                                parts.append("（未上傳次要參考文件）")
+                            parts.append("")
+                            parts.append("【任務】")
+                            parts.append(
+                                "請用同一個零錯誤框架，整合上述內容，輸出『整合分析報告』，要求：\n"
+                                "1) 去重、補強，不要把內容重複貼上。\n"
+                                "2) 必須明確指出：哪些結論被上游文件支持、哪些存在衝突、哪些是引用不一致（reference inconsistency error）。\n"
+                                "3) 以表格呈現關鍵差異（至少包含：項目/主文件/參考文件/一致性/建議修正）。\n"
+                                "4) 產出可執行的修正/補件/澄清問題清單（含優先順序）。"
+                            )
+                        else:
+                            parts.append("[Integration Analysis Input (Step 7)]")
+                            parts.append(f"- Document type: {st.session_state.document_type or '(not selected)'}")
+                            parts.append(f"- Framework: {_s7_fw_label}")
+                            parts.append("")
+                            parts.append("===== (Step 5) Main document analysis result =====")
+                            parts.append(_s7_fw_state.get("step5_output", ""))
+                            if st.session_state.get("upstream_reference"):
+                                parts.append("")
+                                parts.append("===== (Step 6-A) Upstream relevance =====")
+                                parts.append(_s7_upstream_snapshot or "(Upstream relevance not run yet)")
+                            parts.append("")
+                            parts.append("===== (Step 6-B) Quote relevance =====")
+                            if len(_s7_quote_hist) > 0:
+                                h = _s7_quote_hist[item_idx]
+                                parts.append(f"--- Quote reference {item_idx+1}: {h.get('name','(unknown)')} ---")
+                                parts.append(h.get("output", ""))
+                            else:
+                                parts.append("(No quote reference uploaded)")
+                            parts.append("")
+                            parts.append("[TASK]")
+                            parts.append(
+                                "Using the same framework, integrate the above into an 'Integration Analysis Report' with:\n"
+                                "1) De-duplicate and strengthen; do not paste repeated content.\n"
+                                "2) Explicitly state: what is supported by upstream, what conflicts, and what is reference inconsistency error.\n"
+                                "3) Provide a comparison table (at least: item / main doc / reference doc / consistency / recommended fix).\n"
+                                "4) Provide an actionable fix / addendum / clarification questions list with priority."
+                            )
+                        final_input = "\n".join(parts)
+                        final_output = run_llm_analysis(_s7_fw_key, lang, final_input, model_name) or ""
+                        if is_openai_error_output(final_output):
+                            render_openai_error(lang)
+                            save_state_to_disk()
+                            st.stop()
+                        _s7_entry = {
+                            "index": item_idx + 1,
+                            "quote_name": (_s7_quote_hist[item_idx].get("name", "(unknown)") if len(_s7_quote_hist) > 0 else "(no quote reference)"),
+                            "generated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "output": clean_report_text(final_output),
+                        }
+                        _s7_integration_history.append(_s7_entry)
+            finally:
+                banner.empty()
 
-                    parts.append("")
-                    parts.append("【任務】")
-                    parts.append(
-                        "請用同一個零錯誤框架，整合上述內容，輸出『整合分析報告』，要求：\n"
-                        "1) 去重、補強，不要把內容重複貼上。\n"
-                        "2) 必須明確指出：哪些結論被上游文件支持、哪些存在衝突、哪些是引用不一致（reference inconsistency error）。\n"
-                        "3) 以表格呈現關鍵差異（至少包含：項目/主文件/參考文件/一致性/建議修正）。\n"
-                        "4) 產出可執行的修正/補件/澄清問題清單（含優先順序）。"
-                    )
-                else:
-                    parts.append("[Integration Analysis Input (Step 7)]")
-                    parts.append(f"- Document type: {st.session_state.document_type or '(not selected)'}")
-                    parts.append(f"- Framework: {key_to_label.get(selected_key, selected_key)}")
-                    parts.append("")
-                    parts.append("===== (Step 5) Main document analysis result =====")
-                    parts.append(current_state.get("step5_output", ""))
+            framework_states[_s7_fw_key]["integration_history"] = _s7_integration_history
+            framework_states[_s7_fw_key]["step7_quote_count"] = len(_s7_integration_history)
+            if _s7_integration_history:
+                framework_states[_s7_fw_key]["step7_output"] = _s7_integration_history[-1].get("output", "")
+            framework_states[_s7_fw_key]["step7_done"] = (len(_s7_integration_history) >= _s7_total_needed)
+            save_state_to_disk()
+            st.success(
+                f"Step 7 completed for {_s7_fw_label}." if lang == "en"
+                else zh(f"步驟七（{_s7_fw_label}）整合分析完成！", f"步骤七（{_s7_fw_label}）整合分析完成！")
+            )
+            st.rerun()
 
-                    if st.session_state.get("upstream_reference"):
-                        parts.append("")
-                        parts.append("===== (Step 6-A) Upstream relevance =====")
-                        parts.append(upstream_text_snapshot or "(Upstream relevance not run yet)")
+    # Convenience alias for Step 8 gate (uses first framework's step7_done)
+    step7_done = bool(framework_states.get(selected_framework_keys[0], {}).get("step7_done", False)) if selected_framework_keys else False
+    current_quote_count = len(framework_states.get(selected_framework_keys[0], {}).get("quote_history") or []) if selected_framework_keys else 0
 
-                    parts.append("")
-                    parts.append("===== (Step 6-B) Quote relevance =====")
-                    if len(quote_hist) > 0:
-                        h = quote_hist[item_idx]
-                        parts.append(f"--- Quote reference {item_idx+1}: {h.get('name','(unknown)')} ---")
-                        parts.append(h.get("output", ""))
-                    else:
-                        parts.append("(No quote reference uploaded)")
-
-                    parts.append("")
-                    parts.append("[TASK]")
-                    parts.append(
-                        "Using the same framework, integrate the above into an 'Integration Analysis Report' with:\n"
-                        "1) De-duplicate and strengthen; do not paste repeated content.\n"
-                        "2) Explicitly state: what is supported by upstream, what conflicts, and what is reference inconsistency error.\n"
-                        "3) Provide a comparison table (at least: item / main doc / reference doc / consistency / recommended fix).\n"
-                        "4) Provide an actionable fix / addendum / clarification questions list with priority."
-                    )
-
-                final_input = "\n".join(parts)
-                final_output = run_llm_analysis(selected_key, lang, final_input, model_name) or ""
-
-                if is_openai_error_output(final_output):
-                    render_openai_error(lang)
-                    save_state_to_disk()
-                    st.stop()
-
-                entry = {
-                    "index": item_idx + 1,
-                    "quote_name": (quote_hist[item_idx].get("name", "(unknown)") if len(quote_hist) > 0 else "(no quote reference)"),
-                    "generated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "output": clean_report_text(final_output),
-                }
-                integration_history.append(entry)
-        finally:
-            banner.empty()
-
-        # Save per-quote integration history
-        current_state["integration_history"] = integration_history
-        current_state["step7_quote_count"] = len(integration_history)
-
-        # Keep a convenient "latest" output for compatibility (but Results will show per-item history)
-        if integration_history:
-            current_state["step7_output"] = integration_history[-1].get("output", "")
-
-        current_state["step7_done"] = (len(integration_history) >= total_items_needed)
-
-        save_state_to_disk()
-        st.success("Step 7 completed. Integration analysis generated." if lang == "en" else zh("步驟七完成！已產出整合分析結果。", "步骤七完成！已产出整合分析结果。"))
-        st.rerun()
     st.markdown("---")
 
     # Step 8: Final Analysis (NEW) — this is the final deliverable
@@ -5073,8 +5148,10 @@ button[title="fw-remove"] p {
 
     step8_done = bool(current_state.get("step8_done", False))
     quote_finalized = bool(st.session_state.get("quote_upload_finalized", False))
-    current_quote_count = len(st.session_state.get("quote_history") or [])
-    step7_quote_count = int(current_state.get("step7_quote_count", 0) or 0)
+    # Use first framework's per-framework data for Step 8 gate
+    _s8_first_fw_state = framework_states.get(selected_framework_keys[0], current_state) if selected_framework_keys else current_state
+    current_quote_count = len(_s8_first_fw_state.get("quote_history") or [])
+    step7_quote_count = int(_s8_first_fw_state.get("step7_quote_count", 0) or 0)
 
     # Step 8 gate: user must confirm no more quote references (this also locks Step 3-2 reset + Step 7).
     confirm_disabled = (
@@ -5232,51 +5309,72 @@ button[title="fw-remove"] p {
         unsafe_allow_html=True,
     )
 
-    if current_state.get("step5_done"):
+    # ── Step 5 results: one expander per framework ──────────────────────────
+    for _r5_fw_key in selected_framework_keys:
+        _r5_fw_label = key_to_label.get(_r5_fw_key, _r5_fw_key)
+        _r5_fw_state = framework_states.get(_r5_fw_key, {})
         render_step_block(
-            "Step 5 — Main analysis result" if lang == "en" else "Step 5 — 主文件分析結果",
-            current_state.get("step5_output", ""),
+            f"Step 5 — {_r5_fw_label}" if lang == "en" else f"Step 5 — {_r5_fw_label}",
+            _r5_fw_state.get("step5_output", ""),
             expanded=False,
         )
 
+    # ── Step 6-A results: one expander per framework ─────────────────────────
     if st.session_state.get("upstream_reference"):
-        if st.session_state.get("upstream_step6_done"):
+        for _r6a_fw_key in selected_framework_keys:
+            _r6a_fw_label = key_to_label.get(_r6a_fw_key, _r6a_fw_key)
+            _r6a_fw_state = framework_states.get(_r6a_fw_key, {})
             render_step_block(
-                "Step 6-A — Upstream relevance" if lang == "en" else "Step 6-A — 上游相關性",
-                st.session_state.get("upstream_step6_output", ""),
-                expanded=False,
-            )
-        else:
-            render_step_block(
-                "Step 6-A — Upstream relevance" if lang == "en" else "Step 6-A — 上游相關性",
-                "",
+                f"Step 6-A — Upstream Relevance — {_r6a_fw_label}" if lang == "en"
+                else f"Step 6-A — 上游相關性 — {_r6a_fw_label}",
+                _r6a_fw_state.get("upstream_step6_output", ""),
                 expanded=False,
             )
 
-    if st.session_state.get("quote_history"):
-        st.subheader("Step 6-B — Quote Relevance (History)" if lang == "en" else zh("Step 6-B — 引用一致性（歷史）", "Step 6-B — 引用一致性（历史）"))
+    # ── Step 6-B results: one expander per framework (quote history nested) ──
+    _any_quote_history = any(
+        bool(framework_states.get(k, {}).get("quote_history"))
+        for k in selected_framework_keys
+    )
+    if _any_quote_history:
+        for _r6b_fw_key in selected_framework_keys:
+            _r6b_fw_label = key_to_label.get(_r6b_fw_key, _r6b_fw_key)
+            _r6b_fw_state = framework_states.get(_r6b_fw_key, {})
+            _r6b_quote_hist = _r6b_fw_state.get("quote_history") or []
+            if _r6b_quote_hist:
+                st.subheader(
+                    f"Step 6-B — Quote Relevance — {_r6b_fw_label}" if lang == "en"
+                    else zh(f"Step 6-B — 引用一致性 — {_r6b_fw_label}", f"Step 6-B — 引用一致性 — {_r6b_fw_label}")
+                )
+                with st.expander("Show / Hide" if lang == "en" else zh("展開 / 收起", "展开 / 收起"), expanded=False):
+                    for i, h in enumerate(_r6b_quote_hist, start=1):
+                        qname = h.get("name") or f"Quote reference #{i}"
+                        analyzed_at = h.get("analyzed_at") or ""
+                        out = h.get("output") or ""
+                        label = f"{i}. {qname}" + (f" — {analyzed_at}" if analyzed_at else "")
+                        with st.expander(label, expanded=False):
+                            if out:
+                                st.markdown(out)
+                            else:
+                                st.info("No content yet." if lang == "en" else zh("尚無內容。", "暂无内容。"))
+
+    # ── Step 7 results: one section per framework ────────────────────────────
+    for _r7_fw_key in selected_framework_keys:
+        _r7_fw_label = key_to_label.get(_r7_fw_key, _r7_fw_key)
+        _r7_fw_state = framework_states.get(_r7_fw_key, {})
+        _r7_int_history = _r7_fw_state.get("integration_history") or []
+        st.subheader(
+            f"Step 7 — Integration Analysis — {_r7_fw_label}" if lang == "en"
+            else zh(f"Step 7 — 整合分析 — {_r7_fw_label}", f"Step 7 — 整合分析 — {_r7_fw_label}")
+        )
         with st.expander("Show / Hide" if lang == "en" else zh("展開 / 收起", "展开 / 收起"), expanded=False):
-            for i, h in enumerate(st.session_state.quote_history, start=1):
-                qname = (h.get("quote_name") or h.get("name") or f"Quote reference #{i}") if isinstance(h, dict) else (getattr(h, "quote_name", None) or getattr(h, "name", None) or f"Quote reference #{i}")
-                analyzed_at = (h.get("analyzed_at") or "") if isinstance(h, dict) else (getattr(h, "analyzed_at", "") or "")
-                out = (h.get("output") or h.get("text") or "") if isinstance(h, dict) else (getattr(h, "output", "") or getattr(h, "text", "") or "")
-                label = f"{i}. {qname}" + (f" — {analyzed_at}" if analyzed_at else "")
-                with st.expander(label, expanded=False):
-                    if out:
-                        st.markdown(out)
-                    else:
-                        st.info("No content yet." if lang == "en" else zh("尚無內容。", "暂无内容。"))
-    # Step 7 (Integration analysis) — single section, history nested inside
-    st.subheader("Step 7 — Integration Analysis" if lang == "en" else zh("Step 7 — 整合分析", "Step 7 — 整合分析"))
-    with st.expander("Show / Hide", expanded=False):
-        integration_history = current_state.get("integration_history") or []
-        if integration_history:
-            for e in integration_history:
-                label = f"{e.get('index','')}. {e.get('quote_name','')} — {e.get('generated_at','')}".strip()
-                with st.expander(label if label else "(integration)", expanded=False):
-                    st.markdown(e.get("output", ""))
-        else:
-            st.markdown("_No Step 7 output yet._")
+            if _r7_int_history:
+                for e in _r7_int_history:
+                    _r7_label = f"{e.get('index','')}. {e.get('quote_name','')} — {e.get('generated_at','')}".strip()
+                    with st.expander(_r7_label if _r7_label else "(integration)", expanded=False):
+                        st.markdown(e.get("output", ""))
+            else:
+                st.markdown("_No Step 7 output yet._" if lang == "en" else "_尚無步驟七輸出。_")
 # Step 8 (NEW)
 
 
