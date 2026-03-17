@@ -3417,7 +3417,7 @@ def show_running_banner(text: str):
 
 def render_step_block(title: str, body_markdown: str, expanded: bool = False):
     """Render a Step section with consistent title and collapsible body."""
-    st.markdown(f'<div class="ef-step-title">{title}</div>', unsafe_allow_html=True)
+    st.subheader(title)
     if body_markdown and body_markdown.strip():
         with st.expander("Show / Hide" if st.session_state.get("lang", "zh") == "en" else zh("展開 / 收起", "展开 / 收起"), expanded=expanded):
             st.markdown(body_markdown)
@@ -5236,7 +5236,7 @@ button[title="fw-remove"] p {
             )
 
     if st.session_state.get("quote_history"):
-        st.markdown(f'<div class="ef-step-title">{"Step 6-B — Quote relevance (history)" if lang == "en" else "Step 6-B — 引用一致性（歷史）"}</div>', unsafe_allow_html=True)
+        st.subheader("Step 6-B — Quote Relevance (History)" if lang == "en" else zh("Step 6-B — 引用一致性（歷史）", "Step 6-B — 引用一致性（历史）"))
         with st.expander("Show / Hide" if lang == "en" else zh("展開 / 收起", "展开 / 收起"), expanded=False):
             for i, h in enumerate(st.session_state.quote_history, start=1):
                 qname = (h.get("quote_name") or h.get("name") or f"Quote reference #{i}") if isinstance(h, dict) else (getattr(h, "quote_name", None) or getattr(h, "name", None) or f"Quote reference #{i}")
@@ -5249,7 +5249,7 @@ button[title="fw-remove"] p {
                     else:
                         st.info("No content yet." if lang == "en" else zh("尚無內容。", "暂无内容。"))
     # Step 7 (Integration analysis) — single section, history nested inside
-    st.markdown('<div class="ef-step-title">Step 7 — Integration analysis</div>', unsafe_allow_html=True)
+    st.subheader("Step 7 — Integration Analysis" if lang == "en" else zh("Step 7 — 整合分析", "Step 7 — 整合分析"))
     with st.expander("Show / Hide", expanded=False):
         integration_history = current_state.get("integration_history") or []
         if integration_history:
@@ -5264,27 +5264,27 @@ button[title="fw-remove"] p {
 
     if current_state.get("step8_done"):
         render_step_block(
-            "Step 8 — Final Analysis (Final deliverable)" if lang == "en" else "Step 8 — 最終分析（最終交付）",
+            "Step 8 — Final Analysis (Final Deliverable)" if lang == "en" else zh("Step 8 — 最終分析（最終交付）", "Step 8 — 最终分析（最终交付）"),
             current_state.get("step8_output", ""),
             expanded=False,
         )
     else:
         render_step_block(
-            "Step 8 — Final Analysis (Final deliverable)" if lang == "en" else "Step 8 — 最終分析（最終交付）",
+            "Step 8 — Final Analysis (Final Deliverable)" if lang == "en" else zh("Step 8 — 最終分析（最終交付）", "Step 8 — 最终分析（最终交付）"),
             "",
             expanded=False,
         )
 
     # Follow-up history after results
     st.markdown("---")
-    st.subheader("Follow-up (Q&A)" if lang == "en" else zh("後續提問（Q&A）", "后续提问（Q&A）"))
+    st.subheader("Follow-Up (Q&A)" if lang == "en" else zh("後續提問（Q&A）", "后续提问（Q&A）"))
     render_followup_history_chat(current_state.get("followup_history", []), lang)
 
     # =========================
     # Download (3) choose include follow-ups
     # =========================
     st.markdown("---")
-    st.subheader("Download report" if lang == "en" else zh("下載報告", "下载报告"))
+    st.subheader("Download Report" if lang == "en" else zh("下載報告", "下载报告"))
 
     if current_state.get("analysis_done") and current_state.get("analysis_output"):
         if is_guest and current_state.get("download_used"):
@@ -5396,7 +5396,7 @@ button[title="fw-remove"] p {
     # Follow-up input (FIXED: no StreamlitAPIException)
     # =========================
     st.markdown("---")
-    st.subheader("Ask a follow-up question" if lang == "en" else zh("提出追問", "提出追问"))
+    st.subheader("Ask a Follow-Up Question" if lang == "en" else zh("提出追問", "提出追问"))
     # Hint: follow-up results will appear in the Follow-up (Q&A) section above
     _followup_hint = (
         "Your follow-up question and replies will appear in the Follow-up (Q&A) section above."
