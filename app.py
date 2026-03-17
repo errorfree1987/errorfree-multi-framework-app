@@ -4699,9 +4699,12 @@ button[title="fw-remove"] p {
             selected_key = final_selected[0]
             st.session_state.selected_framework_key = selected_key
         else:
-            selected_key = fw_keys[0] if fw_keys else None
-            st.session_state.selected_framework_keys = []
-            st.session_state.selected_framework_key = selected_key
+        selected_key = fw_keys[0] if fw_keys else None
+        st.session_state.selected_framework_keys = []
+        st.session_state.selected_framework_key = selected_key
+
+    # Re-sync local variable so Step 5+ loops use the latest value after Step 4 updates
+    selected_framework_keys = list(st.session_state.get("selected_framework_keys") or [])
 
     if should_expand:
         try:
@@ -4778,7 +4781,7 @@ button[title="fw-remove"] p {
             _s5_run = st.button(
                 (f"Run analysis — {_s5_fw_label}") if lang == "en" else zh(f"分析 — {_s5_fw_label}", f"分析 — {_s5_fw_label}"),
                 key=f"run_step5_{_s5_fw_key}_btn",
-                disabled=_s5_fw_done or not _s5_prev_done or not _s5_prereqs_ok,
+                disabled=_s5_fw_done or not _s5_prev_done or not _step5_prereqs_ok,
             )
         with _s5_col_status:
             if _s5_fw_done:
