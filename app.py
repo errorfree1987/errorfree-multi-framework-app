@@ -3456,6 +3456,45 @@ def _reset_whole_document():
     save_state_to_disk()
 
 
+# ---------------------------------------------------------------------------
+# Step 4 callbacks — defined at module level so they run atomically on click
+# before the script reruns, which is the only reliable way to modify state
+# triggered by st.button / st.selectbox inside nested containers.
+# ---------------------------------------------------------------------------
+
+def _step4_remove_fw(k: str) -> None:
+    """Remove framework k from selected_framework_keys, deduplicate, persist."""
+    raw = list(st.session_state.get("selected_framework_keys") or [])
+    seen: set = set()
+    unique: list = []
+    for item in raw:
+        if item not in seen:
+            seen.add(item)
+            unique.append(item)
+    if k in unique:
+        unique.remove(k)
+    st.session_state["selected_framework_keys"] = unique
+    st.session_state["selected_framework_key"] = unique[0] if unique else st.session_state.get("selected_framework_key")
+    st.session_state["_step4_auto_expand"] = True
+    save_state_to_disk()
+
+
+def _step4_add_fw() -> None:
+    """Add the chosen framework from the add-selectbox to selected_framework_keys."""
+    choice = st.session_state.get("step4_add_framework", "__none__")
+    if not choice or choice == "__none__":
+        return
+    raw = list(st.session_state.get("selected_framework_keys") or [])
+    if choice not in raw:
+        raw.append(choice)
+    st.session_state["selected_framework_keys"] = raw
+    st.session_state["selected_framework_key"] = raw[0] if raw else choice
+    # Signal that the add-selectbox should be reset on the next run
+    st.session_state["_step4_clear_add"] = True
+    st.session_state["_step4_auto_expand"] = True
+    save_state_to_disk()
+
+
 def main():
     st.set_page_config(page_title=BRAND_TITLE_EN, layout="wide")
 
@@ -4292,53 +4331,50 @@ def main():
                 if lang == "zh" else "Below are suggested options auto-selected by document type. You may add or uncheck as needed."
             )
 
-        # Clear add-widget state on next run after we applied an add (must run before add selectbox is mounted)
-        if st.session_state.pop("_step4_clear_add", False) and "step4_add_framework" in st.session_state:
-            del st.session_state["step4_add_framework"]
+        # Clear add-selectbox state BEFORE the widget is mounted (reset to sentinel)
+        if st.session_state.pop("_step4_clear_add", False):
+            st.session_state["step4_add_framework"] = "__none__"
 
-        # Currently selected frameworks (source of truth, de-duplicated but order-preserving)
+        # Currently selected frameworks — de-duplicated, order-preserving (source of truth)
         _raw_selected = list(st.session_state.get("selected_framework_keys") or [])
-        seen = set()
-        selected_list = []
-        for k in _raw_selected:
-            if k not in seen:
-                seen.add(k)
-                selected_list.append(k)
-        removed_any = False
+        seen: set = set()
+        selected_list: list = []
+        for _k in _raw_selected:
+            if _k not in seen:
+                seen.add(_k)
+                selected_list.append(_k)
 
         if selected_list:
             st.markdown("**Currently selected frameworks:**")
             cols = st.columns(5)
-            to_remove = []
             for idx, k in enumerate(selected_list):
                 col = cols[idx % 5]
                 with col:
                     lbl = key_to_label.get(k, k)
                     st.write(lbl)
-                    # Stable key per framework so Streamlit reliably captures clicks across reruns
-                    if st.button("✕", key=f"remove_fw_{k}", disabled=step5_done):
-                        to_remove.append(k)
-            if to_remove:
-                removed_any = True
-                # remove all marked keys
-                selected_list = [k for k in selected_list if k not in set(to_remove)]
+                    # on_click callback fires atomically before rerun — guaranteed reliable
+                    st.button(
+                        "✕",
+                        key=f"remove_fw_{k}",
+                        on_click=_step4_remove_fw,
+                        args=(k,),
+                        disabled=step5_done,
+                    )
 
-        # Add-only dropdown: only show frameworks that are NOT already selected
-        available_for_add = [k for k in fw_keys if k not in selected_list]
-        added_any = False
-        add_choice = None
+        # Add-only selectbox — options exclude already-selected frameworks
+        # Re-read selected_list from session in case a callback just modified it
+        _cur_selected = set(st.session_state.get("selected_framework_keys") or [])
+        available_for_add = [k for k in fw_keys if k not in _cur_selected]
         sentinel = "__none__"
         if available_for_add:
-            add_choice = st.selectbox(
+            st.selectbox(
                 "Select frameworks (add)",
                 options=[sentinel] + available_for_add,
                 key="step4_add_framework",
+                on_change=_step4_add_fw,
                 disabled=step5_done,
                 format_func=lambda v: "No options to select" if v == sentinel else key_to_label.get(v, v),
             )
-            if add_choice and add_choice != sentinel and add_choice not in selected_list:
-                selected_list.append(add_choice)
-                added_any = True
         else:
             st.selectbox(
                 "Select frameworks (add)",
@@ -4348,28 +4384,15 @@ def main():
                 format_func=lambda v: "No options to select",
             )
 
-        # Keep state in sync and decide current selected_key
-        doc_type_step4 = st.session_state.get("document_type") or DOC_TYPES[0]
-        changed = removed_any or added_any
-        if changed:
-            st.session_state.selected_framework_keys = selected_list
-            # Only when we added do we need to clear the add selectbox next run
-            if added_any:
-                st.session_state["_step4_clear_add"] = True
-
-        if selected_list:
-            selected_key = selected_list[0]
+        # Sync selected_key from current state (callbacks may have updated it)
+        final_selected = list(st.session_state.get("selected_framework_keys") or [])
+        if final_selected:
+            selected_key = final_selected[0]
             st.session_state.selected_framework_key = selected_key
         else:
-            # No selection left: keep empty even if doc_type != None; fall back to first framework key only for internal state
             selected_key = fw_keys[0] if fw_keys else None
             st.session_state.selected_framework_keys = []
             st.session_state.selected_framework_key = selected_key
-
-        if changed:
-            st.session_state["_step4_auto_expand"] = True
-            save_state_to_disk()
-            st.rerun()
 
     if should_expand:
         try:
