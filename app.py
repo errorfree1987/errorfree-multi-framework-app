@@ -1688,6 +1688,9 @@ def save_state_to_disk():
 
         # Follow-up clear flag
         "_pending_clear_followup_key": st.session_state.get("_pending_clear_followup_key"),
+
+        # Custom frameworks uploaded by user in Step 4
+        "custom_frameworks": st.session_state.get("custom_frameworks", {}),
     }
     try:
         f = _user_state_file()
@@ -1727,7 +1730,7 @@ def restore_state_from_disk():
         "quote_upload_nonce", "review_upload_nonce", "upstream_upload_nonce",
         "quote_upload_finalized", "upstream_step6_done", "upstream_step6_output",
         "quote_step6_done_current", "step7_history", "integration_history",
-        "_pending_clear_followup_key",
+        "_pending_clear_followup_key", "custom_frameworks",
     ]
     for k in workflow_keys:
         if k in data:
@@ -1985,12 +1988,21 @@ def run_llm_analysis(framework_key: str, language: str, document_text: str, mode
     st.session_state["_ef_last_openai_error"] = ""
     st.session_state["_ef_last_openai_error_type"] = ""
 
-    if framework_key not in FRAMEWORKS:
+    if framework_key.startswith("custom_"):
+        # User-uploaded custom framework — retrieve prompt from session state
+        custom_fws = st.session_state.get("custom_frameworks") or {}
+        custom_entry = custom_fws.get(framework_key)
+        if not custom_entry:
+            return f"[Error] Custom framework '{framework_key}' not found in session. Please re-upload."
+        system_prompt = custom_entry.get("prompt_text", "")
+        if not system_prompt:
+            return f"[Error] Custom framework '{framework_key}' has empty content."
+    elif framework_key not in FRAMEWORKS:
         return f"[Error] Framework '{framework_key}' not found in frameworks.json."
-
-    system_prompt = load_framework_prompt_from_docx(framework_key)
-    if not system_prompt:
-        return f"[Error] Framework '{framework_key}' prompt file not found or empty. Check framework_docs/."
+    else:
+        system_prompt = load_framework_prompt_from_docx(framework_key)
+        if not system_prompt:
+            return f"[Error] Framework '{framework_key}' prompt file not found or empty. Check framework_docs/."
     prefix = "以下是要分析的文件內容：\n\n" if language == "zh" else "Here is the document to analyze:\n\n"
     user_prompt = prefix + (document_text or "")
 
@@ -2366,27 +2378,49 @@ def run_followup_qa(
     model_name: str,
     extra_text: str = "",
 ) -> str:
-    if framework_key not in FRAMEWORKS:
+    if framework_key.startswith("custom_"):
+        # User-uploaded custom framework
+        custom_fws = st.session_state.get("custom_frameworks") or {}
+        custom_entry = custom_fws.get(framework_key)
+        if not custom_entry:
+            return f"[Error] Custom framework '{framework_key}' not found in session. Please re-upload."
+        fw_display_name = custom_entry.get("name", framework_key)
+        if language == "zh":
+            system_prompt = (
+                "You are an Error-Free consultant familiar with the custom framework: "
+                + fw_display_name
+                + ". You already produced a full analysis. Now answer follow-up "
+                "questions based on the original document and previous analysis. "
+                "Focus on extra insights, avoid repeating the full report."
+            )
+        else:
+            system_prompt = (
+                "You are an Error-Free consultant for the custom framework: "
+                + fw_display_name
+                + ". You already produced a full analysis. Answer follow-up "
+                "questions based on document + previous analysis, without "
+                "recreating the full report."
+            )
+    elif framework_key not in FRAMEWORKS:
         return f"[Error] Framework '{framework_key}' not found in frameworks.json."
-
-    fw = FRAMEWORKS[framework_key]
-
-    if language == "zh":
-        system_prompt = (
-            "You are an Error-Free consultant familiar with framework: "
-            + fw["name_zh"]
-            + ". You already produced a full analysis. Now answer follow-up "
-            "questions based on the original document and previous analysis. "
-            "Focus on extra insights, avoid repeating the full report."
-        )
     else:
-        system_prompt = (
-            "You are an Error-Free consultant for framework: "
-            + fw["name_en"]
-            + ". You already produced a full analysis. Answer follow-up "
-            "questions based on document + previous analysis, without "
-            "recreating the full report."
-        )
+        fw = FRAMEWORKS[framework_key]
+        if language == "zh":
+            system_prompt = (
+                "You are an Error-Free consultant familiar with framework: "
+                + fw["name_zh"]
+                + ". You already produced a full analysis. Now answer follow-up "
+                "questions based on the original document and previous analysis. "
+                "Focus on extra insights, avoid repeating the full report."
+            )
+        else:
+            system_prompt = (
+                "You are an Error-Free consultant for framework: "
+                + fw["name_en"]
+                + ". You already produced a full analysis. Answer follow-up "
+                "questions based on document + previous analysis, without "
+                "recreating the full report."
+            )
 
     doc_excerpt = (document_text or "")[:8000]
     analysis_excerpt = (analysis_output or "")[:8000]
@@ -3445,6 +3479,10 @@ def _reset_whole_document():
     # Follow-up clear flag (fix)
     st.session_state._pending_clear_followup_key = None
 
+    # Clear custom frameworks and bump upload nonce so uploader resets
+    st.session_state["custom_frameworks"] = {}
+    st.session_state["custom_fw_upload_nonce"] = int(st.session_state.get("custom_fw_upload_nonce", 0)) + 1
+
     # --------- KEEP AUTH (Portal-only SSO session stays logged-in) ---------
     # Do NOT change:
     # - st.session_state["is_authenticated"]
@@ -3463,7 +3501,9 @@ def _reset_whole_document():
 # ---------------------------------------------------------------------------
 
 def _step4_remove_fw(k: str) -> None:
-    """Remove framework k from selected_framework_keys, deduplicate, persist."""
+    """Remove framework k from selected_framework_keys, deduplicate, persist.
+    If k is a custom_ framework, also delete it from custom_frameworks so it is
+    fully gone (including its prompt text) after removal."""
     raw = list(st.session_state.get("selected_framework_keys") or [])
     seen: set = set()
     unique: list = []
@@ -3475,6 +3515,11 @@ def _step4_remove_fw(k: str) -> None:
         unique.remove(k)
     st.session_state["selected_framework_keys"] = unique
     st.session_state["selected_framework_key"] = unique[0] if unique else st.session_state.get("selected_framework_key")
+    # Remove from custom_frameworks dict if it is a user-uploaded framework
+    if k.startswith("custom_"):
+        custom_fws = dict(st.session_state.get("custom_frameworks") or {})
+        custom_fws.pop(k, None)
+        st.session_state["custom_frameworks"] = custom_fws
     st.session_state["_step4_auto_expand"] = True
     save_state_to_disk()
 
@@ -3534,6 +3579,12 @@ def main():
 
         # Follow-up clear flag (fix StreamlitAPIException)
         ("_pending_clear_followup_key", None),
+
+        # Custom frameworks uploaded by the user in Step 4
+        # Structure: { "custom_<uuid>": {"name": str, "prompt_text": str, "source_file": str} }
+        ("custom_frameworks", {}),
+        # Nonce to allow re-uploading custom frameworks (bumped on reset)
+        ("custom_fw_upload_nonce", 0),
     ]
     for k, v in defaults:
         if k not in st.session_state:
@@ -3872,6 +3923,15 @@ def main():
             fw_labels.append(lbl if isinstance(lbl, str) else k)
         else:
             fw_labels.append(k)
+
+    # Merge user-uploaded custom frameworks into fw_keys / fw_labels so they can
+    # appear in the "Currently selected frameworks" display and in analysis.
+    _custom_fws = st.session_state.get("custom_frameworks") or {}
+    for _ck, _cv in _custom_fws.items():
+        if _ck not in fw_keys:
+            fw_keys.append(_ck)
+            fw_labels.append(_cv.get("name", _ck))
+
     key_to_label = dict(zip(fw_keys, fw_labels))
     label_to_key = dict(zip(fw_labels, fw_keys))
 
@@ -4417,6 +4477,61 @@ button[title="fw-remove"] p {
                 disabled=True,
                 format_func=lambda v: "No options to select",
             )
+
+        # ── Custom framework upload ──────────────────────────────────────────
+        st.markdown("---")
+        st.markdown(
+            "**Upload custom framework** (txt / docx / pdf — no images, unlimited files)"
+            if lang == "en" else
+            "**上傳自訂框架** （txt / docx / pdf — 不接受圖片，可上傳多個）"
+        )
+        st.caption(
+            "Each uploaded file becomes a new framework that will appear in 'Currently selected frameworks' above and be included in the analysis."
+            if lang == "en" else
+            "每個上傳的檔案都會成為一個新框架，顯示在上方「已選框架」並納入後續分析。"
+        )
+        _custom_upload_nonce = int(st.session_state.get("custom_fw_upload_nonce", 0))
+        uploaded_custom_files = st.file_uploader(
+            "Upload framework files" if lang == "en" else "上傳框架檔案",
+            type=["txt", "docx", "pdf"],
+            accept_multiple_files=True,
+            disabled=step5_done,
+            key=f"custom_fw_uploader_{_custom_upload_nonce}",
+            help="Accepts .txt, .docx, .pdf only. Images are not supported." if lang == "en"
+                 else "僅接受 .txt、.docx、.pdf，不支援圖片。",
+        )
+        if uploaded_custom_files and not step5_done:
+            _custom_fws_now = dict(st.session_state.get("custom_frameworks") or {})
+            _sel_keys_now = list(st.session_state.get("selected_framework_keys") or [])
+            _already_sources = {v.get("source_file") for v in _custom_fws_now.values()}
+            _added_any = False
+            for _uf in uploaded_custom_files:
+                if _uf.name in _already_sources:
+                    continue  # already processed this file
+                _text = read_file_to_text(_uf)
+                if not _text or _text.startswith("[讀取"):
+                    st.warning(f"Could not read '{_uf.name}'. Skipping." if lang == "en"
+                               else f"無法讀取「{_uf.name}」，已略過。")
+                    continue
+                import uuid as _uuid_mod
+                _new_key = "custom_" + _uuid_mod.uuid4().hex[:10]
+                _fw_name = _uf.name.rsplit(".", 1)[0]  # filename without extension
+                _custom_fws_now[_new_key] = {
+                    "name": _fw_name,
+                    "prompt_text": _text,
+                    "source_file": _uf.name,
+                }
+                if _new_key not in _sel_keys_now:
+                    _sel_keys_now.append(_new_key)
+                _added_any = True
+            if _added_any:
+                st.session_state["custom_frameworks"] = _custom_fws_now
+                st.session_state["selected_framework_keys"] = _sel_keys_now
+                if _sel_keys_now:
+                    st.session_state["selected_framework_key"] = _sel_keys_now[0]
+                st.session_state["_step4_auto_expand"] = True
+                save_state_to_disk()
+                st.rerun()
 
         # Sync selected_key from current state (callbacks may have updated it)
         final_selected = list(st.session_state.get("selected_framework_keys") or [])
