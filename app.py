@@ -4345,8 +4345,7 @@ def main():
                 selected_list.append(_k)
 
         if selected_list:
-            # Targeted CSS: use help="fw-remove" as a CSS anchor via the title attribute.
-            # Only these specific remove buttons are made compact; all other buttons are unaffected.
+            # Targeted CSS: compact remove button + card-like chip per framework
             st.markdown("""
 <style>
 button[title="fw-remove"] {
@@ -4356,6 +4355,7 @@ button[title="fw-remove"] {
     font-size: 0.7rem !important;
     line-height: 1 !important;
     margin-top: 4px !important;
+    border-radius: 0 4px 4px 0 !important;
 }
 button[title="fw-remove"] p {
     font-size: 0.7rem !important;
@@ -4365,23 +4365,25 @@ button[title="fw-remove"] p {
 </style>""", unsafe_allow_html=True)
 
             st.markdown("**Currently selected frameworks:**")
-            # Layout: 5 slots per row; each slot = [name(9), ✕ button(1)] on the same line.
-            # Rows are processed independently so column widths are identical across all rows.
+            # Layout per slot: [name(8), ✕(1), gap(2)] — the 2-unit gap column creates a clear
+            # visual break between the ✕ of one framework and the name of the next,
+            # so ✕ cannot be mistaken as belonging to the following framework.
             SLOTS = 5
-            SLOT_WIDTHS = [9, 1] * SLOTS  # wider name col so text sits close to the × button
+            # [name, btn, gap] × 5  — last gap column stays empty (fine for spacing)
+            SLOT_WIDTHS = [8, 1, 2] * SLOTS
             for row_start in range(0, len(selected_list), SLOTS):
                 row_items = selected_list[row_start:row_start + SLOTS]
                 row_cols = st.columns(SLOT_WIDTHS)
                 for i, k in enumerate(row_items):
                     lbl = key_to_label.get(k, k)
-                    with row_cols[i * 2]:
+                    # name column: light chip background to visually group name + ✕
+                    with row_cols[i * 3]:
                         st.markdown(
-                            f"<p style='margin:0;padding-top:5px;font-size:0.85rem;line-height:1.25'>{lbl}</p>",
+                            f"<p style='margin:0;padding:4px 6px;background:#f0f2f6;"
+                            f"border-radius:4px 0 0 4px;font-size:0.85rem;line-height:1.25'>{lbl}</p>",
                             unsafe_allow_html=True,
                         )
-                    with row_cols[i * 2 + 1]:
-                        # on_click callback fires atomically before rerun — guaranteed reliable
-                        # help= renders as title= attribute, enabling the targeted CSS above
+                    with row_cols[i * 3 + 1]:
                         st.button(
                             "✕",
                             key=f"remove_fw_{k}",
@@ -4391,6 +4393,7 @@ button[title="fw-remove"] p {
                             use_container_width=True,
                             help="fw-remove",
                         )
+                    # row_cols[i * 3 + 2] is the gap column — left intentionally empty
 
         # Add-only selectbox — options exclude already-selected frameworks
         # Re-read selected_list from session in case a callback just modified it
