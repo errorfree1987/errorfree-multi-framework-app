@@ -4322,13 +4322,13 @@ def main():
     with st.expander(expander_label, expanded=should_expand):
         if doc_type == "None":
             st.info(
-                zh("目前未選擇文件類型，無建議選項；您可自行勾選需要的框架。", "目前未选择文件类型，无建议选项；您可自行勾选需要的框架。")
-                if lang == "zh" else "No document type selected — no suggested options. You may check the frameworks you need."
+                zh("目前未選擇文件類型，無建議選項；您可自行新增需要的框架。", "目前未选择文件类型，无建议选项；您可自行新增需要的框架。")
+                if lang == "zh" else "No document type selected — no suggested options. Use 'Select frameworks (add)' below to add the ones you need."
             )
         else:
             st.info(
-                zh("以下為系統依文件類型自動勾選的建議選項，您仍可自行加選或取消。", "以下为系统依文件类型自动勾选的建议选项，您仍可自行加选或取消。")
-                if lang == "zh" else "Below are suggested options auto-selected by document type. You may add or uncheck as needed."
+                zh("以下為系統依文件類型自動建議的框架，點擊 ✕ 可刪除不需要的項目，亦可在下方新增額外框架。", "以下为系统依文件类型自动建议的框架，点击 ✕ 可删除不需要的项目，亦可在下方新增额外框架。")
+                if lang == "zh" else "Below are frameworks suggested for this document type. Click ✕ to delete any you don't need, or use 'Select frameworks (add)' below to add more."
             )
 
         # Clear add-selectbox state BEFORE the widget is mounted (reset to sentinel)
@@ -4346,20 +4346,27 @@ def main():
 
         if selected_list:
             st.markdown("**Currently selected frameworks:**")
-            cols = st.columns(5)
-            for idx, k in enumerate(selected_list):
-                col = cols[idx % 5]
-                with col:
+            # Layout: 5 slots per row; each slot = [name(6), ✕ button(1)] side-by-side so they share the same line.
+            # Process in rows of 5 so both rows use identical column proportions and columns visually align.
+            SLOTS = 5
+            SLOT_WIDTHS = [6, 1] * SLOTS  # [name, btn, name, btn, ...]
+            for row_start in range(0, len(selected_list), SLOTS):
+                row_items = selected_list[row_start:row_start + SLOTS]
+                row_cols = st.columns(SLOT_WIDTHS)
+                for i, k in enumerate(row_items):
                     lbl = key_to_label.get(k, k)
-                    st.write(lbl)
-                    # on_click callback fires atomically before rerun — guaranteed reliable
-                    st.button(
-                        "✕",
-                        key=f"remove_fw_{k}",
-                        on_click=_step4_remove_fw,
-                        args=(k,),
-                        disabled=step5_done,
-                    )
+                    with row_cols[i * 2]:
+                        st.markdown(f"<p style='margin:0;padding-top:6px;font-size:0.88rem;line-height:1.3'>{lbl}</p>", unsafe_allow_html=True)
+                    with row_cols[i * 2 + 1]:
+                        # on_click callback fires atomically before rerun — guaranteed reliable
+                        st.button(
+                            "✕",
+                            key=f"remove_fw_{k}",
+                            on_click=_step4_remove_fw,
+                            args=(k,),
+                            disabled=step5_done,
+                            use_container_width=True,
+                        )
 
         # Add-only selectbox — options exclude already-selected frameworks
         # Re-read selected_list from session in case a callback just modified it
