@@ -3175,20 +3175,6 @@ def language_selector():
     apply_portal_language_lock()
 
     # =========================
-    # Tenant AI Settings (safe debug / no secrets)
-    # =========================
-    tas = st.session_state.get("tenant_ai_settings") or {}
-    tenant_dbg = st.session_state.get("tenant") or ""
-    source = tas.get("source") or "unknown"
-    provider = tas.get("provider") or "(default)"
-    model = tas.get("model") or "(default)"
-
-    st.sidebar.caption(f"Tenant: {tenant_dbg}")
-    st.sidebar.caption(f"AI settings source: {source}")
-    st.sidebar.caption(f"Provider: {provider}")
-    st.sidebar.caption(f"Model: {model}")
-
-    # =========================
     # Original language selector logic (keep as-is)
     # =========================
     lang = st.session_state.get("lang", "zh")
@@ -3638,85 +3624,76 @@ def main():
     ui_zhv = st.session_state.get("zh_variant", "tw")
     is_zh = (ui_lang == "zh")
 
-    st.sidebar.header("🧭 " + ("Error-Free® Intelligence Engine" if ui_lang == "en" else "零錯誤智能引擎"))
-    st.sidebar.caption("Portal-only SSO (single entry via Portal)" if not is_zh else "Portal-only SSO（單一入口：Portal）")
+    # ── Sidebar: Enterprise User Workspace Panel ─────────────────────────────
+    # System-level details (Tenant slug, AI provider/model, Namespace, etc.)
+    # are intentionally omitted — enterprise users should not see platform internals.
+    # ─────────────────────────────────────────────────────────────────────────
+
+    # Product name
+    st.sidebar.markdown(
+        "## Error-Free® Intelligence Engine" if not is_zh else "## 零錯誤智能引擎"
+    )
     st.sidebar.markdown("---")
 
-    # Language display
-    if not is_zh:
-        st.sidebar.markdown(f"**Language:** `{ui_lang}` (locked by Portal)")
+    # ── Organization ─────────────────────────────────────────────────────────
+    _tenant_raw = (st.session_state.get("tenant") or "").strip()
+    _org_display = (
+        _tenant_raw.replace("_", " ").replace("-", " ").title()
+        if _tenant_raw else "—"
+    )
+    st.sidebar.markdown(
+        f"**{'Organization' if not is_zh else ('組織' if ui_zhv == 'tw' else '组织')}**"
+    )
+    st.sidebar.markdown(_org_display)
+
+    # ── Review Type ───────────────────────────────────────────────────────────
+    _doc_type = st.session_state.get("document_type")
+    _review_type_display = (
+        "—" if (not _doc_type or _doc_type == "None") else _doc_type
+    )
+    st.sidebar.markdown(
+        f"**{'Review Type' if not is_zh else ('審查類型' if ui_zhv == 'tw' else '审查类型')}**"
+    )
+    st.sidebar.markdown(_review_type_display)
+
+    # ── Framework ─────────────────────────────────────────────────────────────
+    st.sidebar.markdown(
+        f"**{'Framework' if not is_zh else '框架'}**"
+    )
+    st.sidebar.markdown("Error-Free® Multi-Pass Technical Review Framework")
+
+    # ── Recent Reviews ────────────────────────────────────────────────────────
+    st.sidebar.markdown("---")
+    st.sidebar.markdown(
+        f"**{'Recent Reviews' if not is_zh else ('最近審查紀錄' if ui_zhv == 'tw' else '最近审查记录')}**"
+    )
+    # Fetch once per session and cache; subsequent reruns use the cached list.
+    # The cache key is intentionally not persisted to disk (reviews come from Supabase).
+    if "_sidebar_recent_reviews" not in st.session_state:
+        _tenant_for_reviews = (st.session_state.get("tenant") or "unknown").strip() or "unknown"
+        st.session_state["_sidebar_recent_reviews"] = fetch_tenant_reviews_from_supabase(
+            _tenant_for_reviews, limit=5
+        )
+    _review_rows = st.session_state.get("_sidebar_recent_reviews") or []
+    if not _review_rows:
+        st.sidebar.caption(
+            "No recent reviews." if not is_zh
+            else ("尚無分析紀錄。" if ui_zhv == "tw" else "暂无分析记录。")
+        )
     else:
-        if ui_zhv == "cn":
-            st.sidebar.markdown("**語言：** `zh-cn`（由 Portal 鎖定）")
-        else:
-            st.sidebar.markdown("**語言：** `zh-tw`（由 Portal 鎖定）")
+        for _rr in _review_rows:
+            _doc_name = (_rr.get("document_name") or "").strip() or "—"
+            st.sidebar.markdown(f"• {_doc_name}")
 
-    # --- Tenant AI settings (safe debug / no secrets) ---
-    tas = st.session_state.get("tenant_ai_settings") or {}
-    tenant_dbg = st.session_state.get("tenant") or ""
-    source = tas.get("source") or "unknown"
-    provider = tas.get("provider") or "(default)"
-    model = tas.get("model") or "(default)"
-
-    st.sidebar.caption(f"Tenant: {tenant_dbg}")
-    st.sidebar.caption(f"AI settings source: {source}")
-    st.sidebar.caption(f"Provider: {provider}")
-    st.sidebar.caption(f"Model: {model}")
-
-    # --- Tenant namespace verification (D3) ---
-    # (Step 13 already added tenant_namespace() helper)
-    st.sidebar.caption(f"Namespace: {tenant_namespace()}")
-    st.sidebar.caption(f"Reviews path: {tenant_namespace('reviews')}")
-            # D3-B Step9: Tenant review history (Supabase) — button toggle (no checkbox)
-    if "show_review_history" not in st.session_state:
-        st.session_state["show_review_history"] = False
-
-    if st.sidebar.button(
-        "Review\u00A0history\u00A0(Latest\u00A020)",
-        key=tenant_namespace("ui", "toggle_review_history").replace("/", "__"),
-    ):
-        st.session_state["show_review_history"] = not st.session_state["show_review_history"]
-
-    show_history = bool(st.session_state.get("show_review_history"))
-
-    if show_history:
-        tenant = (st.session_state.get("tenant") or "unknown").strip() or "unknown"
-        rows = fetch_tenant_reviews_from_supabase(tenant, limit=20)
-
-        if not rows:
-            st.sidebar.caption("No history yet (or not readable).")
-        else:
-            for r in rows:
-                created_at = (r.get("created_at") or "")
-                created_at = created_at.replace("T", " ")[:19] if created_at else "-"
-
-                fw = r.get("framework_key") or "-"
-                doc = r.get("document_name") or "-"
-                dl = r.get("download_filename") or ""
-                short_dl = dl.split("__")[-1] if dl else "-"
-
-                rid = (r.get("id") or "")
-                rid8 = rid[:8] if rid else "-"
-
-                # Markdown + backticks => colored "badge" look like before
-                st.sidebar.markdown(
-                    f"- `{created_at}` **{fw}**  \n"
-                    f"  {doc}  \n"
-                    f"  {short_dl} · `{rid8}`"
-                )
-
-        if st.session_state.get("_last_reviews_read_error"):
-            st.sidebar.caption(f"Read error: {st.session_state.get('_last_reviews_read_error')}")
-            
-    # Account section (only if authenticated)
+    # ── User / Account ─────────────────────────────────────────────────────────
     if st.session_state.get("is_authenticated"):
         st.sidebar.markdown("---")
-        st.sidebar.subheader("Account" if not is_zh else ("帳號資訊" if ui_zhv == "tw" else "账号信息"))
-
-        email = st.session_state.get("user_email", "")
-        if email:
-            st.sidebar.markdown(f"Email: [{email}](mailto:{email})" if not is_zh else f"Email：[{email}](mailto:{email})")
-
+        st.sidebar.markdown(
+            f"**{'User' if not is_zh else ('使用者' if ui_zhv == 'tw' else '用户')}**"
+        )
+        _email = st.session_state.get("user_email", "")
+        if _email:
+            st.sidebar.caption(_email)
         if st.sidebar.button("Logout" if not is_zh else "登出"):
             do_logout()
 
