@@ -4691,10 +4691,26 @@ button[title="fw-remove"] p {
         else zh("此步驟只分析主要文件，不處理參考文件，先產生第一份分析結果。", "此步骤只分析主要文件，不处理参考文件，先产生第一份分析结果。")
     )
 
+    # Show which framework will be used for analysis (primary = first in selected list)
+    _step5_fw_label = key_to_label.get(selected_key, selected_key) if selected_key else "—"
+    _step5_has_framework = bool(
+        selected_key and list(st.session_state.get("selected_framework_keys") or [])
+    )
+    if _step5_has_framework:
+        st.info(
+            f"Primary framework for this analysis: **{_step5_fw_label}**" if lang == "en"
+            else zh(f"本次分析使用的主要框架：**{_step5_fw_label}**", f"本次分析使用的主要框架：**{_step5_fw_label}**")
+        )
+    else:
+        st.warning(
+            "No framework selected. Please go to Step 4 and select or upload at least one framework." if lang == "en"
+            else zh("尚未選擇任何框架，請至步驟四選擇或上傳至少一個框架。", "尚未选择任何框架，请至步骤四选择或上传至少一个框架。")
+        )
+
     run_step5 = st.button(
         "Run analysis (main only)" if lang == "en" else zh("Run analysis（主文件）", "Run analysis（主文件）"),
         key="run_step5_btn",
-        disabled=step5_done,
+        disabled=step5_done or not _step5_has_framework,
     )
 
     if run_step5:
@@ -4702,6 +4718,8 @@ button[title="fw-remove"] p {
             st.error("Please upload a review document first (Step 1)." if lang == "en" else zh("請先上傳審閱文件（Step 1）", "请先上传审阅文件（Step 1）"))
         elif not st.session_state.get("document_type") or st.session_state.get("document_type") == "None":
             st.error("Please select a document type first (Step 2)." if lang == "en" else zh("請先選擇文件類型（Step 2）", "请先选择文件类型（Step 2）"))
+        elif not _step5_has_framework:
+            st.error("Please select at least one framework in Step 4." if lang == "en" else zh("請先在步驟四選擇至少一個框架。", "请先在步骤四选择至少一个框架。"))
         else:
             # Phase A2-2: Check usage cap before proceeding
             tenant = st.session_state.get("tenant", "")
@@ -4923,7 +4941,7 @@ button[title="fw-remove"] p {
                 if lang != "en":
                     parts.append("[整合分析輸入（步驟七）]")
                     parts.append(f"- 文件類型：{st.session_state.document_type or '（未選擇）'}")
-                    parts.append(f"- 框架：{FRAMEWORKS.get(selected_key, {}).get('name_zh', selected_key)}")
+                    parts.append(f"- 框架：{key_to_label.get(selected_key, selected_key)}")
                     parts.append("")
                     parts.append("=====（步驟五）主文件零錯誤框架分析結果=====")
                     parts.append(current_state.get("step5_output", ""))
@@ -4954,7 +4972,7 @@ button[title="fw-remove"] p {
                 else:
                     parts.append("[Integration Analysis Input (Step 7)]")
                     parts.append(f"- Document type: {st.session_state.document_type or '(not selected)'}")
-                    parts.append(f"- Framework: {FRAMEWORKS.get(selected_key, {}).get('name_en', selected_key)}")
+                    parts.append(f"- Framework: {key_to_label.get(selected_key, selected_key)}")
                     parts.append("")
                     parts.append("===== (Step 5) Main document analysis result =====")
                     parts.append(current_state.get("step5_output", ""))
