@@ -887,11 +887,11 @@ def _verify_hmac_sso(email: str, lang_raw: str, ts: str, token: str) -> (bool, s
 
 
 def _render_portal_only_block(reason: str = ""):
-    st.error("請從 Error-Free® Portal 進入此分析框架（Portal-only）。")
+    st.error("請從 Error-Free® Portal 進入此分析框架。")
     if reason:
-        st.caption(f"Reason: {reason}")
+        st.caption(f"原因：{reason}")
     if PORTAL_BASE_URL:
-        st.link_button("回到 Portal / Back to Portal", PORTAL_BASE_URL)
+        st.link_button("返回 Portal", PORTAL_BASE_URL)
     else:
         st.info("（管理員）請在 Railway Variables 設定 PORTAL_BASE_URL。")
     st.stop()
@@ -934,14 +934,12 @@ def _portal_verify_via_api(portal_token: str) -> (bool, str, dict):
                 continue
             if "timed out" in err_lower or "timeout" in err_lower or "connection" in err_lower:
                 return False, (
-                    "Connection to Portal timed out. "
-                    "請稍候再點「回到 Portal」重新進入。 / Click « Back to Portal » and try again."
+                    "Portal 連線逾時，請稍候再點「返回 Portal」重新進入。"
                 ), {}
             return False, f"Portal verify request failed: {e}", {}
     if r is None and last_err is not None:
         return False, (
-            "Connection to Portal timed out. "
-            "請稍候再點「回到 Portal」重新進入。 / Click « Back to Portal » and try again."
+            "Portal 連線逾時，請稍候再點「返回 Portal」重新進入。"
         ), {}
 
     if r.status_code != 200:
@@ -1305,7 +1303,7 @@ def try_portal_sso_login():
     # 5) No valid SSO -> block
     st.session_state["_portal_sso_checked"] = True
     st.session_state["is_authenticated"] = False
-    _render_portal_only_block("No valid Portal SSO parameters")
+    _render_portal_only_block("無效的登入憑證，請重新從 Portal 進入")
 
 # ===== End Portal-only SSO =====
 import os, json, datetime, secrets
