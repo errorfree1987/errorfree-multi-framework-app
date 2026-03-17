@@ -4022,6 +4022,11 @@ def main():
 
     framework_states = st.session_state.framework_states
 
+    # Read selected_framework_keys early so the init loop below can use it.
+    # Step 4 UI may update this later in the same run, but the session_state
+    # value is always the most recent saved state.
+    selected_framework_keys = list(st.session_state.get("selected_framework_keys") or [])
+
     # Default template shared by every framework's state dict
     _fw_state_defaults = [
         ("analysis_done", False),
