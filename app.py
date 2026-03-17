@@ -887,13 +887,23 @@ def _verify_hmac_sso(email: str, lang_raw: str, ts: str, token: str) -> (bool, s
 
 
 def _render_portal_only_block(reason: str = ""):
-    st.error("請從 Error-Free® Portal 進入此分析框架。")
-    if reason:
-        st.caption(f"原因：{reason}")
-    if PORTAL_BASE_URL:
-        st.link_button("返回 Portal", PORTAL_BASE_URL)
+    _lang = st.session_state.get("lang", "zh")
+    if _lang == "en":
+        st.error("Please access this analyzer via Error-Free® Portal.")
+        if reason:
+            st.caption(f"Reason: {reason}")
+        if PORTAL_BASE_URL:
+            st.link_button("Back to Portal", PORTAL_BASE_URL)
+        else:
+            st.info("(Admin) Please set PORTAL_BASE_URL in Railway Variables.")
     else:
-        st.info("（管理員）請在 Railway Variables 設定 PORTAL_BASE_URL。")
+        st.error("請從 Error-Free® Portal 進入此分析框架。")
+        if reason:
+            st.caption(f"原因：{reason}")
+        if PORTAL_BASE_URL:
+            st.link_button("返回 Portal", PORTAL_BASE_URL)
+        else:
+            st.info("（管理員）請在 Railway Variables 設定 PORTAL_BASE_URL。")
     st.stop()
 
 
@@ -1048,7 +1058,12 @@ def try_portal_sso_login():
         """If epoch mismatch => revoked => block immediately."""
         current_epoch = _get_epoch_strict(tenant)
         if int(token_epoch) != int(current_epoch):
-            _render_portal_only_block("Session revoked (tenant epoch mismatch). Please re-enter from Portal.")
+            _revoke_reason = (
+                "Session revoked. Please re-enter from Portal."
+                if st.session_state.get("lang", "zh") == "en"
+                else "工作階段已被撤銷，請重新從 Portal 進入。"
+            )
+            _render_portal_only_block(_revoke_reason)
 
     # 0) Already authenticated in this Streamlit session
     #    We STILL enforce epoch-based revoke here using stored tenant/epoch,
@@ -1303,7 +1318,12 @@ def try_portal_sso_login():
     # 5) No valid SSO -> block
     st.session_state["_portal_sso_checked"] = True
     st.session_state["is_authenticated"] = False
-    _render_portal_only_block("無效的登入憑證，請重新從 Portal 進入")
+    _no_sso_reason = (
+        "No valid login session. Please re-enter from Portal."
+        if st.session_state.get("lang", "zh") == "en"
+        else "無效的登入憑證，請重新從 Portal 進入。"
+    )
+    _render_portal_only_block(_no_sso_reason)
 
 # ===== End Portal-only SSO =====
 import os, json, datetime, secrets
