@@ -4699,9 +4699,9 @@ button[title="fw-remove"] p {
             selected_key = final_selected[0]
             st.session_state.selected_framework_key = selected_key
         else:
-        selected_key = fw_keys[0] if fw_keys else None
-        st.session_state.selected_framework_keys = []
-        st.session_state.selected_framework_key = selected_key
+            selected_key = fw_keys[0] if fw_keys else None
+            st.session_state.selected_framework_keys = []
+            st.session_state.selected_framework_key = selected_key
 
     # Re-sync local variable so Step 5+ loops use the latest value after Step 4 updates
     selected_framework_keys = list(st.session_state.get("selected_framework_keys") or [])
