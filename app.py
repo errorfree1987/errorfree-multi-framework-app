@@ -4038,6 +4038,7 @@ def main():
         "Maintenance Procedures",
         "Project Planning",
         "Contract",
+        "Other",
     ]
 
     DOC_TYPE_LABELS_ZH_TW = {
@@ -4055,6 +4056,7 @@ def main():
         "Maintenance Procedures": "維護程序",
         "Project Planning": "專案規劃",
         "Contract": "合約",
+        "Other": "其他",
     }
     DOC_TYPE_LABELS_ZH_CN = {
         "None": "无",
@@ -4071,6 +4073,7 @@ def main():
         "Maintenance Procedures": "维护程序",
         "Project Planning": "项目规划",
         "Contract": "合约",
+        "Other": "其他",
     }
 
     # Document type → recommended framework keys (Step 4), per "Types of Document and Recommended Review Areas" matrix
@@ -4198,6 +4201,8 @@ def main():
             "alignment_errors",
             "reasoning_errors",
         ],
+        # 14. Other — no pre-selected frameworks; user chooses freely or uploads custom
+        "Other": [],
     }
 
     if st.session_state.get("document_type") not in DOC_TYPES:
@@ -4481,9 +4486,9 @@ button[title="fw-remove"] p {
         # ── Custom framework upload ──────────────────────────────────────────
         st.markdown("---")
         st.markdown(
-            "**Upload custom framework** (txt / docx / pdf — no images, unlimited files)"
+            "**Upload custom framework** (txt / docx / pdf — no images)"
             if lang == "en" else
-            "**上傳自訂框架** （txt / docx / pdf — 不接受圖片，可上傳多個）"
+            "**上傳自訂框架** （txt / docx / pdf — 不接受圖片）"
         )
         st.caption(
             "Each uploaded file becomes a new framework that will appear in 'Currently selected frameworks' above and be included in the analysis."
