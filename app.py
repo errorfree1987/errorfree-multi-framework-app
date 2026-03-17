@@ -4513,51 +4513,38 @@ button[title="fw-remove"] p {
             st.markdown(
                 "**Loaded framework files:**" if lang == "en" else "**已載入的框架檔案：**"
             )
-            # Inject CSS for the file-row cards (mimics the uploader file list style)
+            # CSS:
+            # 1. Hide the native × delete button inside the file uploader widget
+            #    (deletion is handled exclusively by ✕ in "Currently selected frameworks").
+            # 2. Shrink uploaded-file rows in the uploader to match the caption font size
+            #    ("Limit 200MB per file • TXT, DOCX, PDF").
             st.markdown("""
 <style>
-div[data-testid="stMarkdownContainer"] p.custom-file-row {
-    display: flex; align-items: center;
-    background: #f8f9fb;
-    border: 1px solid #e0e3ea;
-    border-radius: 6px;
-    padding: 6px 10px;
-    margin: 3px 0;
-    font-size: 0.85rem;
-    gap: 8px;
+/* Hide native × remove button inside the file uploader file list */
+[data-testid="stFileUploaderFile"] button,
+[data-testid="stFileUploaderDeleteBtn"] {
+    display: none !important;
 }
-button[title="custom-file-rm"] {
-    min-height: 1.3rem !important;
-    height: 1.3rem !important;
-    padding: 0 6px !important;
+/* Shrink uploaded-filename rows to caption size + muted colour */
+[data-testid="stFileUploaderFile"],
+[data-testid="stFileUploaderFile"] span,
+[data-testid="stFileUploaderFile"] small,
+[data-testid="stFileUploaderFile"] p {
     font-size: 0.75rem !important;
-    line-height: 1 !important;
-}
-button[title="custom-file-rm"] p {
-    font-size: 0.75rem !important;
-    margin: 0 !important;
+    color: rgba(49, 51, 63, 0.6) !important;
 }
 </style>""", unsafe_allow_html=True)
+            # Show loaded files as read-only rows (no delete button here —
+            # deletion is done via ✕ in "Currently selected frameworks" above).
             for _ck, _cv in _loaded_custom.items():
                 _src = _cv.get("source_file") or _cv.get("name", _ck)
-                _col_name, _col_btn = st.columns([11, 1])
-                with _col_name:
-                    st.markdown(
-                        f"<p style='margin:0;padding:5px 8px;background:#f8f9fb;"
-                        f"border:1px solid #e0e3ea;border-radius:6px 0 0 6px;"
-                        f"font-size:0.85rem;line-height:1.4'>📄 {_src}</p>",
-                        unsafe_allow_html=True,
-                    )
-                with _col_btn:
-                    st.button(
-                        "✕",
-                        key=f"custom_file_rm_{_ck}",
-                        on_click=_step4_remove_fw,
-                        args=(_ck,),
-                        disabled=step5_done,
-                        use_container_width=True,
-                        help="custom-file-rm",
-                    )
+                st.markdown(
+                    f"<p style='margin:2px 0;padding:5px 10px;background:#f8f9fb;"
+                    f"border:1px solid #e0e3ea;border-radius:6px;"
+                    f"font-size:0.75rem;color:rgba(49,51,63,0.6);line-height:1.4'>"
+                    f"📄 {_src}</p>",
+                    unsafe_allow_html=True,
+                )
 
         # ── File uploader — for adding new custom frameworks only ─────────────
         _custom_upload_nonce = int(st.session_state.get("custom_fw_upload_nonce", 0))
