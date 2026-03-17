@@ -4345,20 +4345,43 @@ def main():
                 selected_list.append(_k)
 
         if selected_list:
+            # Targeted CSS: use help="fw-remove" as a CSS anchor via the title attribute.
+            # Only these specific remove buttons are made compact; all other buttons are unaffected.
+            st.markdown("""
+<style>
+button[title="fw-remove"] {
+    min-height: 1.25rem !important;
+    height: 1.25rem !important;
+    padding: 0 5px !important;
+    font-size: 0.7rem !important;
+    line-height: 1 !important;
+    margin-top: 4px !important;
+}
+button[title="fw-remove"] p {
+    font-size: 0.7rem !important;
+    line-height: 1 !important;
+    margin: 0 !important;
+}
+</style>""", unsafe_allow_html=True)
+
             st.markdown("**Currently selected frameworks:**")
-            # Layout: 5 slots per row; each slot = [name(6), ✕ button(1)] side-by-side so they share the same line.
-            # Process in rows of 5 so both rows use identical column proportions and columns visually align.
+            # Layout: 5 slots per row; each slot = [name(9), ✕ button(1)] on the same line.
+            # Rows are processed independently so column widths are identical across all rows.
             SLOTS = 5
-            SLOT_WIDTHS = [6, 1] * SLOTS  # [name, btn, name, btn, ...]
+            SLOT_WIDTHS = [9, 1] * SLOTS  # wider name col so text sits close to the × button
             for row_start in range(0, len(selected_list), SLOTS):
                 row_items = selected_list[row_start:row_start + SLOTS]
                 row_cols = st.columns(SLOT_WIDTHS)
                 for i, k in enumerate(row_items):
                     lbl = key_to_label.get(k, k)
                     with row_cols[i * 2]:
-                        st.markdown(f"<p style='margin:0;padding-top:6px;font-size:0.88rem;line-height:1.3'>{lbl}</p>", unsafe_allow_html=True)
+                        st.markdown(
+                            f"<p style='margin:0;padding-top:5px;font-size:0.85rem;line-height:1.25'>{lbl}</p>",
+                            unsafe_allow_html=True,
+                        )
                     with row_cols[i * 2 + 1]:
                         # on_click callback fires atomically before rerun — guaranteed reliable
+                        # help= renders as title= attribute, enabling the targeted CSS above
                         st.button(
                             "✕",
                             key=f"remove_fw_{k}",
@@ -4366,6 +4389,7 @@ def main():
                             args=(k,),
                             disabled=step5_done,
                             use_container_width=True,
+                            help="fw-remove",
                         )
 
         # Add-only selectbox — options exclude already-selected frameworks
