@@ -3515,11 +3515,16 @@ def _step4_remove_fw(k: str) -> None:
         unique.remove(k)
     st.session_state["selected_framework_keys"] = unique
     st.session_state["selected_framework_key"] = unique[0] if unique else st.session_state.get("selected_framework_key")
-    # Remove from custom_frameworks dict if it is a user-uploaded framework
+    # Remove from custom_frameworks dict if it is a user-uploaded framework.
+    # Also bump custom_fw_upload_nonce to force the file_uploader to re-render with
+    # a new widget key (empty state), preventing the deleted file from being re-added
+    # on the very next rerun (which would happen because the uploader still holds the
+    # file in memory and the source_file check would pass since the entry was deleted).
     if k.startswith("custom_"):
         custom_fws = dict(st.session_state.get("custom_frameworks") or {})
         custom_fws.pop(k, None)
         st.session_state["custom_frameworks"] = custom_fws
+        st.session_state["custom_fw_upload_nonce"] = int(st.session_state.get("custom_fw_upload_nonce", 0)) + 1
     st.session_state["_step4_auto_expand"] = True
     save_state_to_disk()
 
