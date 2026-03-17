@@ -3299,11 +3299,14 @@ font-size: 14px;
 opacity: 0.80;
 }
 
-/* ── Step title helper class ────────────────────────────────────────────── */
+/* ── Step title helper class (RESULTS section) — must match st.subheader ── */
+/* Mirrors the red left-border accent applied to h3 via stHeadingWithActionElements */
 .ef-step-title {
-font-size: 22px;
-font-weight: 800;
-margin: 4px 0 6px 0;
+font-size: 22px !important;
+font-weight: 700;
+margin: 8px 0 4px 0;
+border-left: 4px solid #c0392b;
+padding-left: 10px;
 }
 
 /* ── Keep LLM output headings from overflowing Step title size ──────────── */
@@ -3314,9 +3317,16 @@ div[data-testid="stExpander"] .stMarkdown h4 { font-size: 13px; }
 div[data-testid="stExpander"] .stMarkdown h5 { font-size: 12px; }
 div[data-testid="stExpander"] .stMarkdown h6 { font-size: 12px; }
 
-/* Make expander header look cleaner */
+/* ── Expander "Show / Hide" bar — light red accent to match step headings ── */
+div[data-testid="stExpander"] details summary {
+background: rgba(192, 57, 43, 0.05) !important;
+border-left: 3px solid rgba(192, 57, 43, 0.35) !important;
+border-radius: 0 6px 6px 0 !important;
+padding-left: 10px !important;
+}
 div[data-testid="stExpander"] details summary p {
 font-weight: 700;
+color: #96281b;
 }
 
 /* ── Running indicator ──────────────────────────────────────────────────── */
