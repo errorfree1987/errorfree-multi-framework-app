@@ -4496,13 +4496,75 @@ button[title="fw-remove"] p {
             "**上傳自訂框架** （txt / docx / pdf — 不接受圖片）"
         )
         st.caption(
-            "Each uploaded file becomes a new framework that will appear in 'Currently selected frameworks' above and be included in the analysis."
+            "Each uploaded file becomes a new framework included in the analysis. "
+            "After a page refresh, the file list below will be restored automatically — framework content is preserved."
             if lang == "en" else
-            "每個上傳的檔案都會成為一個新框架，顯示在上方「已選框架」並納入後續分析。"
+            "每個上傳的檔案都會成為一個新框架並納入分析。重新整理頁面後，下方檔案列表會自動還原，框架內容不會遺失。"
         )
+
+        # ── Already-loaded custom frameworks list (persisted across refresh) ──
+        # Renders a visual file-list from session state so users can see their
+        # uploaded frameworks even after a page refresh (when the uploader is empty).
+        _loaded_custom = {
+            k: v for k, v in (st.session_state.get("custom_frameworks") or {}).items()
+            if k in set(st.session_state.get("selected_framework_keys") or [])
+        }
+        if _loaded_custom:
+            st.markdown(
+                "**Loaded framework files:**" if lang == "en" else "**已載入的框架檔案：**"
+            )
+            # Inject CSS for the file-row cards (mimics the uploader file list style)
+            st.markdown("""
+<style>
+div[data-testid="stMarkdownContainer"] p.custom-file-row {
+    display: flex; align-items: center;
+    background: #f8f9fb;
+    border: 1px solid #e0e3ea;
+    border-radius: 6px;
+    padding: 6px 10px;
+    margin: 3px 0;
+    font-size: 0.85rem;
+    gap: 8px;
+}
+button[title="custom-file-rm"] {
+    min-height: 1.3rem !important;
+    height: 1.3rem !important;
+    padding: 0 6px !important;
+    font-size: 0.75rem !important;
+    line-height: 1 !important;
+}
+button[title="custom-file-rm"] p {
+    font-size: 0.75rem !important;
+    margin: 0 !important;
+}
+</style>""", unsafe_allow_html=True)
+            for _ck, _cv in _loaded_custom.items():
+                _src = _cv.get("source_file") or _cv.get("name", _ck)
+                _col_name, _col_btn = st.columns([11, 1])
+                with _col_name:
+                    st.markdown(
+                        f"<p style='margin:0;padding:5px 8px;background:#f8f9fb;"
+                        f"border:1px solid #e0e3ea;border-radius:6px 0 0 6px;"
+                        f"font-size:0.85rem;line-height:1.4'>📄 {_src}</p>",
+                        unsafe_allow_html=True,
+                    )
+                with _col_btn:
+                    st.button(
+                        "✕",
+                        key=f"custom_file_rm_{_ck}",
+                        on_click=_step4_remove_fw,
+                        args=(_ck,),
+                        disabled=step5_done,
+                        use_container_width=True,
+                        help="custom-file-rm",
+                    )
+
+        # ── File uploader — for adding new custom frameworks only ─────────────
         _custom_upload_nonce = int(st.session_state.get("custom_fw_upload_nonce", 0))
         uploaded_custom_files = st.file_uploader(
-            "Upload framework files" if lang == "en" else "上傳框架檔案",
+            "Add more framework files" if (lang == "en" and _loaded_custom) else
+            "Upload framework files" if lang == "en" else
+            ("新增更多框架檔案" if _loaded_custom else "上傳框架檔案"),
             type=["txt", "docx", "pdf"],
             accept_multiple_files=True,
             disabled=step5_done,
