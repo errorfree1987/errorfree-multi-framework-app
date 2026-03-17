@@ -3300,13 +3300,16 @@ opacity: 0.80;
 }
 
 /* ── Step title helper class (RESULTS section) — must match st.subheader ── */
-/* Mirrors the red left-border accent applied to h3 via stHeadingWithActionElements */
+/* Mirrors the red left-border accent applied to h3 via stHeadingWithActionElements.
+   line-height + margin match browser h3 defaults so the visual size is identical. */
 .ef-step-title {
 font-size: 22px !important;
-font-weight: 700;
-margin: 8px 0 4px 0;
+font-weight: 700 !important;
+line-height: 1.3 !important;
+margin: 0.83em 0 0.4em 0;
 border-left: 4px solid #c0392b;
 padding-left: 10px;
+display: block;
 }
 
 /* ── Keep LLM output headings from overflowing Step title size ──────────── */
@@ -3326,7 +3329,6 @@ padding-left: 10px !important;
 }
 div[data-testid="stExpander"] details summary p {
 font-weight: 700;
-color: #96281b;
 }
 
 /* ── Running indicator ──────────────────────────────────────────────────── */
