@@ -3215,16 +3215,72 @@ def language_selector():
 # =========================
 
 def inject_ui_css():
-    """Make Results section more prominent + normalize Step heading sizes (UI-only)."""
+    """UI polish: brand colours, hero section, heading hierarchy, animations."""
     st.markdown(
         """
 <style>
-/* Make analysis step titles match RESULTS step titles */
-.stMarkdown h2, .stSubheader, .stHeader {
-font-size: 24px !important;
+/* ── Brand colour tokens ────────────────────────────────────────────────── */
+/* Error-Free® primary red: #c0392b  |  accent dark: #96281b  |  light: #f9ebea */
+
+/* ── Hero section ───────────────────────────────────────────────────────── */
+.ef-hero {
+animation: ef-fadein 0.7s ease both;
+background: linear-gradient(135deg, #ffffff 0%, #fdf2f1 60%, #fbe9e7 100%);
+border-left: 5px solid #c0392b;
+border-radius: 0 12px 12px 0;
+padding: 20px 28px 18px 24px;
+margin: 0 0 6px 0;
+}
+.ef-hero-tagline {
+font-size: 1.05rem;
+font-weight: 500;
+color: #2c3e50;
+margin: 0 0 8px 0;
+line-height: 1.55;
+}
+.ef-hero-subtitle {
+font-size: 0.9rem;
+font-weight: 600;
+color: #c0392b;
+font-style: italic;
+margin: 0;
 }
 
-/* Strong "RESULTS" banner */
+/* ── Fade-in entrance animation ─────────────────────────────────────────── */
+@keyframes ef-fadein {
+from { opacity: 0; transform: translateY(-6px); }
+to   { opacity: 1; transform: translateY(0);    }
+}
+
+/* ── Step subheaders — brand red left accent ────────────────────────────── */
+.main [data-testid="stHeadingWithActionElements"] h3 {
+border-left: 4px solid #c0392b;
+padding-left: 10px;
+font-size: 22px !important;
+font-weight: 700;
+}
+
+/* Make analysis step titles consistent */
+.stMarkdown h2, .stSubheader, .stHeader {
+font-size: 22px !important;
+}
+
+/* ── Sub-section headers (3-1, 3-2, etc.) ─────────────────────────────── */
+.ef-subsection {
+margin: 14px 0 6px 20px;
+padding: 6px 10px 6px 14px;
+border-left: 3px solid rgba(192, 57, 43, 0.35);
+border-radius: 0 6px 6px 0;
+background: rgba(192, 57, 43, 0.03);
+}
+.ef-subsection-title {
+font-size: 1rem;
+font-weight: 700;
+color: #2c3e50;
+margin: 0;
+}
+
+/* ── Strong "RESULTS" banner ────────────────────────────────────────────── */
 .ef-results-banner {
 padding: 14px 16px;
 border-radius: 12px;
@@ -3243,15 +3299,14 @@ font-size: 14px;
 opacity: 0.80;
 }
 
-/* Normalize our Step headers (we render as markdown h3 inside a wrapper) */
+/* ── Step title helper class ────────────────────────────────────────────── */
 .ef-step-title {
-font-size: 24px;
+font-size: 22px;
 font-weight: 800;
 margin: 4px 0 6px 0;
 }
 
-/* Keep analysis content headings from becoming larger than the Step title.
-(LLM outputs often include markdown H1/H2 which Streamlit renders huge.) */
+/* ── Keep LLM output headings from overflowing Step title size ──────────── */
 div[data-testid="stExpander"] .stMarkdown h1 { font-size: 22px; }
 div[data-testid="stExpander"] .stMarkdown h2 { font-size: 20px; }
 div[data-testid="stExpander"] .stMarkdown h3 { font-size: 18px; }
@@ -3264,26 +3319,26 @@ div[data-testid="stExpander"] details summary p {
 font-weight: 700;
 }
 
-/* Large, obvious "running" indicator (separate from Streamlit's tiny top-right icon) */
+/* ── Running indicator ──────────────────────────────────────────────────── */
 .ef-running {
 margin: 10px 0 14px 0;
 padding: 14px 16px;
 border-radius: 12px;
-border: 1px solid rgba(255, 75, 75, 0.25);
-background: rgba(255, 75, 75, 0.06);
+border: 1px solid rgba(192, 57, 43, 0.25);
+background: rgba(192, 57, 43, 0.05);
 }
 .ef-running .row { display: flex; align-items: center; gap: 12px; }
-.ef-running .label { font-size: 16px; font-weight: 800; }
+.ef-running .label { font-size: 16px; font-weight: 800; color: #c0392b; }
 .ef-spinner {
 width: 22px; height: 22px;
 border-radius: 999px;
 border: 3px solid rgba(49, 51, 63, 0.20);
-border-top-color: rgba(255, 75, 75, 0.80);
+border-top-color: #c0392b;
 animation: efspin 0.9s linear infinite;
 }
 @keyframes efspin { to { transform: rotate(360deg); } }
 
-/* Download link styled like a button (avoids 404s from reverse-proxy paths) */
+/* ── Download button ────────────────────────────────────────────────────── */
 .ef-download-btn {
 display: inline-block;
 padding: 10px 16px;
@@ -3882,8 +3937,15 @@ def main():
     else:
         _home_title = "AI-Enhanced Error-Free® Multi-Pass Technical Reviews"
     st.title(_home_title)
-    st.write(BRAND_TAGLINE_ZH if lang == "zh" else BRAND_TAGLINE_EN)
-    st.caption(BRAND_SUBTITLE_ZH if lang == "zh" else BRAND_SUBTITLE_EN)
+    _tagline = BRAND_TAGLINE_ZH if lang == "zh" else BRAND_TAGLINE_EN
+    _subtitle = BRAND_SUBTITLE_ZH if lang == "zh" else BRAND_SUBTITLE_EN
+    st.markdown(
+        f"""<div class="ef-hero">
+  <p class="ef-hero-tagline">{_tagline}</p>
+  <p class="ef-hero-subtitle">{_subtitle}</p>
+</div>""",
+        unsafe_allow_html=True,
+    )
     st.markdown("---")
 
     user_email = st.session_state.user_email
@@ -4256,7 +4318,8 @@ def main():
     st.subheader("Step 3: Upload Reference Documents (optional)" if lang == "en" else zh("步驟三：上傳參考文件（選填）", "步骤三：上传参考文件（选填）"))
 
     # 3-1 Upstream (main reference) — upload once
-    st.markdown("### 3-1 Upload Upstream Reference Document (optional)" if lang == "en" else "### 3-1 上傳主要參考文件（選填）")
+    _sub31 = "3-1 &nbsp; Upload Upstream Reference Document (optional)" if lang == "en" else "3-1 &nbsp; 上傳主要參考文件（選填）"
+    st.markdown(f'<div class="ef-subsection"><p class="ef-subsection-title">{_sub31}</p></div>', unsafe_allow_html=True)
     upstream_ref = st.session_state.get("upstream_reference")
     upstream_locked = bool(upstream_ref)
 
@@ -4286,7 +4349,8 @@ def main():
             st.rerun()
 
     # 3-2 Quote reference — upload one at a time, can reset to upload another
-    st.markdown("### 3-2 Upload Quote Reference Document (optional)" if lang == "en" else "### 3-2 上傳次要參考文件（選填）")
+    _sub32 = "3-2 &nbsp; Upload Quote Reference Document (optional)" if lang == "en" else "3-2 &nbsp; 上傳次要參考文件（選填）"
+    st.markdown(f'<div class="ef-subsection"><p class="ef-subsection-title">{_sub32}</p></div>', unsafe_allow_html=True)
 
     quote_current = st.session_state.get("quote_current")
     quote_locked = bool(quote_current)
@@ -4621,10 +4685,10 @@ button[title="fw-remove"] p {
     st.markdown("---")
 
     # Step 5: main analysis
-    st.subheader("Step 5: Analyze MAIN document first (fast)" if lang == "en" else zh("步驟五：先分析主要文件（快速）", "步骤五：先分析主要文件（快速）"))
+    st.subheader("Step 5: Analyze Main Document" if lang == "en" else zh("步驟五：分析主要文件", "步骤五：分析主要文件"))
     st.caption(
-        "This step analyzes ONLY the main document (no references) to produce a fast first result." if lang == "en"
-        else zh("此步驟只分析主要文件，不處理參考文件，先快速產生第一份分析結果。", "此步骤只分析主要文件，不处理参考文件，先快速产生第一份分析结果。")
+        "This step analyzes only the main document (without references) to produce an initial result." if lang == "en"
+        else zh("此步驟只分析主要文件，不處理參考文件，先產生第一份分析結果。", "此步骤只分析主要文件，不处理参考文件，先产生第一份分析结果。")
     )
 
     run_step5 = st.button(
@@ -4701,7 +4765,7 @@ button[title="fw-remove"] p {
     st.markdown("---")
 
     # Step 6: relevance analysis buttons (更正2)
-    st.subheader("Step 6: Reference relevance analysis" if lang == "en" else zh("步驟六：參考文件相關性分析", "步骤六：参考文件相关性分析"))
+    st.subheader("Step 6: Reference Relevance Analysis" if lang == "en" else zh("步驟六：參考文件相關性分析", "步骤六：参考文件相关性分析"))
     st.caption(
         "Run upstream relevance once (if uploaded). Run quote relevance multiple times by uploading quote references one at a time." if lang == "en"
         else zh(
@@ -4798,7 +4862,7 @@ button[title="fw-remove"] p {
     st.markdown("---")
 
     # Step 7: Integration analysis (NAME CHANGED ONLY; logic unchanged)
-    st.subheader("Step 7: Integration analysis" if lang == "en" else zh("步驟七：整合分析", "步骤七：整合分析"))
+    st.subheader("Step 7: Integration Analysis" if lang == "en" else zh("步驟七：整合分析", "步骤七：整合分析"))
     st.caption(
         "Integrate Step 5 and all Step 6 outputs into a formal deliverable report (preferably with tables)." if lang == "en"
         else zh("整合步驟五與步驟六所有分析結果，輸出正式完整報告（建議以表格呈現重點）。", "整合步骤五与步骤六所有分析结果，输出正式完整报告（建议以表格呈现重点）。")
