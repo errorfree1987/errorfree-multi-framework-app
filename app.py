@@ -849,6 +849,34 @@ def _apply_portal_lang(lang_raw: str):
     st.session_state["_lang_locked"] = True
 
 
+def _detect_ui_lang() -> str:
+    """Detect the correct UI language for pre-auth and post-logout screens.
+
+    Priority:
+    1. st.session_state["lang"]  — set by _apply_portal_lang during normal login
+    2. URL ?lang= param           — present when Portal redirects the user
+    3. "en"                       — safe international default (NOT "zh")
+
+    The default must be "en" because after a Railway restart or Streamlit session
+    expiry, session state is wiped. An English-speaking user who re-encounters the
+    block screen should see English, not Chinese.
+    """
+    # 1. Session state (reliable when Streamlit session is still alive)
+    sess_lang = st.session_state.get("lang")
+    if sess_lang:
+        return sess_lang
+    # 2. URL param (present on initial Portal redirect; may persist in the URL)
+    try:
+        lang_from_url = st.query_params.get("lang", "") or ""
+    except Exception:
+        lang_from_url = ""
+    if lang_from_url:
+        norm = _normalize_lang(lang_from_url)
+        return "en" if norm == "en" else "zh"
+    # 3. International default
+    return "en"
+
+
 # -----------------------------
 # Legacy HMAC verify (optional)
 # -----------------------------
@@ -887,7 +915,7 @@ def _verify_hmac_sso(email: str, lang_raw: str, ts: str, token: str) -> (bool, s
 
 
 def _render_portal_only_block(reason: str = ""):
-    _lang = st.session_state.get("lang", "zh")
+    _lang = _detect_ui_lang()
     if _lang == "en":
         st.error("Please access this analyzer via Error-Free® Portal.")
         if reason:
@@ -943,14 +971,20 @@ def _portal_verify_via_api(portal_token: str) -> (bool, str, dict):
                 time.sleep(_delays[attempt])
                 continue
             if "timed out" in err_lower or "timeout" in err_lower or "connection" in err_lower:
-                return False, (
-                    "Portal 連線逾時，請稍候再點「返回 Portal」重新進入。"
-                ), {}
+                _timeout_msg = (
+                    "Portal connection timed out. Please wait a moment and click 'Back to Portal' to re-enter."
+                    if _detect_ui_lang() == "en"
+                    else "Portal 連線逾時，請稍候再點「返回 Portal」重新進入。"
+                )
+                return False, _timeout_msg, {}
             return False, f"Portal verify request failed: {e}", {}
     if r is None and last_err is not None:
-        return False, (
-            "Portal 連線逾時，請稍候再點「返回 Portal」重新進入。"
-        ), {}
+        _timeout_msg = (
+            "Portal connection timed out. Please wait a moment and click 'Back to Portal' to re-enter."
+            if _detect_ui_lang() == "en"
+            else "Portal 連線逾時，請稍候再點「返回 Portal」重新進入。"
+        )
+        return False, _timeout_msg, {}
 
     if r.status_code != 200:
         try:
@@ -1060,7 +1094,7 @@ def try_portal_sso_login():
         if int(token_epoch) != int(current_epoch):
             _revoke_reason = (
                 "Session revoked. Please re-enter from Portal."
-                if st.session_state.get("lang", "zh") == "en"
+                if _detect_ui_lang() == "en"
                 else "工作階段已被撤銷，請重新從 Portal 進入。"
             )
             _render_portal_only_block(_revoke_reason)
@@ -1320,7 +1354,7 @@ def try_portal_sso_login():
     st.session_state["is_authenticated"] = False
     _no_sso_reason = (
         "No valid login session. Please re-enter from Portal."
-        if st.session_state.get("lang", "zh") == "en"
+        if _detect_ui_lang() == "en"
         else "無效的登入憑證，請重新從 Portal 進入。"
     )
     _render_portal_only_block(_no_sso_reason)
