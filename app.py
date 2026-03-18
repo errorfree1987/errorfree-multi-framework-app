@@ -3851,13 +3851,8 @@ def _reset_whole_document():
         if _k.startswith("upstream_uploader_"):
             del st.session_state[_k]
 
-    # Clear selection widget keys to prevent UI from keeping old choices
-    for _k in [
-        "document_type_select",      # EN Step 2 selectbox key
-        "document_type_select_zh",   # ZH Step 2 selectbox key
-    ]:
-        if _k in st.session_state:
-            del st.session_state[_k]
+    # Step 2 selectbox reset is handled via doc_type_select_nonce (see below)
+    # — no need to manually delete old keys
     for _k in list(st.session_state.keys()):
         if _k.startswith("fw_cb_"):
             del st.session_state[_k]
@@ -3869,10 +3864,16 @@ def _reset_whole_document():
         if _legacy in st.session_state:
             del st.session_state[_legacy]
 
-    # Bump nonces so file_uploader widgets are guaranteed fresh
+    # Bump nonces so file_uploader AND selectbox widgets are guaranteed fresh
     st.session_state["quote_upload_nonce"] = int(st.session_state.get("quote_upload_nonce", 0)) + 1
     st.session_state["review_upload_nonce"] = int(st.session_state.get("review_upload_nonce", 0)) + 1
     st.session_state["upstream_upload_nonce"] = int(st.session_state.get("upstream_upload_nonce", 0)) + 1
+    # Nonce for Step 2 document-type selectbox — forces a brand-new widget key so
+    # Streamlit discards the old frontend state and renders index=0 ("None")
+    st.session_state["doc_type_select_nonce"] = int(st.session_state.get("doc_type_select_nonce", 0)) + 1
+
+    # Uncheck the "I understand and want to reset" checkbox
+    st.session_state["reset_confirm"] = False
 
     st.session_state.quote_upload_finalized = False
     # Clear global Step 6 state
@@ -4649,6 +4650,7 @@ def main():
 
     doc_type_disabled = step5_done
 
+    _doc_type_nonce = int(st.session_state.get("doc_type_select_nonce", 0))
     if lang == "zh":
         mapping = DOC_TYPE_LABELS_ZH_CN if st.session_state.get("zh_variant", "tw") == "cn" else DOC_TYPE_LABELS_ZH_TW
         labels = [mapping.get(x, x) for x in DOC_TYPES]
@@ -4661,7 +4663,7 @@ def main():
             zh("選擇文件類型", "选择文件类型"),
             labels,
             index=_idx_zh,
-            key="document_type_select_zh",
+            key=f"document_type_select_zh_{_doc_type_nonce}",
             disabled=doc_type_disabled,
         )
         st.session_state.document_type = label_to_value.get(picked_label, DOC_TYPES[0])
@@ -4671,7 +4673,7 @@ def main():
             "Select document type",
             DOC_TYPES,
             index=_idx,
-            key="document_type_select",
+            key=f"document_type_select_{_doc_type_nonce}",
             disabled=doc_type_disabled,
         )
 
