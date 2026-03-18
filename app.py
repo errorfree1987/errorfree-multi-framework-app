@@ -3555,15 +3555,15 @@ div[data-testid="stExpander"] .stMarkdown h4 { font-size: 13px; }
 div[data-testid="stExpander"] .stMarkdown h5 { font-size: 12px; }
 div[data-testid="stExpander"] .stMarkdown h6 { font-size: 12px; }
 
-/* ── Expander "Show / Hide" bar — light red accent to match step headings ── */
+/* ── Expander "Show / Hide" bar — neutral gray ── */
 div[data-testid="stExpander"] details summary {
-background: rgba(192, 57, 43, 0.05) !important;
-border-left: 3px solid rgba(192, 57, 43, 0.35) !important;
+background: rgba(49, 51, 63, 0.04) !important;
+border-left: 3px solid rgba(49, 51, 63, 0.18) !important;
 border-radius: 0 6px 6px 0 !important;
 padding-left: 10px !important;
 }
 div[data-testid="stExpander"] details summary p {
-font-weight: 700;
+font-weight: 600;
 }
 
 /* ── Running indicator ──────────────────────────────────────────────────── */
@@ -5179,14 +5179,6 @@ button[title="fw-remove"] p {
 
     # Step 7: Integration Analysis — single global button combining ALL Step 5 + Step 6 into ONE report
     st.subheader("Step 7: Integration Analysis" if lang == "en" else zh("步驟七：整合分析", "步骤七：整合分析"))
-    st.caption(
-        "Combine all Step 5 framework analyses and Step 6 reference relevance results into one consolidated professional report. "
-        "No new analysis is added — content is organized, de-duplicated, and polished." if lang == "en"
-        else zh(
-            "將所有步驟五的框架分析及步驟六的參考文件相關性分析整合成一份完整的專業報告。不新增任何分析，只整理、去重及潤飾。",
-            "将所有步骤五的框架分析及步骤六的参考文件相关性分析整合成一份完整的专业报告。不新增任何分析，只整理、去重及润饰。",
-        )
-    )
 
     _s7_done = bool(st.session_state.get("step7_done", False))
     _s7_upstream_ok = (not upstream_exists) or upstream_done
@@ -5258,13 +5250,6 @@ button[title="fw-remove"] p {
 
     # Step 8: Final Analysis — Cross-Check using TRFW-011
     st.subheader("Step 8: Final Analysis" if lang == "en" else zh("步驟八：最終分析（Final Analysis）", "步骤八：最终分析（Final Analysis）"))
-    st.caption(
-        "Apply TRFW-011 Cross-Checking Analysis to Step 7's consolidated report and produce the FINAL deliverable." if lang == "en"
-        else zh(
-            "依 TRFW-011 Cross-Checking Analysis 方法，對步驟七整合報告做最終交叉核對，產出最終可交付報告。",
-            "依 TRFW-011 Cross-Checking Analysis 方法，对步骤七整合报告做最终交叉核对，产出最终可交付报告。",
-        )
-    )
 
     step8_done = bool(current_state.get("step8_done", False))
     quote_finalized = bool(st.session_state.get("quote_upload_finalized", False))
