@@ -1706,7 +1706,10 @@ def save_state_to_disk():
         "upstream_step6_output": st.session_state.get("upstream_step6_output", ""),
         "quote_step6_done_current": st.session_state.get("quote_step6_done_current", False),
 
-        # Step 7 history
+        # Global Step 7 state
+        "step7_done": st.session_state.get("step7_done", False),
+        "step7_output": st.session_state.get("step7_output", ""),
+        "step7_generated_at": st.session_state.get("step7_generated_at", ""),
         "step7_history": st.session_state.get("step7_history", []),
         "integration_history": st.session_state.get("integration_history", []),
 
@@ -1755,6 +1758,7 @@ def restore_state_from_disk():
         "quote_upload_finalized",
         "step6a_done", "step6a_output", "step6b_done_current", "step6b_history",
         "upstream_step6_done", "upstream_step6_output", "quote_step6_done_current",
+        "step7_done", "step7_output", "step7_generated_at",
         "step7_history", "integration_history",
         "_pending_clear_followup_key", "custom_frameworks",
     ]
@@ -2329,106 +2333,253 @@ def run_quote_relevance(language: str, main_doc: str, quote_ref_doc: str, model_
 
 
 # =========================
+# Step 7: Integration — Combine Step 5 + Step 6 into ONE professional report
+# =========================
+
+def run_step7_integration(
+    language: str,
+    document_type: str,
+    step5_outputs: list,          # list of {"label": str, "output": str}
+    step6a_output: str,           # upstream reference analysis result (may be empty)
+    step6b_history: list,         # list of {"name": str, "output": str, ...}
+    model_name: str,
+) -> str:
+    """
+    Step 7: Combine all Step 5 and Step 6 results into ONE polished professional report.
+    No new analysis — only organize, consolidate, and polish existing content.
+    """
+    def _build_input(lang: str) -> str:
+        parts: list[str] = []
+        if lang != "en":
+            parts.append(f"[整合任務輸入 — Step 7]")
+            parts.append(f"文件類型：{document_type or '（未選擇）'}")
+            parts.append("")
+            parts.append("=== 步驟五（Step 5）：主文件分析結果 ===")
+            for item in step5_outputs:
+                parts.append(f"--- 框架：{item['label']} ---")
+                parts.append(item.get("output", "（無內容）"))
+                parts.append("")
+            if step6a_output:
+                parts.append("=== 步驟六-A（Step 6-A）：上游主要參考文件相關性分析結果 ===")
+                parts.append(step6a_output)
+                parts.append("")
+            if step6b_history:
+                parts.append("=== 步驟六-B（Step 6-B）：次要參考文件引用一致性分析結果 ===")
+                for i, h in enumerate(step6b_history, start=1):
+                    parts.append(f"--- 次要參考文件 {i}：{h.get('name', '(unknown)')} ---")
+                    parts.append(h.get("output", "（無內容）"))
+                    parts.append("")
+        else:
+            parts.append(f"[Integration Task Input — Step 7]")
+            parts.append(f"Document type: {document_type or '(not selected)'}")
+            parts.append("")
+            parts.append("=== Step 5: Main Document Analysis Results ===")
+            for item in step5_outputs:
+                parts.append(f"--- Framework: {item['label']} ---")
+                parts.append(item.get("output", "(no content)"))
+                parts.append("")
+            if step6a_output:
+                parts.append("=== Step 6-A: Upstream Reference Relevance Analysis Result ===")
+                parts.append(step6a_output)
+                parts.append("")
+            if step6b_history:
+                parts.append("=== Step 6-B: Quote Reference Relevance Analysis Result ===")
+                for i, h in enumerate(step6b_history, start=1):
+                    parts.append(f"--- Quote reference {i}: {h.get('name', '(unknown)')} ---")
+                    parts.append(h.get("output", "(no content)"))
+                    parts.append("")
+        return "\n".join(parts)
+
+    combined_input = _build_input(language)
+
+    if language == "zh":
+        sys = (
+            "你是一位專業的技術審閱報告整合專家。"
+            "你的任務是將多份已完成的分析結果整合成一份完整、條理清晰、專業可交付的報告。"
+            "嚴格禁止新增任何未在輸入中提及的分析內容，也不得刪除任何已分析的發現。"
+            "只做整理、去重、統一格式、改善可讀性的工作。"
+        )
+        user = (
+            "任務：執行『Step 7：整合分析』。\n\n"
+            "你拿到了以下已完成的分析內容：\n"
+            "• 步驟五（Step 5）：針對每個零錯誤框架的主文件分析結果（可能有多個框架）\n"
+            "• 步驟六-A（Step 6-A）：上游主要參考文件相關性分析結果（如有）\n"
+            "• 步驟六-B（Step 6-B）：次要參考文件引用一致性分析結果（如有）\n\n"
+            "要求：\n"
+            "1. 將所有上述分析結果整合成【一份】完整的專業報告。\n"
+            "2. 去除重複的內容，統一術語與格式。\n"
+            "3. 不得新增任何未在輸入中提及的分析或發現。\n"
+            "4. 不得刪除任何已分析識別的錯誤或發現。\n"
+            "5. 以清晰的章節結構組織報告，包含摘要、各類錯誤/發現的詳細說明、以及建議修正清單。\n"
+            "6. 使用專業的技術報告語言，讓報告看起來像一份可直接提交的最終分析報告。\n\n"
+            f"{combined_input[:24000]}"
+        )
+    else:
+        sys = (
+            "You are a professional technical review report integration specialist. "
+            "Your task is to consolidate multiple completed analysis results into ONE complete, well-structured, "
+            "and professionally deliverable report. "
+            "Strictly do NOT add any new analysis findings not present in the input. "
+            "Do NOT remove any identified errors or findings. "
+            "Only organize, de-duplicate, unify formatting, and improve readability."
+        )
+        user = (
+            "Task: Execute 'Step 7: Integration Analysis'.\n\n"
+            "You have received the following completed analysis content:\n"
+            "• Step 5: Main document analysis results for each Error-Free framework (may include multiple frameworks)\n"
+            "• Step 6-A: Upstream reference relevance analysis result (if available)\n"
+            "• Step 6-B: Quote reference relevance analysis result (if available)\n\n"
+            "Requirements:\n"
+            "1. Consolidate all of the above into ONE complete professional report.\n"
+            "2. Remove duplicate content; unify terminology and formatting.\n"
+            "3. Do NOT add any analysis or findings not already present in the input.\n"
+            "4. Do NOT remove any identified errors or findings from the input.\n"
+            "5. Organize the report with clear sections: Executive Summary, Detailed Findings (by category/framework), "
+            "and a Recommended Corrective Actions list.\n"
+            "6. Use professional technical report language suitable for direct submission as a final analysis report.\n\n"
+            f"{combined_input[:24000]}"
+        )
+
+    return _openai_simple(sys, user, model_name, max_output_tokens=2500)
+
+
+# =========================
 # Step 8: Final Analysis (NEW) — Cross-Checking Analysis (12-11-2025)
 # =========================
 
 CROSS_CHECK_GUIDE_EN = """
-Cross-Check Analysis (Guidance)
+Cross-Check Analysis — TRFW-011 (Full Methodology)
 
 Purpose:
-Perform a cross-check analysis of the results of an original identification analysis, to identify incorrect results
-and summarize the correct results in a final report.
+Perform a cross-check analysis of the results of an original identification analysis (as in a review document)
+to find SPV, design SPV, various types of errors, LOPs, etc.
+The cross-check analysis identifies incorrect results of the original analysis and produces a validated final report.
 
-Error types:
-- Omission errors
-- Information errors
-- Technical errors
-- Alignment errors
-- Reasoning errors
+Error types: omission errors, information errors, technical errors, alignment errors, reasoning errors.
 
-Key definitions:
-- Review Document: document under review
-- Review Framework: framework/prompt used to guide the original review
-- Identification (Original) Analysis: original analysis results (SPVs, errors, LOPs, etc.)
-- Cross-check Analysis: re-do and cross-check correctness of original results
-- Matching item: identified in both original and cross-check, with same risk level
-- Similar matching item: identified in both, but with different risk levels
-- Non-matching item: identified in only one analysis (I-only / C-only)
+Key Definitions:
+- Review Document: The document under review.
+- Review Framework: A document that guides the LLM to perform an automated review task.
+- Identification or Determination Analysis: The analysis of a review document to find SPVs, errors, LOPs, etc.
+- Cross-check Analysis: The analysis to cross-check the correctness of the results of the original identification analysis.
+- Matching Item: An SPV or error identified in BOTH the original and the cross-check analysis WITH THE SAME risk level.
+- Similar Matching Item: An SPV or error identified in BOTH analyses, but with DIFFERENT risk levels.
+- Non-matching Items (I-only): Identified in the original analysis ONLY — omitted from the cross-check analysis.
+- Non-matching Items (C-only): Identified in the cross-check analysis ONLY — omitted from the original analysis.
 
-Cross-check process (high level):
-1) Obtain review document + framework + prompts + original results
-2) Re-perform the original identification analysis (without referring to original)
-3) Compare original vs cross-check results to classify:
-- Matching items
-- Similar matching items
-- I-only non-matching items
-- C-only non-matching items
-4) Validate similar matching items (re-analyze risk level)
-5) Validate non-matching I-only items (determine correctness; explain why one analysis is wrong)
-6) Validate non-matching C-only items (determine correctness; explain why one analysis is wrong)
-7) Prepare report of results with summary tables:
-- Table 1: Matching items (same risk)
-- Table 2: Similar matching items (different risk)
-- Table 3: I-only non-matching items (include which is correct + why)
-- Table 4: C-only non-matching items (include which is correct + why)
-- Table 5: Final validated list (after validation)
+Cross-Check Analysis — 7 Steps (ALL steps MUST be executed as instructed):
+
+Step 1: Obtain the Review Document, the Review Framework, and the Original Analysis Results.
+Before cross-checking, you must have: (1) the review document, (2) the review framework, and (3) the original identification analysis results (Step 7 Integration Report).
+
+Step 2: Re-Perform the Original Identification Analysis.
+Re-do the ENTIRE identification analysis WITHOUT thinking about or referring to the original results.
+Do NOT simply restate the original analysis. Independently re-analyze the review document from scratch using the review framework.
+
+Step 3: Compare the Results of the Original Identification Analysis and the Cross-check Analysis.
+Classify all items as:
+- Matching items (same risk level in both)
+- Similar matching items (different risk levels)
+- I-only non-matching items (in original only)
+- C-only non-matching items (in cross-check only)
+
+Step 4: Validate Similar Matching Items.
+For each similar matching item, the risk level does not match between analyses.
+Re-analyze based on the review framework methods to determine the CORRECT risk level and explain why.
+
+Step 5: Validate Non-matching I-only Items.
+For each I-only item, re-analyze based on the review framework to determine if the original identification is correct
+or mistaken. Explain why the cross-check analysis omitted it OR why the original admission was incorrect.
+
+Step 6: Validate Non-matching C-only Items.
+For each C-only item, re-analyze based on the review framework to determine if the cross-check identification is correct.
+Explain why the original analysis omitted it OR why the cross-check admission was incorrect.
+
+Step 7: Prepare Report of Results — FIVE SUMMARY TABLES (mandatory).
+- Table 1: Matching Items — SPVs/errors identified in both analyses with the same risk level.
+- Table 2: Similar Matching Items — identified in both, but with different risk levels; show validated (correct) risk level.
+- Table 3: I-only Non-matching Items — in original only; state which analysis is correct and why.
+- Table 4: C-only Non-matching Items — in cross-check only; state which analysis is correct and why.
+- Table 5: Final Validated List — all validated items after Steps 4, 5, and 6, with final risk levels.
+
+After the five tables, also provide:
+- A prioritized fix / corrective action list (P1/P2/P3)
+- A list of clarification questions for the reviewer or document author
 """.strip()
 
 
 def run_step8_final_analysis(
     language: str,
     document_type: str,
-    framework_name: str,
     step7_integration_output: str,
     model_name: str,
 ) -> str:
     """
-    Step 8: Final Analysis
-    Cross-check Step 7's integration analysis results and produce the FINAL deliverable report.
+    Step 8: Final Analysis — Cross-Check Analysis using TRFW-011 methodology.
+    Takes Step 7's consolidated report as the 'Original results' and cross-checks it
+    to produce the final validated deliverable with 5 summary tables.
     """
     if language == "zh":
-        sys = "你是一位嚴謹的零錯誤審閱顧問與交叉核對（Cross-check）分析師。你必須依輸入內容進行交叉核對，不得杜撰。"
+        sys = "你是一位嚴謹的零錯誤審閱顧問與 TRFW-011 交叉核對（Cross-check）分析師。你必須嚴格依照 Cross-Checking Analysis 的 7 個步驟執行，不得杜撰。"
         user = (
-            "任務：執行『Step 8: Final Analysis』。\n"
-            "你要依照 Cross-Checking Analysis 的方法，對 Step 7（Integration analysis）的輸出進行交叉核對，找出可能的錯誤結果，並輸出最終可交付的 Final deliverable。\n\n"
-            "請遵守：\n"
-            "1) 先把 Step 7 的結果視為『原始識別/整合結果（Original results）』。\n"
-            "2) 你要做一輪『Cross-check』：對照其內部一致性、風險分級一致性、引用一致性（若 Step 7 有提到上游/引用一致性結果），並將結果分類成：Matching / Similar Matching / I-only / C-only。\n"
-            "3) 針對 Similar Matching / Non-matching 做 validation：指出哪一方（Step 7 的結論或 cross-check 的結論）較正確，並說明原因（可用 omission/information/technical/alignment/reasoning error 角度）。\n"
-            "4) 最終報告必須用 5 個表格（Table 1~5）輸出，並在最後提供：\n"
-            "   - 最終『Validated items』清單（可對應 Table 5）\n"
-            "   - 優先級修正清單（P1/P2/P3）\n"
-            "   - 需要向審閱者/文件作者澄清的問題清單\n\n"
-            f"【文件類型】{document_type or '（未選擇）'}\n"
-            f"【使用框架】{framework_name}\n\n"
-            "【Cross-check 方法指引（摘要）】\n"
+            "任務：執行『Step 8: Final Analysis（最終分析）』。\n\n"
+            "你必須依照以下 TRFW-011 Cross-Checking Analysis 方法，對 Step 7（整合分析）的輸出進行交叉核對，"
+            "找出可能的錯誤結果，驗證後輸出最終可交付的 Final deliverable。\n\n"
+            "【Cross-Checking Analysis 方法指引（TRFW-011）】\n"
             f"{CROSS_CHECK_GUIDE_EN}\n\n"
-            "【Step 7：Integration analysis 輸出（Original results）】\n"
-            f"{(step7_integration_output or '')[:18000]}\n"
+            "【執行步驟說明】\n"
+            "Step 1：下方的 Step 7 整合報告即為『Review Document + Original Identification Analysis Results』。\n"
+            "Step 2：在不參考 Step 7 結論的情況下，重新獨立對主文件進行一次完整的識別分析。\n"
+            "Step 3：比較 Step 7 的結果與你的 Cross-check 結果，分類為：Matching / Similar Matching / I-only / C-only。\n"
+            "Step 4：對 Similar Matching items 重新分析風險等級，確認正確值。\n"
+            "Step 5：對 I-only non-matching items 重新分析，判斷哪方正確並說明原因。\n"
+            "Step 6：對 C-only non-matching items 重新分析，判斷哪方正確並說明原因。\n"
+            "Step 7：輸出最終報告，包含以下五個摘要表格：\n"
+            "  - Table 1：Matching Items（兩次分析結果一致，風險等級相同）\n"
+            "  - Table 2：Similar Matching Items（兩次皆識別，但風險等級不同；附正確等級）\n"
+            "  - Table 3：I-only Non-matching Items（只在原始分析中出現；附判定哪方正確及原因）\n"
+            "  - Table 4：C-only Non-matching Items（只在 Cross-check 中出現；附判定哪方正確及原因）\n"
+            "  - Table 5：Final Validated List（所有驗證後的最終項目及正確風險等級）\n\n"
+            "表格之後，請另附：\n"
+            "  - 優先級修正清單（P1/P2/P3）\n"
+            "  - 需要向審閱者或文件作者澄清的問題清單\n\n"
+            f"【文件類型】{document_type or '（未選擇）'}\n\n"
+            "【Step 7 整合分析報告（Original results）】\n"
+            f"{(step7_integration_output or '')[:20000]}\n"
         )
     else:
-        sys = "You are a rigorous Error-Free consultant and cross-check analysis specialist. You must cross-check based on provided content; do not hallucinate."
+        sys = (
+            "You are a rigorous Error-Free consultant and TRFW-011 Cross-Check Analysis specialist. "
+            "You must strictly follow all 7 steps of the Cross-Checking Analysis method. Do not hallucinate."
+        )
         user = (
-            "Task: Execute 'Step 8: Final Analysis'.\n"
-            "Use the Cross-Checking Analysis method to cross-check the Step 7 (Integration analysis) output, identify incorrect results, and produce the final deliverable.\n\n"
-            "Rules:\n"
-            "1) Treat Step 7 output as the 'Original results'.\n"
-            "2) Perform a cross-check pass and classify items as: Matching / Similar Matching / I-only / C-only.\n"
-            "3) Validate Similar Matching and Non-matching items: decide which side is correct and explain why, using the error type lenses "
-            "(omission / information / technical / alignment / reasoning).\n"
-            "4) The final report MUST include five summary tables (Table 1~5), and end with:\n"
-            "   - Final validated items list (Table 5)\n"
-            "   - Prioritized fix list (P1/P2/P3)\n"
-            "   - Clarification questions for reviewer/author\n\n"
-            f"[Document type] {document_type or '(not selected)'}\n"
-            f"[Framework] {framework_name}\n\n"
-            "[Cross-check method guidance]\n"
+            "Task: Execute 'Step 8: Final Analysis'.\n\n"
+            "Use the TRFW-011 Cross-Checking Analysis method below to cross-check the Step 7 Integration Report, "
+            "identify any incorrect results, validate them, and produce the final deliverable.\n\n"
+            "[Cross-Checking Analysis Method — TRFW-011]\n"
             f"{CROSS_CHECK_GUIDE_EN}\n\n"
-            "[Step 7 Integration analysis output (Original results)]\n"
-            f"{(step7_integration_output or '')[:18000]}\n"
+            "[Execution Instructions]\n"
+            "Step 1: The Step 7 Integration Report below is your 'Review Document + Original Identification Analysis Results'.\n"
+            "Step 2: WITHOUT referring to the Step 7 conclusions, independently re-perform the full identification analysis on the main document.\n"
+            "Step 3: Compare your cross-check results against Step 7 and classify each item as: Matching / Similar Matching / I-only / C-only.\n"
+            "Step 4: For Similar Matching items, re-analyze the risk level to determine the correct one.\n"
+            "Step 5: For I-only non-matching items, re-analyze to determine which analysis is correct and explain why.\n"
+            "Step 6: For C-only non-matching items, re-analyze to determine which analysis is correct and explain why.\n"
+            "Step 7: Output the final report including FIVE mandatory summary tables:\n"
+            "  - Table 1: Matching Items (identified in both analyses, same risk level)\n"
+            "  - Table 2: Similar Matching Items (identified in both, different risk levels; include validated correct level)\n"
+            "  - Table 3: I-only Non-matching Items (original analysis only; state which is correct and why)\n"
+            "  - Table 4: C-only Non-matching Items (cross-check only; state which is correct and why)\n"
+            "  - Table 5: Final Validated List (all validated items with correct risk levels after Steps 4–6)\n\n"
+            "After the five tables, also provide:\n"
+            "  - Prioritized corrective action list (P1/P2/P3)\n"
+            "  - Clarification questions for the reviewer or document author\n\n"
+            f"[Document type] {document_type or '(not selected)'}\n\n"
+            "[Step 7 Integration Report (Original results)]\n"
+            f"{(step7_integration_output or '')[:20000]}\n"
         )
 
-    return _openai_simple(sys, user, model_name, max_output_tokens=2200)
+    return _openai_simple(sys, user, model_name, max_output_tokens=2500)
 
 
 
@@ -3617,6 +3768,10 @@ def _reset_whole_document():
     st.session_state.upstream_step6_output = ""
     st.session_state.quote_step6_done_current = False
 
+    # Clear global Step 7 state
+    st.session_state.step7_done = False
+    st.session_state.step7_output = ""
+    st.session_state.step7_generated_at = ""
     st.session_state.step7_history = []
 
     # Follow-up clear flag (fix)
@@ -3728,7 +3883,11 @@ def main():
         ("upstream_step6_output", ""),
         ("quote_step6_done_current", False),
 
-        # Step 7 history (keep old integration outputs when re-running)
+        # Global Step 7 state (single integration report, not per-framework)
+        ("step7_done", False),
+        ("step7_output", ""),
+        ("step7_generated_at", ""),
+        # Legacy history keys kept for safety
         ("step7_history", []),
 
         # Follow-up clear flag (fix StreamlitAPIException)
@@ -4099,6 +4258,7 @@ def main():
     selected_framework_keys = list(st.session_state.get("selected_framework_keys") or [])
 
     # Default template shared by every framework's state dict
+    # Note: Step 6 and Step 7 are now global (not per-framework)
     _fw_state_defaults = [
         ("analysis_done", False),
         ("analysis_output", ""),
@@ -4106,12 +4266,6 @@ def main():
         ("download_used", False),
         ("step5_done", False),
         ("step5_output", ""),
-        # Step 7
-        ("step7_done", False),
-        ("step7_output", ""),
-        ("step7_history", []),
-        ("step7_quote_count", 0),
-        ("integration_history", []),
         # Step 8
         ("step8_done", False),
         ("step8_output", ""),
@@ -5023,240 +5177,153 @@ button[title="fw-remove"] p {
 
     st.markdown("---")
 
-    # Step 7: Integration analysis (NAME CHANGED ONLY; logic unchanged)
+    # Step 7: Integration Analysis — single global button combining ALL Step 5 + Step 6 into ONE report
     st.subheader("Step 7: Integration Analysis" if lang == "en" else zh("步驟七：整合分析", "步骤七：整合分析"))
     st.caption(
-        "Integrate Step 5 and all Step 6 outputs into a formal deliverable report (preferably with tables)." if lang == "en"
-        else zh("整合步驟五與步驟六所有分析結果，輸出正式完整報告（建議以表格呈現重點）。", "整合步骤五与步骤六所有分析结果，输出正式完整报告（建议以表格呈现重点）。")
+        "Combine all Step 5 framework analyses and Step 6 reference relevance results into one consolidated professional report. "
+        "No new analysis is added — content is organized, de-duplicated, and polished." if lang == "en"
+        else zh(
+            "將所有步驟五的框架分析及步驟六的參考文件相關性分析整合成一份完整的專業報告。不新增任何分析，只整理、去重及潤飾。",
+            "将所有步骤五的框架分析及步骤六的参考文件相关性分析整合成一份完整的专业报告。不新增任何分析，只整理、去重及润饰。",
+        )
     )
 
-    # Global Step 6 outputs (used by all Step 7 framework prompts)
-    _s7_global_upstream_output = st.session_state.get("step6a_output", "") if upstream_done else ""
-    _s7_global_quote_hist = st.session_state.get("step6b_history") or []
+    _s7_done = bool(st.session_state.get("step7_done", False))
+    _s7_upstream_ok = (not upstream_exists) or upstream_done
+    _s7_quote_ok = (not quote_exists) or quote_done_current
+    _s7_can_run = (
+        step5_all_done
+        and _s7_upstream_ok
+        and _s7_quote_ok
+        and not bool(current_state.get("step8_done", False))
+        and not quote_finalized
+        and not _s7_done
+    )
 
-    # Step 7: Integration analysis — per-framework sequential buttons
-    for _s7i, _s7_fw_key in enumerate(selected_framework_keys):
-        _s7_fw_label = key_to_label.get(_s7_fw_key, _s7_fw_key)
-        _s7_fw_state = framework_states.get(_s7_fw_key, {})
-
-        _s7_current_quote_count = len(_s7_global_quote_hist)
-        _s7_last_quote_count = int(_s7_fw_state.get("step7_quote_count", 0) or 0)
-        _s7_done = bool(_s7_fw_state.get("step7_done", False))
-        _s7_needs_refresh = _s7_current_quote_count != _s7_last_quote_count
-
-        _s7_upstream_ok = (not upstream_exists) or upstream_done
-        _s7_quote_ok = (not quote_exists) or quote_done_current
-        _s7_prev_done = (
-            _s7i == 0
-            or bool(framework_states.get(selected_framework_keys[_s7i - 1], {}).get("step7_done", False))
+    _s7_col_btn, _s7_col_status = st.columns([4, 1])
+    with _s7_col_btn:
+        _s7_run = st.button(
+            "Run Integration Analysis" if lang == "en"
+            else zh("執行整合分析", "执行整合分析"),
+            key="run_step7_btn",
+            disabled=not _s7_can_run,
         )
-        _s7_can_run = (
-            step5_all_done
-            and _s7_upstream_ok
-            and _s7_quote_ok
-            and not _s7_fw_state.get("step8_done", False)
-            and not quote_finalized
-            and (_s7_prev_done)
-            and ((not _s7_done) or _s7_needs_refresh)
+    with _s7_col_status:
+        if _s7_done:
+            st.success("✓ Done" if lang == "en" else "✓ 完成")
+
+    if _s7_run:
+        # Collect all Step 5 outputs
+        _s7_step5_outputs = [
+            {"label": key_to_label.get(k, k), "output": framework_states.get(k, {}).get("step5_output", "")}
+            for k in selected_framework_keys
+        ]
+        _s7_upstream_out = st.session_state.get("step6a_output", "") if upstream_done else ""
+        _s7_quote_hist = st.session_state.get("step6b_history") or []
+
+        banner = show_running_banner(
+            "Consolidating all analyses into one report..." if lang == "en"
+            else zh("整合所有分析結果為一份報告中...", "整合所有分析结果为一份报告中...")
         )
+        try:
+            with st.spinner(" "):
+                _s7_out = run_step7_integration(
+                    language=lang,
+                    document_type=st.session_state.document_type or "",
+                    step5_outputs=_s7_step5_outputs,
+                    step6a_output=_s7_upstream_out,
+                    step6b_history=_s7_quote_hist,
+                    model_name=model_name,
+                )
+        finally:
+            banner.empty()
 
-        _s7_col_btn, _s7_col_status = st.columns([4, 1])
-        with _s7_col_btn:
-            _s7_run = st.button(
-                f"Run integration analysis — {_s7_fw_label}" if lang == "en"
-                else zh(f"整合分析 — {_s7_fw_label}", f"整合分析 — {_s7_fw_label}"),
-                key=f"run_step7_{_s7_fw_key}_btn",
-                disabled=not _s7_can_run,
-            )
-        with _s7_col_status:
-            if _s7_done and not _s7_needs_refresh:
-                st.success("✓ Done" if lang == "en" else "✓ 完成")
-
-        if _s7_run:
-            _s7_integration_history = _s7_fw_state.get("integration_history") or []
-            _s7_total_needed = len(_s7_global_quote_hist) if len(_s7_global_quote_hist) > 0 else 1
-            _s7_start_idx = len(_s7_integration_history)
-            if _s7_start_idx >= _s7_total_needed:
-                st.info("Step 7 is already up to date." if lang == "en" else zh("步驟七已是最新狀態。", "步骤七已是最新状态。"))
-                st.stop()
-
-            banner = show_running_banner(
-                f"Analyzing integration for {_s7_fw_label}..." if lang == "en"
-                else zh(f"整合分析中（{_s7_fw_label}）...", f"整合分析中（{_s7_fw_label}）...")
-            )
-            try:
-                with st.spinner(" "):
-                    for item_idx in range(_s7_start_idx, _s7_total_needed):
-                        parts: List[str] = []
-                        if lang != "en":
-                            parts.append("[整合分析輸入（步驟七）]")
-                            parts.append(f"- 文件類型：{st.session_state.document_type or '（未選擇）'}")
-                            parts.append(f"- 框架：{_s7_fw_label}")
-                            parts.append("")
-                            parts.append("=====（步驟五）主文件零錯誤框架分析結果=====")
-                            parts.append(_s7_fw_state.get("step5_output", ""))
-                            if upstream_exists and _s7_global_upstream_output:
-                                parts.append("")
-                                parts.append("=====（步驟六-A）上游主要參考文件相關性分析（Upstream relevance）=====")
-                                parts.append(_s7_global_upstream_output)
-                            parts.append("")
-                            parts.append("=====（步驟六-B）次要參考文件引用一致性分析（Quote relevance）=====")
-                            if len(_s7_global_quote_hist) > 0:
-                                h = _s7_global_quote_hist[item_idx]
-                                parts.append(f"--- Quote reference {item_idx+1}: {h.get('name','(unknown)')} ---")
-                                parts.append(h.get("output", ""))
-                            else:
-                                parts.append("（未上傳次要參考文件）")
-                            parts.append("")
-                            parts.append("【任務】")
-                            parts.append(
-                                "請用同一個零錯誤框架，整合上述內容，輸出『整合分析報告』，要求：\n"
-                                "1) 去重、補強，不要把內容重複貼上。\n"
-                                "2) 必須明確指出：哪些結論被上游文件支持、哪些存在衝突、哪些是引用不一致（reference inconsistency error）。\n"
-                                "3) 以表格呈現關鍵差異（至少包含：項目/主文件/參考文件/一致性/建議修正）。\n"
-                                "4) 產出可執行的修正/補件/澄清問題清單（含優先順序）。"
-                            )
-                        else:
-                            parts.append("[Integration Analysis Input (Step 7)]")
-                            parts.append(f"- Document type: {st.session_state.document_type or '(not selected)'}")
-                            parts.append(f"- Framework: {_s7_fw_label}")
-                            parts.append("")
-                            parts.append("===== (Step 5) Main document analysis result =====")
-                            parts.append(_s7_fw_state.get("step5_output", ""))
-                            if upstream_exists and _s7_global_upstream_output:
-                                parts.append("")
-                                parts.append("===== (Step 6-A) Upstream reference relevance =====")
-                                parts.append(_s7_global_upstream_output)
-                            parts.append("")
-                            parts.append("===== (Step 6-B) Quote reference relevance =====")
-                            if len(_s7_global_quote_hist) > 0:
-                                h = _s7_global_quote_hist[item_idx]
-                                parts.append(f"--- Quote reference {item_idx+1}: {h.get('name','(unknown)')} ---")
-                                parts.append(h.get("output", ""))
-                            else:
-                                parts.append("(No quote reference uploaded)")
-                            parts.append("")
-                            parts.append("[TASK]")
-                            parts.append(
-                                "Using the same framework, integrate the above into an 'Integration Analysis Report' with:\n"
-                                "1) De-duplicate and strengthen; do not paste repeated content.\n"
-                                "2) Explicitly state: what is supported by upstream, what conflicts, and what is reference inconsistency error.\n"
-                                "3) Provide a comparison table (at least: item / main doc / reference doc / consistency / recommended fix).\n"
-                                "4) Provide an actionable fix / addendum / clarification questions list with priority."
-                            )
-                        final_input = "\n".join(parts)
-                        final_output = run_llm_analysis(_s7_fw_key, lang, final_input, model_name) or ""
-                        if is_openai_error_output(final_output):
-                            render_openai_error(lang)
-                            save_state_to_disk()
-                            st.stop()
-                        _s7_entry = {
-                            "index": item_idx + 1,
-                            "quote_name": (_s7_global_quote_hist[item_idx].get("name", "(unknown)") if len(_s7_global_quote_hist) > 0 else "(no quote reference)"),
-                            "generated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "output": clean_report_text(final_output),
-                        }
-                        _s7_integration_history.append(_s7_entry)
-            finally:
-                banner.empty()
-
-            framework_states[_s7_fw_key]["integration_history"] = _s7_integration_history
-            framework_states[_s7_fw_key]["step7_quote_count"] = len(_s7_integration_history)
-            if _s7_integration_history:
-                framework_states[_s7_fw_key]["step7_output"] = _s7_integration_history[-1].get("output", "")
-            framework_states[_s7_fw_key]["step7_done"] = (len(_s7_integration_history) >= _s7_total_needed)
+        if is_openai_error_output(_s7_out):
+            render_openai_error(lang)
             save_state_to_disk()
-            st.success(
-                f"Step 7 completed for {_s7_fw_label}." if lang == "en"
-                else zh(f"步驟七（{_s7_fw_label}）整合分析完成！", f"步骤七（{_s7_fw_label}）整合分析完成！")
-            )
-            st.rerun()
+            st.stop()
 
-    # Convenience alias for Step 8 gate (uses first framework's step7_done)
-    step7_done = bool(framework_states.get(selected_framework_keys[0], {}).get("step7_done", False)) if selected_framework_keys else False
-    current_quote_count = len(framework_states.get(selected_framework_keys[0], {}).get("quote_history") or []) if selected_framework_keys else 0
+        st.session_state.step7_done = True
+        st.session_state.step7_output = clean_report_text(_s7_out)
+        st.session_state.step7_generated_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        save_state_to_disk()
+        st.success("Step 7 integration complete." if lang == "en" else zh("步驟七整合分析完成！", "步骤七整合分析完成！"))
+        st.rerun()
+
+    # Global step7 state for Step 8 gate
+    step7_done = bool(st.session_state.get("step7_done", False))
+    current_quote_count = len(st.session_state.get("step6b_history") or [])
 
     st.markdown("---")
 
-    # Step 8: Final Analysis (NEW) — this is the final deliverable
+    # Step 8: Final Analysis — Cross-Check using TRFW-011
     st.subheader("Step 8: Final Analysis" if lang == "en" else zh("步驟八：最終分析（Final Analysis）", "步骤八：最终分析（Final Analysis）"))
     st.caption(
-        "Cross-check Step 7 results and produce the FINAL deliverable report." if lang == "en"
-        else zh("依 Cross-Checking Analysis 方法，對步驟七結果做最後交叉核對，產出最終交付報告（Final deliverable）。", "依 Cross-Checking Analysis 方法，对步骤七结果做最后交叉核对，产出最终交付报告（Final deliverable）。")
+        "Apply TRFW-011 Cross-Checking Analysis to Step 7's consolidated report and produce the FINAL deliverable." if lang == "en"
+        else zh(
+            "依 TRFW-011 Cross-Checking Analysis 方法，對步驟七整合報告做最終交叉核對，產出最終可交付報告。",
+            "依 TRFW-011 Cross-Checking Analysis 方法，对步骤七整合报告做最终交叉核对，产出最终可交付报告。",
+        )
     )
 
     step8_done = bool(current_state.get("step8_done", False))
     quote_finalized = bool(st.session_state.get("quote_upload_finalized", False))
-    # Use global step6b_history for quote count (Step 6 is now a single global analysis)
-    current_quote_count = len(st.session_state.get("step6b_history") or [])
-    _s8_first_fw_state = framework_states.get(selected_framework_keys[0], current_state) if selected_framework_keys else current_state
-    step7_quote_count = int(_s8_first_fw_state.get("step7_quote_count", 0) or 0)
 
-    # Step 8 gate: user must confirm no more quote references (this also locks Step 3-2 reset + Step 7).
-    confirm_disabled = (
-        step8_done
-        or quote_finalized
-        or (not bool(current_state.get("step7_done")))
-        or (step7_quote_count != current_quote_count)
-    )
-    confirm_clicked = st.button(
-        "Confirm no more quote reference" if lang == "en" else zh("確認已無其他參考文件要上傳", "确认已无其他参考文件要上传"),
-        key="confirm_no_more_quote_btn",
-        disabled=confirm_disabled,
-    )
-    if confirm_clicked:
-        st.session_state.quote_upload_finalized = True
-        save_state_to_disk()
-        st.success("Confirmed. Quote reference upload is now locked." if lang == "en" else zh("已確認：次要參考文件上傳已鎖定。", "已确认：次要参考文件上传已锁定。"))
-        st.rerun()
+    # Step 8 gate: Step 7 must be done; if quote references uploaded, user must confirm no more
+    _s8_step7_done = bool(st.session_state.get("step7_done", False))
+    _s8_has_quotes = bool(st.session_state.get("step6b_history"))
 
-    if not quote_finalized:
-        if step7_quote_count != current_quote_count:
+    if not _s8_step7_done:
+        st.info(
+            "Complete Step 7 Integration Analysis first before running Step 8." if lang == "en"
+            else zh("請先完成步驟七整合分析，再執行步驟八。", "请先完成步骤七整合分析，再执行步骤八。")
+        )
+
+    # Confirm button (only shown if quote references exist and not yet finalized)
+    if _s8_has_quotes and not quote_finalized:
+        confirm_disabled = step8_done or quote_finalized or not _s8_step7_done
+        confirm_clicked = st.button(
+            "Confirm no more quote reference" if lang == "en" else zh("確認已無其他參考文件要上傳", "确认已无其他参考文件要上传"),
+            key="confirm_no_more_quote_btn",
+            disabled=confirm_disabled,
+        )
+        if confirm_clicked:
+            st.session_state.quote_upload_finalized = True
+            save_state_to_disk()
+            st.success("Confirmed. Step 8 is now unlocked." if lang == "en" else zh("已確認，步驟八現在已解鎖。", "已确认，步骤八现在已解锁。"))
+            st.rerun()
+        if not step8_done:
             st.info(
-                "Step 7 is not up to date. Please run Step 7 until all quote references are integrated, then confirm." if lang == "en"
-                else zh("步驟七尚未更新至最新。請先執行步驟七，直到所有次要參考文件都完成整合分析，再按下確認按鍵。", "步骤七尚未更新至最新。请先执行步骤七，直到所有次要参考文件都完成整合分析，再按下确认按键。"),
+                "To enable Step 8, click **Confirm no more quote reference**." if lang == "en"
+                else zh("要啟用步驟八，請按下『確認已無其他參考文件要上傳』。", "要启用步骤八，请按下『确认已无其他参考文件要上传』。")
             )
-        else:
-            st.info(
-                "To enable Step 8, click **Confirm no more quote reference** (after Step 7 is up to date)." if lang == "en"
-                else zh("要啟用步驟八，請在步驟七更新完成後，按下『確認已無其他參考文件要上傳』。", "要启用步骤八，请在步骤七更新完成后，按下『确认已无其他参考文件要上传』。"),
-            )
-    else:
+    elif _s8_has_quotes and quote_finalized:
         st.info("Quote reference upload is locked. Step 8 can run now." if lang == "en" else zh("次要參考文件上傳已鎖定，現在可進行步驟八。", "次要参考文件上传已锁定，现在可进行步骤八。"))
-    step8_can_run = bool(current_state.get("step7_done")) and quote_finalized and (step7_quote_count == current_quote_count) and (not step8_done)
+
+    step8_can_run = (
+        _s8_step7_done
+        and (not _s8_has_quotes or quote_finalized)
+        and not step8_done
+    )
 
     run_step8 = st.button(
-        "Run final analysis (Step 8)" if lang == "en" else "Run final analysis（步驟八）",
+        "Run Final Analysis (Step 8)" if lang == "en" else zh("執行最終分析（步驟八）", "执行最终分析（步骤八）"),
         key="run_step8_btn",
         disabled=not step8_can_run,
     )
 
     if run_step8:
         banner = show_running_banner(
-            "Analyzing... (final analysis)" if lang == "en" else zh("分析中...（最終分析）", "分析中...（最终分析）")
+            "Running final cross-check analysis (Step 8)..." if lang == "en"
+            else zh("最終交叉核對分析中（步驟八）...", "最终交叉核对分析中（步骤八）...")
         )
         try:
             with st.spinner(" "):
-                fw_name = FRAMEWORKS.get(selected_key, {}).get(
-                    "name_zh" if lang == "zh" else "name_en", selected_key
-                )
-
-                integration_history = current_state.get("integration_history") or []
-                if integration_history:
-                    chunks = []
-                    for e in integration_history:
-                        chunks.append(
-                            f"===== Integration #{e.get('index','')}: {e.get('quote_name','')} ({e.get('generated_at','')}) =====\n{e.get('output','')}"
-                        )
-                    step7_text_all = "\n\n".join(chunks)
-                else:
-                    step7_text_all = current_state.get("step7_output", "")
-
+                _s8_step7_text = st.session_state.get("step7_output", "")
                 out = run_step8_final_analysis(
                     language=lang,
-                    document_type=st.session_state.document_type,
-                    framework_name=fw_name,
-                    step7_integration_output=step7_text_all,
+                    document_type=st.session_state.document_type or "",
+                    step7_integration_output=_s8_step7_text,
                     model_name=model_name,
                 )
         finally:
@@ -5270,25 +5337,21 @@ button[title="fw-remove"] p {
         current_state["step8_done"] = True
         current_state["step8_output"] = clean_report_text(out)
 
-        # Build final analysis bundle (this becomes analysis_output / final deliverable)
+        # Build final analysis bundle (becomes analysis_output / final deliverable)
+        _s8_step7_generated_at = st.session_state.get("step7_generated_at", "")
         if lang == "zh":
             prefix_lines = [
                 "### 分析紀錄（必讀）",
-                f"- 文件類型（Document Type）：{st.session_state.document_type}",
-                f"- 框架（Framework）：{FRAMEWORKS.get(selected_key, {}).get('name_zh', selected_key)}",
+                f"- 文件類型（Document Type）：{st.session_state.document_type or '（未選擇）'}",
+                f"- 步驟七整合報告產生時間：{_s8_step7_generated_at or '（未記錄）'}",
             ]
             if st.session_state.get("upstream_reference"):
                 prefix_lines.append(f"- 主要參考文件（Upstream）：{st.session_state.upstream_reference.get('name','(unknown)')}")
-            else:
-                prefix_lines.append("- 主要參考文件（Upstream）：（未上傳）")
-
-            if st.session_state.get("quote_history"):
+            _s8_qhist = st.session_state.get("step6b_history") or []
+            if _s8_qhist:
                 prefix_lines.append("- 次要參考文件（Quote References）分析紀錄：")
-                for i, h in enumerate(st.session_state.quote_history, start=1):
+                for i, h in enumerate(_s8_qhist, start=1):
                     prefix_lines.append(f"  {i}. {h.get('name','(unknown)')} ({h.get('analyzed_at','')})")
-            else:
-                prefix_lines.append("- 次要參考文件（Quote References）：（未上傳）")
-
             prefix = "\n".join(prefix_lines) + "\n\n"
             final_bundle = [
                 "==============================",
@@ -5299,25 +5362,20 @@ button[title="fw-remove"] p {
         else:
             prefix_lines = [
                 "### Analysis Record",
-                f"- Document Type: {st.session_state.document_type}",
-                f"- Framework: {FRAMEWORKS.get(selected_key, {}).get('name_en', selected_key)}",
+                f"- Document Type: {st.session_state.document_type or '(not selected)'}",
+                f"- Step 7 Integration Report Generated At: {_s8_step7_generated_at or '(not recorded)'}",
             ]
             if st.session_state.get("upstream_reference"):
                 prefix_lines.append(f"- Upstream reference: {st.session_state.upstream_reference.get('name','(unknown)')}")
-            else:
-                prefix_lines.append("- Upstream reference: (none)")
-
-            if st.session_state.get("quote_history"):
+            _s8_qhist = st.session_state.get("step6b_history") or []
+            if _s8_qhist:
                 prefix_lines.append("- Quote reference analysis log:")
-                for i, h in enumerate(st.session_state.quote_history, start=1):
+                for i, h in enumerate(_s8_qhist, start=1):
                     prefix_lines.append(f"  {i}. {h.get('name','(unknown)')} ({h.get('analyzed_at','')})")
-            else:
-                prefix_lines.append("- Quote references: (none)")
-
             prefix = "\n".join(prefix_lines) + "\n\n"
             final_bundle = [
                 "==============================",
-                "(Step 8) Final deliverable report",
+                "(Step 8) Final Deliverable Report",
                 "==============================",
                 current_state.get("step8_output", ""),
             ]
@@ -5405,36 +5463,25 @@ button[title="fw-remove"] p {
                         else:
                             st.info("No content yet." if lang == "en" else zh("尚無內容。", "暂无内容。"))
 
-    # ── Step 7 results: Integration Analysis (primary heading + sub-headings per framework) ──
-    _any_step7 = any(
-        bool(framework_states.get(k, {}).get("integration_history"))
-        for k in selected_framework_keys
+    # ── Step 7 results: Integration Analysis — single global report ─────────────
+    st.subheader(
+        "Step 7 — Integration Analysis" if lang == "en"
+        else zh("Step 7 — 整合分析", "Step 7 — 整合分析")
     )
-    if _any_step7 or selected_framework_keys:
-        st.subheader(
-            "Step 7 — Integration Analysis" if lang == "en"
-            else zh("Step 7 — 整合分析", "Step 7 — 整合分析")
+    _r7_output = st.session_state.get("step7_output", "")
+    _r7_generated_at = st.session_state.get("step7_generated_at", "")
+    _r7_expander_label = (
+        (f"Show / Hide" + (f" — generated {_r7_generated_at}" if _r7_generated_at else "")) if lang == "en"
+        else zh(
+            f"展開 / 收起" + (f" — 產生時間：{_r7_generated_at}" if _r7_generated_at else ""),
+            f"展开 / 收起" + (f" — 产生时间：{_r7_generated_at}" if _r7_generated_at else ""),
         )
-        for _r7i, _r7_fw_key in enumerate(selected_framework_keys, start=1):
-            _r7_fw_label = key_to_label.get(_r7_fw_key, _r7_fw_key)
-            _r7_fw_state = framework_states.get(_r7_fw_key, {})
-            _r7_int_history = _r7_fw_state.get("integration_history") or []
-            _r7_sub_title = (
-                f"Step 7-{_r7i} — {_r7_fw_label}" if lang == "en"
-                else f"Step 7-{_r7i} — {_r7_fw_label}"
-            )
-            st.markdown(
-                f'<div class="ef-result-subsection"><p class="ef-result-subsection-title">{_r7_sub_title}</p></div>',
-                unsafe_allow_html=True,
-            )
-            with st.expander("Show / Hide" if lang == "en" else zh("展開 / 收起", "展开 / 收起"), expanded=False):
-                if _r7_int_history:
-                    for e in _r7_int_history:
-                        _r7_label = f"{e.get('index','')}. {e.get('quote_name','')} — {e.get('generated_at','')}".strip()
-                        with st.expander(_r7_label if _r7_label else "(integration)", expanded=False):
-                            st.markdown(e.get("output", ""))
-                else:
-                    st.info("No content yet." if lang == "en" else zh("尚無內容。", "暂无内容。"))
+    )
+    with st.expander(_r7_expander_label, expanded=False):
+        if _r7_output:
+            st.markdown(_r7_output)
+        else:
+            st.info("No content yet." if lang == "en" else zh("尚無內容。", "暂无内容。"))
 
     # ── Step 8 results ────────────────────────────────────────────────────────
     if current_state.get("step8_done"):
