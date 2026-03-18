@@ -542,7 +542,10 @@ def _check_usage_cap(tenant: str, usage_type: str, email: str = "") -> tuple[boo
                 mem_cap = resp.json()[0].get(f"daily_{usage_type}_cap")
                 if mem_cap == 0:
                     return False, 0, 0, f"Your {usage_type} access has been disabled. Please contact your administrator."
-                if mem_cap is not None and mem_cap > 0:
+                if mem_cap is None:
+                    # Explicitly set to Unlimited — allow immediately, skip tenant cap logic
+                    return True, 0, 0, ""
+                if mem_cap > 0:
                     cap = mem_cap
                     usage_filter_email = email.strip()
         
