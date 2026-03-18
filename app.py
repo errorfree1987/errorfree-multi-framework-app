@@ -1755,7 +1755,14 @@ def save_state_to_disk():
     }
     try:
         f = _user_state_file()
-        f.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        payload = json.dumps(data, ensure_ascii=False)
+        # Atomic write: write to a .tmp file first, then rename.
+        # This prevents a partial write from corrupting the state file, which
+        # would cause restore_state_from_disk() to silently fail and clear all
+        # in-memory analysis results on the next rerun.
+        tmp = f.with_suffix(".tmp")
+        tmp.write_text(payload, encoding="utf-8")
+        tmp.replace(f)
     except Exception:
         pass
 
@@ -3906,8 +3913,11 @@ def _reset_whole_document():
     # Streamlit discards the old frontend state and renders index=0 ("None")
     st.session_state["doc_type_select_nonce"] = int(st.session_state.get("doc_type_select_nonce", 0)) + 1
 
-    # Uncheck the "I understand and want to reset" checkbox
-    st.session_state["reset_confirm"] = False
+    # Uncheck the "I understand and want to reset" checkbox by bumping the nonce
+    # (Streamlit prohibits modifying widget state after it is instantiated in the
+    # same run; the nonce approach forces a brand-new widget key on the next rerun
+    # so the checkbox renders fresh and unchecked — same pattern as file uploaders)
+    st.session_state["reset_confirm_nonce"] = int(st.session_state.get("reset_confirm_nonce", 0)) + 1
 
     st.session_state.quote_upload_finalized = False
     # Clear global Step 6 state
@@ -5830,30 +5840,44 @@ button[title="fw-remove"] p {
 
             if st.button("Send follow-up" if lang == "en" else zh("送出追問", "送出追问"), key=f"followup_btn_{selected_key}"):
                 if prompt and prompt.strip():
-                    with st.spinner("Thinking..." if lang == "en" else zh("思考中...", "思考中...")):
-                        _safe_ctx = _build_followup_safe_context(
-                            framework_states,
-                            selected_framework_keys,
-                            key_to_label,
-                            st.session_state,
+                    try:
+                        with st.spinner("Thinking..." if lang == "en" else zh("思考中...", "思考中...")):
+                            _safe_ctx = _build_followup_safe_context(
+                                framework_states,
+                                selected_framework_keys,
+                                key_to_label,
+                                st.session_state,
+                            )
+                            answer = run_followup_qa(
+                                selected_key,
+                                lang,
+                                st.session_state.last_doc_text or "",
+                                _safe_ctx,
+                                prompt,
+                                model_name,
+                                extra_text,
+                            )
+                        # Use .setdefault() so even if followup_history is missing
+                        # from a legacy state dict the append never raises KeyError
+                        current_state.setdefault("followup_history", []).append(
+                            (prompt, clean_report_text(answer))
                         )
-                        answer = run_followup_qa(
-                            selected_key,
-                            lang,
-                            st.session_state.last_doc_text or "",
-                            _safe_ctx,
-                            prompt,
-                            model_name,
-                            extra_text,
+
+                        # FIX: DO NOT modify widget state after instantiation; clear on next rerun
+                        st.session_state["_pending_clear_followup_key"] = followup_key
+
+                        save_state_to_disk()
+                        record_usage(user_email, selected_key, "followup")
+                        st.rerun()
+                    except Exception as _fq_err:
+                        st.error(
+                            f"An error occurred while processing your question. Please try again. ({_fq_err})"
+                            if lang == "en"
+                            else zh(
+                                f"處理追問時發生錯誤，請再試一次。（{_fq_err}）",
+                                f"处理追问时发生错误，请再试一次。（{_fq_err}）",
+                            )
                         )
-                    current_state["followup_history"].append((prompt, clean_report_text(answer)))
-
-                    # FIX: DO NOT modify widget state after instantiation; clear on next rerun
-                    st.session_state["_pending_clear_followup_key"] = followup_key
-
-                    save_state_to_disk()
-                    record_usage(user_email, selected_key, "followup")
-                    st.rerun()
                 else:
                     st.warning("Please enter a question first." if lang == "en" else zh("請先輸入追問內容。", "请先输入追问内容。"))
 
@@ -5864,7 +5888,8 @@ button[title="fw-remove"] p {
         "Reminder: Please make sure you have downloaded your report. We do not retain your documents. Reset will remove the current review session." if lang == "en"
         else zh("溫馨提示：請確認您已經下載資料。我們不留存你們的資料；按下重置後，本次審查的文件與分析紀錄將會清空。", "温馨提示：请确认您已经下载资料。我们不留存你们的资料；按下重置后，本次審查的文件与分析纪录将会清空。")
     )
-    confirm = st.checkbox("I understand and want to reset." if lang == "en" else zh("我已確認要重置。", "我已确认要重置。"), key="reset_confirm")
+    _confirm_nonce = st.session_state.get("reset_confirm_nonce", 0)
+    confirm = st.checkbox("I understand and want to reset." if lang == "en" else zh("我已確認要重置。", "我已确认要重置。"), key=f"reset_confirm_{_confirm_nonce}")
     if st.button("Reset Whole Document" if lang == "en" else "Reset Whole Document", key="reset_whole_btn", disabled=not confirm):
         _reset_whole_document()
         st.rerun()
