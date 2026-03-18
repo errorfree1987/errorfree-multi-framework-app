@@ -5006,53 +5006,52 @@ button[title="fw-remove"] p {
         if _s5_run:
             if not st.session_state.last_doc_text:
                 st.error("Please upload a review document first (Step 1)." if lang == "en" else zh("請先上傳審閱文件（Step 1）", "请先上传审阅文件（Step 1）"))
-                st.stop()
-            if not st.session_state.get("document_type") or st.session_state.get("document_type") == "None":
+            elif not st.session_state.get("document_type") or st.session_state.get("document_type") == "None":
                 st.error("Please select a document type first (Step 2)." if lang == "en" else zh("請先選擇文件類型（Step 2）", "请先选择文件类型（Step 2）"))
-                st.stop()
-            # Phase A2-2: Check usage cap
-            tenant = st.session_state.get("tenant", "")
-            email = st.session_state.get("user_email", "")
-            allow, cap, current_usage, cap_message = _check_usage_cap(tenant, "review", email=email)
-            if not allow:
-                st.error(cap_message)
-                _log_audit_event(
-                    action="review_denied", tenant=tenant, email=email, result="denied",
-                    deny_reason="usage_cap_reached",
-                    context={"cap": cap, "current_usage": current_usage, "usage_type": "review"},
-                )
-                save_state_to_disk()
-                st.stop()
-            if cap > 0:
-                remaining = cap - current_usage
-                if remaining <= 5:
-                    st.warning(f"⚠️ Daily review limit: {current_usage}/{cap} used. {remaining} remaining.")
-            banner = show_running_banner(
-                f"Analyzing with {_s5_fw_label}..." if lang == "en"
-                else zh(f"使用 {_s5_fw_label} 分析中...", f"使用 {_s5_fw_label} 分析中...")
-            )
-            try:
-                with st.spinner(" "):
-                    _s5_out = run_llm_analysis(_s5_fw_key, lang, st.session_state.last_doc_text, model_name) or ""
-            finally:
-                banner.empty()
-            if is_openai_error_output(_s5_out):
-                render_openai_error(lang)
-                save_state_to_disk()
-                st.stop()
-            framework_states[_s5_fw_key]["step5_done"] = True
-            framework_states[_s5_fw_key]["step5_output"] = clean_report_text(_s5_out)
-            _record_usage_event(
-                tenant=tenant, email=email, usage_type="review", quantity=1,
-                context={"framework": _s5_fw_key, "step": "step5_main_analysis"},
-            )
-            save_state_to_disk()
-            record_usage(user_email, _s5_fw_key, "analysis")
-            st.success(
-                f"Step 5 completed for {_s5_fw_label}." if lang == "en"
-                else zh(f"{_s5_fw_label} 分析完成！", f"{_s5_fw_label} 分析完成！")
-            )
-            st.rerun()
+            else:
+                # Phase A2-2: Check usage cap
+                tenant = st.session_state.get("tenant", "")
+                email = st.session_state.get("user_email", "")
+                allow, cap, current_usage, cap_message = _check_usage_cap(tenant, "review", email=email)
+                if not allow:
+                    st.error(cap_message)
+                    _log_audit_event(
+                        action="review_denied", tenant=tenant, email=email, result="denied",
+                        deny_reason="usage_cap_reached",
+                        context={"cap": cap, "current_usage": current_usage, "usage_type": "review"},
+                    )
+                    save_state_to_disk()
+                else:
+                    if cap > 0:
+                        remaining = cap - current_usage
+                        if remaining <= 5:
+                            st.warning(f"⚠️ Daily review limit: {current_usage}/{cap} used. {remaining} remaining.")
+                    banner = show_running_banner(
+                        f"Analyzing with {_s5_fw_label}..." if lang == "en"
+                        else zh(f"使用 {_s5_fw_label} 分析中...", f"使用 {_s5_fw_label} 分析中...")
+                    )
+                    try:
+                        with st.spinner(" "):
+                            _s5_out = run_llm_analysis(_s5_fw_key, lang, st.session_state.last_doc_text, model_name) or ""
+                    finally:
+                        banner.empty()
+                    if is_openai_error_output(_s5_out):
+                        render_openai_error(lang)
+                        save_state_to_disk()
+                    else:
+                        framework_states[_s5_fw_key]["step5_done"] = True
+                        framework_states[_s5_fw_key]["step5_output"] = clean_report_text(_s5_out)
+                        _record_usage_event(
+                            tenant=tenant, email=email, usage_type="review", quantity=1,
+                            context={"framework": _s5_fw_key, "step": "step5_main_analysis"},
+                        )
+                        save_state_to_disk()
+                        record_usage(user_email, _s5_fw_key, "analysis")
+                        st.success(
+                            f"Step 5 completed for {_s5_fw_label}." if lang == "en"
+                            else zh(f"{_s5_fw_label} 分析完成！", f"{_s5_fw_label} 分析完成！")
+                        )
+                        st.rerun()
 
     # Update step5_done (first framework) for backward-compat with legacy gates
     step5_done = bool(framework_states.get(selected_framework_keys[0], {}).get("step5_done", False)) if selected_framework_keys else False
@@ -5112,12 +5111,12 @@ button[title="fw-remove"] p {
             if is_openai_error_output(_s6a_out):
                 render_openai_error(lang)
                 save_state_to_disk()
-                st.stop()
-            st.session_state.step6a_done = True
-            st.session_state.step6a_output = clean_report_text(_s6a_out)
-            save_state_to_disk()
-            st.success("Upstream reference relevance analysis complete." if lang == "en" else zh("上游參考文件相關性分析完成。", "上游参考文件相关性分析完成。"))
-            st.rerun()
+            else:
+                st.session_state.step6a_done = True
+                st.session_state.step6a_output = clean_report_text(_s6a_out)
+                save_state_to_disk()
+                st.success("Upstream reference relevance analysis complete." if lang == "en" else zh("上游參考文件相關性分析完成。", "上游参考文件相关性分析完成。"))
+                st.rerun()
 
     # ── Step 6-B: Quote Relevance (single global analysis, supports multiple quote uploads) ──
     if quote_exists:
@@ -5157,19 +5156,19 @@ button[title="fw-remove"] p {
             if is_openai_error_output(_s6b_out):
                 render_openai_error(lang)
                 save_state_to_disk()
-                st.stop()
-            _q_rec = {
-                "name": st.session_state.quote_current.get("name", "(unknown)"),
-                "ext": st.session_state.quote_current.get("ext", ""),
-                "uploaded_at": st.session_state.quote_current.get("uploaded_at", ""),
-                "analyzed_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "output": clean_report_text(_s6b_out),
-            }
-            st.session_state.step6b_history = (st.session_state.get("step6b_history") or []) + [_q_rec]
-            st.session_state.step6b_done_current = True
-            save_state_to_disk()
-            st.success("Quote reference relevance analysis complete." if lang == "en" else zh("次要參考文件引用一致性分析完成。", "次要参考文件引用一致性分析完成。"))
-            st.rerun()
+            else:
+                _q_rec = {
+                    "name": st.session_state.quote_current.get("name", "(unknown)"),
+                    "ext": st.session_state.quote_current.get("ext", ""),
+                    "uploaded_at": st.session_state.quote_current.get("uploaded_at", ""),
+                    "analyzed_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "output": clean_report_text(_s6b_out),
+                }
+                st.session_state.step6b_history = (st.session_state.get("step6b_history") or []) + [_q_rec]
+                st.session_state.step6b_done_current = True
+                save_state_to_disk()
+                st.success("Quote reference relevance analysis complete." if lang == "en" else zh("次要參考文件引用一致性分析完成。", "次要参考文件引用一致性分析完成。"))
+                st.rerun()
 
     # Convenience aliases used by Step 7 / Step 8 gates
     upstream_done = bool(st.session_state.get("step6a_done", False))
@@ -5233,14 +5232,13 @@ button[title="fw-remove"] p {
         if is_openai_error_output(_s7_out):
             render_openai_error(lang)
             save_state_to_disk()
-            st.stop()
-
-        st.session_state.step7_done = True
-        st.session_state.step7_output = clean_report_text(_s7_out)
-        st.session_state.step7_generated_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        save_state_to_disk()
-        st.success("Step 7 integration complete." if lang == "en" else zh("步驟七整合分析完成！", "步骤七整合分析完成！"))
-        st.rerun()
+        else:
+            st.session_state.step7_done = True
+            st.session_state.step7_output = clean_report_text(_s7_out)
+            st.session_state.step7_generated_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            save_state_to_disk()
+            st.success("Step 7 integration complete." if lang == "en" else zh("步驟七整合分析完成！", "步骤七整合分析完成！"))
+            st.rerun()
 
     # Global step7 state for Step 8 gate
     step7_done = bool(st.session_state.get("step7_done", False))
@@ -5317,59 +5315,58 @@ button[title="fw-remove"] p {
         if is_openai_error_output(out):
             render_openai_error(lang)
             save_state_to_disk()
-            st.stop()
-
-        current_state["step8_done"] = True
-        current_state["step8_output"] = clean_report_text(out)
-
-        # Build final analysis bundle (becomes analysis_output / final deliverable)
-        _s8_step7_generated_at = st.session_state.get("step7_generated_at", "")
-        if lang == "zh":
-            prefix_lines = [
-                "### 分析紀錄（必讀）",
-                f"- 文件類型（Document Type）：{st.session_state.document_type or '（未選擇）'}",
-                f"- 步驟七整合報告產生時間：{_s8_step7_generated_at or '（未記錄）'}",
-            ]
-            if st.session_state.get("upstream_reference"):
-                prefix_lines.append(f"- 主要參考文件（Upstream）：{st.session_state.upstream_reference.get('name','(unknown)')}")
-            _s8_qhist = st.session_state.get("step6b_history") or []
-            if _s8_qhist:
-                prefix_lines.append("- 次要參考文件（Quote References）分析紀錄：")
-                for i, h in enumerate(_s8_qhist, start=1):
-                    prefix_lines.append(f"  {i}. {h.get('name','(unknown)')} ({h.get('analyzed_at','')})")
-            prefix = "\n".join(prefix_lines) + "\n\n"
-            final_bundle = [
-                "==============================",
-                "（步驟八）最終交付報告（Final deliverable）",
-                "==============================",
-                current_state.get("step8_output", ""),
-            ]
         else:
-            prefix_lines = [
-                "### Analysis Record",
-                f"- Document Type: {st.session_state.document_type or '(not selected)'}",
-                f"- Step 7 Integration Report Generated At: {_s8_step7_generated_at or '(not recorded)'}",
-            ]
-            if st.session_state.get("upstream_reference"):
-                prefix_lines.append(f"- Upstream reference: {st.session_state.upstream_reference.get('name','(unknown)')}")
-            _s8_qhist = st.session_state.get("step6b_history") or []
-            if _s8_qhist:
-                prefix_lines.append("- Quote reference analysis log:")
-                for i, h in enumerate(_s8_qhist, start=1):
-                    prefix_lines.append(f"  {i}. {h.get('name','(unknown)')} ({h.get('analyzed_at','')})")
-            prefix = "\n".join(prefix_lines) + "\n\n"
-            final_bundle = [
-                "==============================",
-                "(Step 8) Final Deliverable Report",
-                "==============================",
-                current_state.get("step8_output", ""),
-            ]
+            current_state["step8_done"] = True
+            current_state["step8_output"] = clean_report_text(out)
 
-        current_state["analysis_done"] = True
-        current_state["analysis_output"] = clean_report_text(prefix + "\n".join(final_bundle))
-        save_state_to_disk()
-        st.success("Step 8 completed. Final deliverable generated." if lang == "en" else zh("步驟八完成！已產出最終交付成品。", "步骤八完成！已产出最终交付成品。"))
-        st.rerun()
+            # Build final analysis bundle (becomes analysis_output / final deliverable)
+            _s8_step7_generated_at = st.session_state.get("step7_generated_at", "")
+            if lang == "zh":
+                prefix_lines = [
+                    "### 分析紀錄（必讀）",
+                    f"- 文件類型（Document Type）：{st.session_state.document_type or '（未選擇）'}",
+                    f"- 步驟七整合報告產生時間：{_s8_step7_generated_at or '（未記錄）'}",
+                ]
+                if st.session_state.get("upstream_reference"):
+                    prefix_lines.append(f"- 主要參考文件（Upstream）：{st.session_state.upstream_reference.get('name','(unknown)')}")
+                _s8_qhist = st.session_state.get("step6b_history") or []
+                if _s8_qhist:
+                    prefix_lines.append("- 次要參考文件（Quote References）分析紀錄：")
+                    for i, h in enumerate(_s8_qhist, start=1):
+                        prefix_lines.append(f"  {i}. {h.get('name','(unknown)')} ({h.get('analyzed_at','')})")
+                prefix = "\n".join(prefix_lines) + "\n\n"
+                final_bundle = [
+                    "==============================",
+                    "（步驟八）最終交付報告（Final deliverable）",
+                    "==============================",
+                    current_state.get("step8_output", ""),
+                ]
+            else:
+                prefix_lines = [
+                    "### Analysis Record",
+                    f"- Document Type: {st.session_state.document_type or '(not selected)'}",
+                    f"- Step 7 Integration Report Generated At: {_s8_step7_generated_at or '(not recorded)'}",
+                ]
+                if st.session_state.get("upstream_reference"):
+                    prefix_lines.append(f"- Upstream reference: {st.session_state.upstream_reference.get('name','(unknown)')}")
+                _s8_qhist = st.session_state.get("step6b_history") or []
+                if _s8_qhist:
+                    prefix_lines.append("- Quote reference analysis log:")
+                    for i, h in enumerate(_s8_qhist, start=1):
+                        prefix_lines.append(f"  {i}. {h.get('name','(unknown)')} ({h.get('analyzed_at','')})")
+                prefix = "\n".join(prefix_lines) + "\n\n"
+                final_bundle = [
+                    "==============================",
+                    "(Step 8) Final Deliverable Report",
+                    "==============================",
+                    current_state.get("step8_output", ""),
+                ]
+
+            current_state["analysis_done"] = True
+            current_state["analysis_output"] = clean_report_text(prefix + "\n".join(final_bundle))
+            save_state_to_disk()
+            st.success("Step 8 completed. Final deliverable generated." if lang == "en" else zh("步驟八完成！已產出最終交付成品。", "步骤八完成！已产出最终交付成品。"))
+            st.rerun()
 
     # =========================
     # Ensure current_state exists even before a framework is selected
