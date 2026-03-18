@@ -1696,6 +1696,12 @@ def save_state_to_disk():
         "review_upload_nonce": st.session_state.get("review_upload_nonce", 0),
         "upstream_upload_nonce": st.session_state.get("upstream_upload_nonce", 0),
         "quote_upload_finalized": st.session_state.get("quote_upload_finalized", False),
+        # Global Step 6 state
+        "step6a_done": st.session_state.get("step6a_done", False),
+        "step6a_output": st.session_state.get("step6a_output", ""),
+        "step6b_done_current": st.session_state.get("step6b_done_current", False),
+        "step6b_history": st.session_state.get("step6b_history", []),
+        # Legacy keys kept for backward compat
         "upstream_step6_done": st.session_state.get("upstream_step6_done", False),
         "upstream_step6_output": st.session_state.get("upstream_step6_output", ""),
         "quote_step6_done_current": st.session_state.get("quote_step6_done_current", False),
@@ -1746,8 +1752,10 @@ def restore_state_from_disk():
         "_last_doc_type_for_framework_suggest", "current_doc_id", "show_admin",
         "upstream_reference", "quote_current", "quote_history",
         "quote_upload_nonce", "review_upload_nonce", "upstream_upload_nonce",
-        "quote_upload_finalized", "upstream_step6_done", "upstream_step6_output",
-        "quote_step6_done_current", "step7_history", "integration_history",
+        "quote_upload_finalized",
+        "step6a_done", "step6a_output", "step6b_done_current", "step6b_history",
+        "upstream_step6_done", "upstream_step6_output", "quote_step6_done_current",
+        "step7_history", "integration_history",
         "_pending_clear_followup_key", "custom_frameworks",
     ]
     for k in workflow_keys:
@@ -2203,71 +2211,114 @@ def render_openai_error(language: str) -> None:
 
 
 def run_upstream_relevance(language: str, main_doc: str, upstream_doc: str, model_name: str) -> str:
-    """Main reference relevance analysis: identify upstream document errors."""
+    """Upstream reference relevance analysis following the Reference Alignment / Data Inconsistency Error methodology."""
     if language == "zh":
-        sys = "你是一位嚴謹的工程審閱顧問。你要檢查主文件與上游主要參考文件的一致性，不得杜撰。"
+        sys = "你是一位嚴謹的工程審閱顧問，依照『Reference Alignment Error』和『Reference Data Inconsistency Error』方法論進行分析，不得杜撰。"
         user = (
-            "任務：做『Main Reference Relevance Analysis（上游相關性）』。\n"
-            "請只針對下列三類一致性做檢查並輸出：\n"
-            "1) 目的（Purpose）：主文件目的是否與主要參考文件一致或可推導；若不一致，說明差異。\n"
-            "2) 需求（Requirements）：主文件引用/採用的需求是否與主要參考文件一致；列出不一致或缺漏。\n"
-            "3) 結論（Conclusion）：主要參考文件的結論是否與主文件的目的/分析/結論衝突；列出衝突點。\n\n"
-            "輸出格式要求（Markdown）：\n"
-            "- 摘要（3~6點）\n"
-            "- 一致性檢查表（用表格呈現：檢查項 / 主文件要點 / 參考文件要點 / 是否一致 / 說明與建議修正）\n"
-            "- Upstream document errors 清單（逐條，含嚴重度建議）\n\n"
+            "任務：對主文件與上游主要參考文件進行『Reference Relevancy Analysis（參考文件相關性分析）』。\n\n"
+            "【分析步驟一：識別 Reference Alignment Error】\n"
+            "檢查主文件與上游參考文件之間，下列三個面向是否存在衝突：\n"
+            "1) Purpose（目的）：主文件的目的是否與上游參考文件的目的衝突。\n"
+            "2) Requirements（需求）：上游參考文件中引用的需求是否與主文件中的需求衝突。\n"
+            "3) Conclusions（結論）：上游參考文件的結論是否與主文件的結論衝突。\n"
+            "凡發現衝突，即稱為『Reference Alignment Error』。\n\n"
+            "【分析步驟二：識別 Reference Data Inconsistency Error】\n"
+            "找出主文件中所有引自上游參考文件的數據/數值/條款，逐一核對是否與上游參考文件中的原始數據一致。\n"
+            "凡發現不一致，即稱為『Reference Data Inconsistency Error』。\n\n"
+            "【輸出格式（Markdown）】\n"
+            "對每一個已識別的錯誤，請依以下格式輸出：\n"
+            "- (1) Reference Relevancy Error Type：Reference Alignment Error 或 Reference Data Inconsistency Error\n"
+            "- (2) Description：錯誤的詳細描述\n"
+            "- (3) Risk Level：High / Medium / Low\n"
+            "  - High：影響主文件結論\n"
+            "  - Medium：僅影響主文件分析，不影響結論\n"
+            "  - Low：僅影響主文件中的陳述說明\n\n"
+            "最後提供一份摘要表格（錯誤類型 / 描述摘要 / 風險等級）。\n\n"
             f"【主文件】\n{(main_doc or '')[:18000]}\n\n"
-            f"【主要參考文件（Upstream）】\n{(upstream_doc or '')[:18000]}"
+            f"【上游主要參考文件（Upstream Reference）】\n{(upstream_doc or '')[:18000]}"
         )
     else:
-        sys = "You are a rigorous engineering review consultant. Check consistency between the main document and the upstream main reference. Do not hallucinate."
+        sys = "You are a rigorous engineering review consultant. Apply the Reference Alignment Error and Reference Data Inconsistency Error methodology. Do not hallucinate."
         user = (
-            "Task: Main Reference Relevance Analysis (upstream relevance).\n"
-            "Check ONLY these consistency aspects and report findings:\n"
-            "1) Purpose: main purpose consistent with or derivable from upstream purpose.\n"
-            "2) Requirements: requirements used/quoted in main consistent with upstream; list mismatches or omissions.\n"
-            "3) Conclusions: upstream conclusions must not conflict with the purpose/analysis/conclusions of main; list conflicts.\n\n"
-            "Output in Markdown:\n"
-            "- Executive summary (3-6 bullets)\n"
-            "- Consistency check table (Item / Main / Upstream / Consistent? / Notes & Fix)\n"
-            "- Upstream document errors list (with suggested severity)\n\n"
+            "Task: Perform a Reference Relevancy Analysis between the main document and the upstream reference document.\n\n"
+            "Step 1 — Identify Reference Alignment Errors:\n"
+            "Check for conflicts between the main document and the upstream reference in the following three aspects:\n"
+            "1) Purpose: Does the main document's purpose conflict with the upstream reference's purpose?\n"
+            "2) Requirements: Do the requirements quoted in the upstream reference conflict with those in the main document?\n"
+            "3) Conclusions: Do the upstream reference's conclusions conflict with the main document's conclusions?\n"
+            "Any identified conflict is called a 'Reference Alignment Error'.\n\n"
+            "Step 2 — Identify Reference Data Inconsistency Errors:\n"
+            "Find all data/values/clauses in the main document that are quoted from the upstream reference.\n"
+            "Check each for consistency with the original data in the upstream reference.\n"
+            "Any inconsistency is called a 'Reference Data Inconsistency Error'.\n\n"
+            "Output Format (Markdown):\n"
+            "For each identified error, report in this format:\n"
+            "- (1) Reference Relevancy Error Type: Reference Alignment Error OR Reference Data Inconsistency Error\n"
+            "- (2) Description: Detailed description of the error\n"
+            "- (3) Risk Level: High / Medium / Low\n"
+            "  - High: Impacting Main Document Conclusion\n"
+            "  - Medium: Impacting Only Main Document Analysis, Not Conclusion\n"
+            "  - Low: Impacting Only Main Document Statements\n\n"
+            "End with a summary table (Error Type / Description Summary / Risk Level).\n\n"
             f"[Main document]\n{(main_doc or '')[:18000]}\n\n"
-            f"[Upstream main reference]\n{(upstream_doc or '')[:18000]}"
+            f"[Upstream reference document]\n{(upstream_doc or '')[:18000]}"
         )
     return _openai_simple(sys, user, model_name, max_output_tokens=1800)
 
 
 def run_quote_relevance(language: str, main_doc: str, quote_ref_doc: str, model_name: str) -> str:
-    """Quote reference relevance analysis: identify reference inconsistency errors."""
+    """Quote reference relevance analysis following the Reference Alignment / Data Inconsistency Error methodology."""
     if language == "zh":
-        sys = "你是一位嚴謹的文件核對顧問。你要檢查主文件中的引用/引述是否與『引用來源（Quote Reference）』一致，不得杜撰。"
+        sys = "你是一位嚴謹的文件核對顧問，依照『Reference Alignment Error』和『Reference Data Inconsistency Error』方法論進行分析，不得杜撰。"
         user = (
-            "任務：做『Quote Reference Relevance Analysis（引用一致性）』。\n"
-            "請依序完成：\n"
-            "A) 從主文件中找出明顯的『引用/引述/引用條款/引用數值』（可用關鍵字如：according to, as stated in, per, 引用, 依據, 參照, 條款, 規範 等）並列成清單。\n"
-            "B) 逐條核對：每一條引用內容是否能在 Quote Reference 文件中找到對應；若找不到或表述/數值/條件不同，視為『reference inconsistency error』。\n"
-            "C) 對每一條不一致，提供：差異點、可能原因、建議修正（主文件要改、或要補充引用、或要更換引用來源）。\n\n"
-            "輸出格式（Markdown）：\n"
-            "- 摘要\n"
-            "- 引用核對表（表格：主文件引用片段/主張 / Quote Reference 對應段落或關鍵句 / 一致性判定 / 差異與建議修正）\n"
-            "- Reference inconsistency errors（逐條）\n\n"
-            "注意：如果主文件本身沒有明確引用可辨識，請明確說明並改以『可能引用點』做保守核對，不要硬編。\n\n"
+            "任務：對主文件與次要參考文件（Quote Reference）進行『Reference Relevancy Analysis（參考文件相關性分析）』。\n\n"
+            "【分析步驟一：識別 Reference Alignment Error】\n"
+            "檢查主文件與次要參考文件之間，下列三個面向是否存在衝突：\n"
+            "1) Purpose（目的）：主文件的目的是否與次要參考文件的目的衝突。\n"
+            "2) Requirements（需求）：次要參考文件中引用的需求是否與主文件中的需求衝突。\n"
+            "3) Conclusions（結論）：次要參考文件的結論是否與主文件的結論衝突。\n"
+            "凡發現衝突，即稱為『Reference Alignment Error』。\n\n"
+            "【分析步驟二：識別 Reference Data Inconsistency Error】\n"
+            "找出主文件中所有引自次要參考文件的數據/數值/條款（可用關鍵字如：according to, as stated in, per, 引用, 依據, 參照, 條款, 規範 等），逐一核對是否與次要參考文件中的原始數據一致。\n"
+            "凡發現不一致，即稱為『Reference Data Inconsistency Error』。\n\n"
+            "【輸出格式（Markdown）】\n"
+            "對每一個已識別的錯誤，請依以下格式輸出：\n"
+            "- (1) Reference Relevancy Error Type：Reference Alignment Error 或 Reference Data Inconsistency Error\n"
+            "- (2) Description：錯誤的詳細描述\n"
+            "- (3) Risk Level：High / Medium / Low\n"
+            "  - High：影響主文件結論\n"
+            "  - Medium：僅影響主文件分析，不影響結論\n"
+            "  - Low：僅影響主文件中的陳述說明\n\n"
+            "最後提供一份摘要表格（錯誤類型 / 描述摘要 / 風險等級）。\n\n"
+            "注意：如果主文件沒有明確可辨識的引用，請明確說明，並以『可能引用點』做保守核對，不要硬編。\n\n"
             f"【主文件】\n{(main_doc or '')[:18000]}\n\n"
-            f"【Quote Reference 文件】\n{(quote_ref_doc or '')[:18000]}"
+            f"【次要參考文件（Quote Reference）】\n{(quote_ref_doc or '')[:18000]}"
         )
     else:
-        sys = "You are a meticulous cross-checking consultant. Verify that quotes/citations in the main document are consistent with the Quote Reference document. Do not hallucinate."
+        sys = "You are a meticulous cross-checking consultant. Apply the Reference Alignment Error and Reference Data Inconsistency Error methodology. Do not hallucinate."
         user = (
-            "Task: Quote Reference Relevance Analysis (reference inconsistency).\n"
-            "Steps:\n"
-            "A) Identify explicit quotes/citations/claimed requirements/values in the main document (look for 'according to', 'as stated in', 'per', 'reference', etc.). List them.\n"
-            "B) For each item, verify whether it exists in the Quote Reference document with matching meaning/values/conditions. If missing or different, mark as a 'reference inconsistency error'.\n"
-            "C) For each inconsistency, provide the delta, possible cause, and recommended fix (edit main, add citation detail, or change the reference).\n\n"
-            "Output in Markdown:\n"
-            "- Summary\n"
-            "- Quote check table (Main claim / Quote reference evidence / Consistent? / Delta & Fix)\n"
-            "- Reference inconsistency errors list\n\n"
-            "If the main document contains no identifiable quotes/citations, say so and perform a conservative 'possible quote points' check without inventing content.\n\n"
+            "Task: Perform a Reference Relevancy Analysis between the main document and the quote reference document.\n\n"
+            "Step 1 — Identify Reference Alignment Errors:\n"
+            "Check for conflicts between the main document and the quote reference in the following three aspects:\n"
+            "1) Purpose: Does the main document's purpose conflict with the quote reference's purpose?\n"
+            "2) Requirements: Do the requirements quoted in the quote reference conflict with those in the main document?\n"
+            "3) Conclusions: Do the quote reference's conclusions conflict with the main document's conclusions?\n"
+            "Any identified conflict is called a 'Reference Alignment Error'.\n\n"
+            "Step 2 — Identify Reference Data Inconsistency Errors:\n"
+            "Identify all data/values/clauses in the main document that are quoted from the quote reference\n"
+            "(look for keywords such as 'according to', 'as stated in', 'per', 'reference', etc.).\n"
+            "Check each for consistency with the original data in the quote reference document.\n"
+            "Any inconsistency is called a 'Reference Data Inconsistency Error'.\n\n"
+            "Output Format (Markdown):\n"
+            "For each identified error, report in this format:\n"
+            "- (1) Reference Relevancy Error Type: Reference Alignment Error OR Reference Data Inconsistency Error\n"
+            "- (2) Description: Detailed description of the error\n"
+            "- (3) Risk Level: High / Medium / Low\n"
+            "  - High: Impacting Main Document Conclusion\n"
+            "  - Medium: Impacting Only Main Document Analysis, Not Conclusion\n"
+            "  - Low: Impacting Only Main Document Statements\n\n"
+            "End with a summary table (Error Type / Description Summary / Risk Level).\n\n"
+            "Note: If the main document contains no identifiable quotes/citations, state this clearly and perform a conservative 'possible quote points' check without inventing content.\n\n"
             f"[Main document]\n{(main_doc or '')[:18000]}\n\n"
             f"[Quote reference document]\n{(quote_ref_doc or '')[:18000]}"
         )
@@ -3298,6 +3349,21 @@ color: #2c3e50;
 margin: 0;
 }
 
+/* ── Result sub-section headers (5-1, 5-2, 6-1, 7-1, etc.) ────────────── */
+.ef-result-subsection {
+margin: 10px 0 4px 24px;
+padding: 5px 10px 5px 14px;
+border-left: 3px solid rgba(192, 57, 43, 0.35);
+border-radius: 0 6px 6px 0;
+background: rgba(192, 57, 43, 0.03);
+}
+.ef-result-subsection-title {
+font-size: 0.92rem;
+font-weight: 600;
+color: #2c3e50;
+margin: 0;
+}
+
 /* ── Strong "RESULTS" banner ────────────────────────────────────────────── */
 .ef-results-banner {
 padding: 14px 16px;
@@ -3541,16 +3607,15 @@ def _reset_whole_document():
     st.session_state["upstream_upload_nonce"] = int(st.session_state.get("upstream_upload_nonce", 0)) + 1
 
     st.session_state.quote_upload_finalized = False
+    # Clear global Step 6 state
+    st.session_state.step6a_done = False
+    st.session_state.step6a_output = ""
+    st.session_state.step6b_done_current = False
+    st.session_state.step6b_history = []
+    # Legacy keys (kept for safety in case old state files reference them)
     st.session_state.upstream_step6_done = False
     st.session_state.upstream_step6_output = ""
     st.session_state.quote_step6_done_current = False
-    # Clear per-framework Step 6 state
-    for _rfk in list(st.session_state.get("framework_states", {}).keys()):
-        _rfs = st.session_state.framework_states.get(_rfk, {})
-        _rfs["upstream_step6_done"] = False
-        _rfs["upstream_step6_output"] = ""
-        _rfs["quote_history"] = []
-        _rfs["quote_step6_done_current"] = False
 
     st.session_state.step7_history = []
 
@@ -3653,6 +3718,12 @@ def main():
         ("quote_history", []),                # list of analyzed quote relevance records
         ("quote_upload_nonce", 0),            # reset uploader key to allow unlimited quote ref uploads
         ("quote_upload_finalized", False),    # user confirmed no more quote refs will be uploaded
+        # Global Step 6 state (single analysis, not per-framework)
+        ("step6a_done", False),
+        ("step6a_output", ""),
+        ("step6b_done_current", False),
+        ("step6b_history", []),
+        # Legacy keys kept for safety
         ("upstream_step6_done", False),
         ("upstream_step6_output", ""),
         ("quote_step6_done_current", False),
@@ -4035,11 +4106,6 @@ def main():
         ("download_used", False),
         ("step5_done", False),
         ("step5_output", ""),
-        # Step 6 per-framework state (moved out of global session_state)
-        ("upstream_step6_done", False),
-        ("upstream_step6_output", ""),
-        ("quote_history", []),
-        ("quote_step6_done_current", False),
         # Step 7
         ("step7_done", False),
         ("step7_output", ""),
@@ -4432,9 +4498,7 @@ def main():
                 "uploaded_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             }
             st.session_state.quote_step6_done_current = False
-            # Reset per-framework quote_step6_done_current so all frameworks can re-run
-            for _qfk in list(st.session_state.get("framework_states", {}).keys()):
-                st.session_state.framework_states[_qfk]["quote_step6_done_current"] = False
+            st.session_state.step6b_done_current = False
             save_state_to_disk()
             st.rerun()
 
@@ -4448,9 +4512,7 @@ def main():
             # Allow uploading the next quote reference by switching the uploader widget key.
             st.session_state.quote_current = None
             st.session_state.quote_step6_done_current = False
-            # Reset per-framework quote_step6_done_current
-            for _qfk in list(st.session_state.get("framework_states", {}).keys()):
-                st.session_state.framework_states[_qfk]["quote_step6_done_current"] = False
+            st.session_state.step6b_done_current = False
             st.session_state.quote_upload_nonce = int(st.session_state.get("quote_upload_nonce", 0)) + 1
             # Best-effort clear for the prior uploader widget state
             try:
@@ -4843,13 +4905,15 @@ button[title="fw-remove"] p {
 
     st.markdown("---")
 
-    # Step 6: relevance analysis — per-framework sequential buttons
+    # Step 6: reference relevance analysis — single button per sub-step (not per framework)
     st.subheader("Step 6: Reference Relevance Analysis" if lang == "en" else zh("步驟六：參考文件相關性分析", "步骤六：参考文件相关性分析"))
     st.caption(
-        "All Step 5 analyses must complete before Step 6 unlocks. Run upstream and quote relevance for each framework in order." if lang == "en"
+        "All Step 5 analyses must complete before Step 6 unlocks. "
+        "Step 6-A analyzes the upstream reference; Step 6-B analyzes the quote reference. "
+        "Each runs once (single analysis, not per framework)." if lang == "en"
         else zh(
-            "步驟五所有框架都完成後，步驟六才會開放。請依序對每個框架執行上游及引用相關性分析。",
-            "步骤五所有框架都完成后，步骤六才会开放。请依序对每个框架执行上游及引用相关性分析。",
+            "步驟五所有框架都完成後，步驟六才會開放。Step 6-A 分析上游主要參考文件；Step 6-B 分析次要引用參考文件。每項各執行一次（非逐框架）。",
+            "步骤五所有框架都完成后，步骤六才会开放。Step 6-A 分析上游主要参考文件；Step 6-B 分析次要引用参考文件。每项各执行一次（非逐框架）。",
         )
     )
 
@@ -4862,132 +4926,100 @@ button[title="fw-remove"] p {
             else zh("請先完成所有步驟五分析，再執行步驟六。", "请先完成所有步骤五分析，再执行步骤六。")
         )
 
-    # ── Step 6-A: Upstream Relevance (per framework) ─────────────────────────
+    # ── Step 6-A: Upstream Relevance (single global analysis) ────────────────
     if upstream_exists:
         st.markdown(
             "**Step 6-A: Upstream Reference Relevance**" if lang == "en"
             else "**步驟六-A：上游主要參考文件相關性**"
         )
-        if upstream_exists and step5_all_done:
-            st.info(
-                "Upstream relevance runs once per framework after Step 5 is complete." if lang == "en"
-                else zh("上游相關性分析在步驟五完成後，每個框架執行一次。", "上游相关性分析在步骤五完成后，每个框架执行一次。")
+        _s6a_done = bool(st.session_state.get("step6a_done", False))
+        _s6a_col_btn, _s6a_col_status = st.columns([4, 1])
+        with _s6a_col_btn:
+            _s6a_run = st.button(
+                "Run Upstream Reference Relevance" if lang == "en"
+                else zh("執行上游參考文件相關性分析", "执行上游参考文件相关性分析"),
+                key="run_step6a_btn",
+                disabled=(not step5_all_done) or not upstream_exists or _s6a_done,
             )
-        for _s6ai, _s6a_fw_key in enumerate(selected_framework_keys):
-            _s6a_fw_label = key_to_label.get(_s6a_fw_key, _s6a_fw_key)
-            _s6a_fw_state = framework_states.get(_s6a_fw_key, {})
-            _s6a_done = bool(_s6a_fw_state.get("upstream_step6_done", False))
-            _s6a_prev_done = (
-                _s6ai == 0
-                or bool(framework_states.get(selected_framework_keys[_s6ai - 1], {}).get("upstream_step6_done", False))
+        with _s6a_col_status:
+            if _s6a_done:
+                st.success("✓ Done" if lang == "en" else "✓ 完成")
+        if _s6a_run:
+            banner = show_running_banner(
+                "Analyzing upstream reference relevance..." if lang == "en"
+                else zh("上游參考文件相關性分析中...", "上游参考文件相关性分析中...")
             )
-            _s6a_col_btn, _s6a_col_status = st.columns([4, 1])
-            with _s6a_col_btn:
-                _s6a_run = st.button(
-                    f"Run upstream relevance — {_s6a_fw_label}" if lang == "en"
-                    else zh(f"執行上游相關性 — {_s6a_fw_label}", f"执行上游相关性 — {_s6a_fw_label}"),
-                    key=f"run_upstream_{_s6a_fw_key}_btn",
-                    disabled=(not step5_all_done) or not upstream_exists or _s6a_done or not _s6a_prev_done,
-                )
-            with _s6a_col_status:
-                if _s6a_done:
-                    st.success("✓ Done" if lang == "en" else "✓ 完成")
-            if _s6a_run:
-                banner = show_running_banner(
-                    f"Analyzing upstream relevance for {_s6a_fw_label}..." if lang == "en"
-                    else zh(f"上游相關性分析中（{_s6a_fw_label}）...", f"上游相关性分析中（{_s6a_fw_label}）...")
-                )
-                try:
-                    with st.spinner(" "):
-                        _up_text = st.session_state.upstream_reference.get("text", "") if st.session_state.upstream_reference else ""
-                        _s6a_out = run_upstream_relevance(lang, st.session_state.last_doc_text or "", _up_text, model_name)
-                finally:
-                    banner.empty()
-                if is_openai_error_output(_s6a_out):
-                    render_openai_error(lang)
-                    save_state_to_disk()
-                    st.stop()
-                framework_states[_s6a_fw_key]["upstream_step6_done"] = True
-                framework_states[_s6a_fw_key]["upstream_step6_output"] = clean_report_text(_s6a_out)
+            try:
+                with st.spinner(" "):
+                    _up_text = st.session_state.upstream_reference.get("text", "") if st.session_state.upstream_reference else ""
+                    _s6a_out = run_upstream_relevance(lang, st.session_state.last_doc_text or "", _up_text, model_name)
+            finally:
+                banner.empty()
+            if is_openai_error_output(_s6a_out):
+                render_openai_error(lang)
                 save_state_to_disk()
-                st.success(
-                    f"Upstream relevance completed for {_s6a_fw_label}." if lang == "en"
-                    else zh(f"{_s6a_fw_label} 上游相關性分析完成。", f"{_s6a_fw_label} 上游相关性分析完成。")
-                )
-                st.rerun()
+                st.stop()
+            st.session_state.step6a_done = True
+            st.session_state.step6a_output = clean_report_text(_s6a_out)
+            save_state_to_disk()
+            st.success("Upstream reference relevance analysis complete." if lang == "en" else zh("上游參考文件相關性分析完成。", "上游参考文件相关性分析完成。"))
+            st.rerun()
 
-    # ── Step 6-B: Quote Relevance (per framework) ────────────────────────────
+    # ── Step 6-B: Quote Relevance (single global analysis, supports multiple quote uploads) ──
     if quote_exists:
         st.markdown(
             "**Step 6-B: Quote Reference Relevance**" if lang == "en"
             else "**步驟六-B：次要參考文件引用一致性**"
         )
-        if quote_exists and step5_all_done:
-            _all_upstream_done = (not upstream_exists) or all(
-                bool(framework_states.get(k, {}).get("upstream_step6_done", False))
-                for k in selected_framework_keys
+        _s6b_upstream_ok = (not upstream_exists) or bool(st.session_state.get("step6a_done", False))
+        if upstream_exists and not _s6b_upstream_ok:
+            st.info(
+                "Complete Step 6-A first before running Step 6-B." if lang == "en"
+                else zh("請先完成步驟六-A，再執行步驟六-B。", "请先完成步骤六-A，再执行步骤六-B。")
             )
-            if upstream_exists and not _all_upstream_done:
-                st.info(
-                    "Complete all upstream relevance analyses first before running quote relevance." if lang == "en"
-                    else zh("請先完成所有框架的上游相關性分析，再執行引用一致性分析。", "请先完成所有框架的上游相关性分析，再执行引用一致性分析。")
-                )
-        for _s6bi, _s6b_fw_key in enumerate(selected_framework_keys):
-            _s6b_fw_label = key_to_label.get(_s6b_fw_key, _s6b_fw_key)
-            _s6b_fw_state = framework_states.get(_s6b_fw_key, {})
-            _s6b_done = bool(_s6b_fw_state.get("quote_step6_done_current", False))
-            _s6b_upstream_ok = (not upstream_exists) or bool(_s6b_fw_state.get("upstream_step6_done", False))
-            _s6b_prev_done = (
-                _s6bi == 0
-                or bool(framework_states.get(selected_framework_keys[_s6bi - 1], {}).get("quote_step6_done_current", False))
+        _s6b_done = bool(st.session_state.get("step6b_done_current", False))
+        _s6b_col_btn, _s6b_col_status = st.columns([4, 1])
+        with _s6b_col_btn:
+            _s6b_run = st.button(
+                "Run Quote Reference Relevance" if lang == "en"
+                else zh("執行次要參考文件引用一致性分析", "执行次要参考文件引用一致性分析"),
+                key="run_step6b_btn",
+                disabled=(not step5_all_done) or not quote_exists or _s6b_done or not _s6b_upstream_ok,
             )
-            _s6b_col_btn, _s6b_col_status = st.columns([4, 1])
-            with _s6b_col_btn:
-                _s6b_run = st.button(
-                    f"Run quote relevance — {_s6b_fw_label}" if lang == "en"
-                    else zh(f"執行引用一致性 — {_s6b_fw_label}", f"执行引用一致性 — {_s6b_fw_label}"),
-                    key=f"run_quote_{_s6b_fw_key}_btn",
-                    disabled=(not step5_all_done) or not quote_exists or _s6b_done or not _s6b_upstream_ok or not _s6b_prev_done,
-                )
-            with _s6b_col_status:
-                if _s6b_done:
-                    st.success("✓ Done" if lang == "en" else "✓ 完成")
-            if _s6b_run:
-                banner = show_running_banner(
-                    f"Analyzing quote relevance for {_s6b_fw_label}..." if lang == "en"
-                    else zh(f"引用一致性分析中（{_s6b_fw_label}）...", f"引用一致性分析中（{_s6b_fw_label}）...")
-                )
-                try:
-                    with st.spinner(" "):
-                        _q_text = st.session_state.quote_current.get("text", "") if st.session_state.quote_current else ""
-                        _s6b_out = run_quote_relevance(lang, st.session_state.last_doc_text or "", _q_text, model_name)
-                finally:
-                    banner.empty()
-                if is_openai_error_output(_s6b_out):
-                    render_openai_error(lang)
-                    save_state_to_disk()
-                    st.stop()
-                _q_rec = {
-                    "name": st.session_state.quote_current.get("name", "(unknown)"),
-                    "ext": st.session_state.quote_current.get("ext", ""),
-                    "uploaded_at": st.session_state.quote_current.get("uploaded_at", ""),
-                    "analyzed_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "output": clean_report_text(_s6b_out),
-                }
-                framework_states[_s6b_fw_key]["quote_history"] = (
-                    (framework_states[_s6b_fw_key].get("quote_history") or []) + [_q_rec]
-                )
-                framework_states[_s6b_fw_key]["quote_step6_done_current"] = True
+        with _s6b_col_status:
+            if _s6b_done:
+                st.success("✓ Done" if lang == "en" else "✓ 完成")
+        if _s6b_run:
+            banner = show_running_banner(
+                "Analyzing quote reference relevance..." if lang == "en"
+                else zh("次要參考文件引用一致性分析中...", "次要参考文件引用一致性分析中...")
+            )
+            try:
+                with st.spinner(" "):
+                    _q_text = st.session_state.quote_current.get("text", "") if st.session_state.quote_current else ""
+                    _s6b_out = run_quote_relevance(lang, st.session_state.last_doc_text or "", _q_text, model_name)
+            finally:
+                banner.empty()
+            if is_openai_error_output(_s6b_out):
+                render_openai_error(lang)
                 save_state_to_disk()
-                st.success(
-                    f"Quote relevance completed for {_s6b_fw_label}." if lang == "en"
-                    else zh(f"{_s6b_fw_label} 引用一致性分析完成。", f"{_s6b_fw_label} 引用一致性分析完成。")
-                )
-                st.rerun()
+                st.stop()
+            _q_rec = {
+                "name": st.session_state.quote_current.get("name", "(unknown)"),
+                "ext": st.session_state.quote_current.get("ext", ""),
+                "uploaded_at": st.session_state.quote_current.get("uploaded_at", ""),
+                "analyzed_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "output": clean_report_text(_s6b_out),
+            }
+            st.session_state.step6b_history = (st.session_state.get("step6b_history") or []) + [_q_rec]
+            st.session_state.step6b_done_current = True
+            save_state_to_disk()
+            st.success("Quote reference relevance analysis complete." if lang == "en" else zh("次要參考文件引用一致性分析完成。", "次要参考文件引用一致性分析完成。"))
+            st.rerun()
 
-    # Convenience aliases used by Step 7 / Step 8 gates (first framework's values)
-    upstream_done = bool(framework_states.get(selected_framework_keys[0], {}).get("upstream_step6_done", False)) if selected_framework_keys else False
-    quote_done_current = bool(framework_states.get(selected_framework_keys[0], {}).get("quote_step6_done_current", False)) if selected_framework_keys else False
+    # Convenience aliases used by Step 7 / Step 8 gates
+    upstream_done = bool(st.session_state.get("step6a_done", False))
+    quote_done_current = bool(st.session_state.get("step6b_done_current", False))
 
     st.markdown("---")
 
@@ -4998,19 +5030,22 @@ button[title="fw-remove"] p {
         else zh("整合步驟五與步驟六所有分析結果，輸出正式完整報告（建議以表格呈現重點）。", "整合步骤五与步骤六所有分析结果，输出正式完整报告（建议以表格呈现重点）。")
     )
 
+    # Global Step 6 outputs (used by all Step 7 framework prompts)
+    _s7_global_upstream_output = st.session_state.get("step6a_output", "") if upstream_done else ""
+    _s7_global_quote_hist = st.session_state.get("step6b_history") or []
+
     # Step 7: Integration analysis — per-framework sequential buttons
     for _s7i, _s7_fw_key in enumerate(selected_framework_keys):
         _s7_fw_label = key_to_label.get(_s7_fw_key, _s7_fw_key)
         _s7_fw_state = framework_states.get(_s7_fw_key, {})
 
-        _s7_quote_hist = _s7_fw_state.get("quote_history") or []
-        _s7_current_quote_count = len(_s7_quote_hist)
+        _s7_current_quote_count = len(_s7_global_quote_hist)
         _s7_last_quote_count = int(_s7_fw_state.get("step7_quote_count", 0) or 0)
         _s7_done = bool(_s7_fw_state.get("step7_done", False))
         _s7_needs_refresh = _s7_current_quote_count != _s7_last_quote_count
 
-        _s7_upstream_ok = (not upstream_exists) or bool(_s7_fw_state.get("upstream_step6_done", False))
-        _s7_quote_ok = (not quote_exists) or bool(_s7_fw_state.get("quote_step6_done_current", False))
+        _s7_upstream_ok = (not upstream_exists) or upstream_done
+        _s7_quote_ok = (not quote_exists) or quote_done_current
         _s7_prev_done = (
             _s7i == 0
             or bool(framework_states.get(selected_framework_keys[_s7i - 1], {}).get("step7_done", False))
@@ -5039,11 +5074,7 @@ button[title="fw-remove"] p {
 
         if _s7_run:
             _s7_integration_history = _s7_fw_state.get("integration_history") or []
-            _s7_upstream_snapshot = (
-                _s7_fw_state.get("upstream_step6_output", "")
-                if _s7_fw_state.get("upstream_step6_done") else ""
-            )
-            _s7_total_needed = len(_s7_quote_hist) if len(_s7_quote_hist) > 0 else 1
+            _s7_total_needed = len(_s7_global_quote_hist) if len(_s7_global_quote_hist) > 0 else 1
             _s7_start_idx = len(_s7_integration_history)
             if _s7_start_idx >= _s7_total_needed:
                 st.info("Step 7 is already up to date." if lang == "en" else zh("步驟七已是最新狀態。", "步骤七已是最新状态。"))
@@ -5064,14 +5095,14 @@ button[title="fw-remove"] p {
                             parts.append("")
                             parts.append("=====（步驟五）主文件零錯誤框架分析結果=====")
                             parts.append(_s7_fw_state.get("step5_output", ""))
-                            if st.session_state.get("upstream_reference"):
+                            if upstream_exists and _s7_global_upstream_output:
                                 parts.append("")
                                 parts.append("=====（步驟六-A）上游主要參考文件相關性分析（Upstream relevance）=====")
-                                parts.append(_s7_upstream_snapshot or "（尚未執行上游相關性分析）")
+                                parts.append(_s7_global_upstream_output)
                             parts.append("")
                             parts.append("=====（步驟六-B）次要參考文件引用一致性分析（Quote relevance）=====")
-                            if len(_s7_quote_hist) > 0:
-                                h = _s7_quote_hist[item_idx]
+                            if len(_s7_global_quote_hist) > 0:
+                                h = _s7_global_quote_hist[item_idx]
                                 parts.append(f"--- Quote reference {item_idx+1}: {h.get('name','(unknown)')} ---")
                                 parts.append(h.get("output", ""))
                             else:
@@ -5092,14 +5123,14 @@ button[title="fw-remove"] p {
                             parts.append("")
                             parts.append("===== (Step 5) Main document analysis result =====")
                             parts.append(_s7_fw_state.get("step5_output", ""))
-                            if st.session_state.get("upstream_reference"):
+                            if upstream_exists and _s7_global_upstream_output:
                                 parts.append("")
-                                parts.append("===== (Step 6-A) Upstream relevance =====")
-                                parts.append(_s7_upstream_snapshot or "(Upstream relevance not run yet)")
+                                parts.append("===== (Step 6-A) Upstream reference relevance =====")
+                                parts.append(_s7_global_upstream_output)
                             parts.append("")
-                            parts.append("===== (Step 6-B) Quote relevance =====")
-                            if len(_s7_quote_hist) > 0:
-                                h = _s7_quote_hist[item_idx]
+                            parts.append("===== (Step 6-B) Quote reference relevance =====")
+                            if len(_s7_global_quote_hist) > 0:
+                                h = _s7_global_quote_hist[item_idx]
                                 parts.append(f"--- Quote reference {item_idx+1}: {h.get('name','(unknown)')} ---")
                                 parts.append(h.get("output", ""))
                             else:
@@ -5121,7 +5152,7 @@ button[title="fw-remove"] p {
                             st.stop()
                         _s7_entry = {
                             "index": item_idx + 1,
-                            "quote_name": (_s7_quote_hist[item_idx].get("name", "(unknown)") if len(_s7_quote_hist) > 0 else "(no quote reference)"),
+                            "quote_name": (_s7_global_quote_hist[item_idx].get("name", "(unknown)") if len(_s7_global_quote_hist) > 0 else "(no quote reference)"),
                             "generated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                             "output": clean_report_text(final_output),
                         }
@@ -5156,9 +5187,9 @@ button[title="fw-remove"] p {
 
     step8_done = bool(current_state.get("step8_done", False))
     quote_finalized = bool(st.session_state.get("quote_upload_finalized", False))
-    # Use first framework's per-framework data for Step 8 gate
+    # Use global step6b_history for quote count (Step 6 is now a single global analysis)
+    current_quote_count = len(st.session_state.get("step6b_history") or [])
     _s8_first_fw_state = framework_states.get(selected_framework_keys[0], current_state) if selected_framework_keys else current_state
-    current_quote_count = len(_s8_first_fw_state.get("quote_history") or [])
     step7_quote_count = int(_s8_first_fw_state.get("step7_quote_count", 0) or 0)
 
     # Step 8 gate: user must confirm no more quote references (this also locks Step 3-2 reset + Step 7).
@@ -5317,75 +5348,95 @@ button[title="fw-remove"] p {
         unsafe_allow_html=True,
     )
 
-    # ── Step 5 results: one expander per framework ──────────────────────────
-    for _r5_fw_key in selected_framework_keys:
+    # ── Step 5 results: Main Analysis (primary heading + sub-headings per framework) ──
+    st.subheader("Step 5 — Main Analysis" if lang == "en" else zh("Step 5 — 主文件分析", "Step 5 — 主文件分析"))
+    for _r5i, _r5_fw_key in enumerate(selected_framework_keys, start=1):
         _r5_fw_label = key_to_label.get(_r5_fw_key, _r5_fw_key)
         _r5_fw_state = framework_states.get(_r5_fw_key, {})
-        render_step_block(
-            f"Step 5 — {_r5_fw_label}" if lang == "en" else f"Step 5 — {_r5_fw_label}",
-            _r5_fw_state.get("step5_output", ""),
-            expanded=False,
+        _r5_output = _r5_fw_state.get("step5_output", "")
+        _r5_sub_title = (
+            f"Step 5-{_r5i} — {_r5_fw_label}" if lang == "en"
+            else f"Step 5-{_r5i} — {_r5_fw_label}"
         )
-
-    # ── Step 6-A results: one expander per framework ─────────────────────────
-    if st.session_state.get("upstream_reference"):
-        for _r6a_fw_key in selected_framework_keys:
-            _r6a_fw_label = key_to_label.get(_r6a_fw_key, _r6a_fw_key)
-            _r6a_fw_state = framework_states.get(_r6a_fw_key, {})
-            render_step_block(
-                f"Step 6-A — Upstream Relevance — {_r6a_fw_label}" if lang == "en"
-                else f"Step 6-A — 上游相關性 — {_r6a_fw_label}",
-                _r6a_fw_state.get("upstream_step6_output", ""),
-                expanded=False,
-            )
-
-    # ── Step 6-B results: one expander per framework (quote history nested) ──
-    _any_quote_history = any(
-        bool(framework_states.get(k, {}).get("quote_history"))
-        for k in selected_framework_keys
-    )
-    if _any_quote_history:
-        for _r6b_fw_key in selected_framework_keys:
-            _r6b_fw_label = key_to_label.get(_r6b_fw_key, _r6b_fw_key)
-            _r6b_fw_state = framework_states.get(_r6b_fw_key, {})
-            _r6b_quote_hist = _r6b_fw_state.get("quote_history") or []
-            if _r6b_quote_hist:
-                st.subheader(
-                    f"Step 6-B — Quote Relevance — {_r6b_fw_label}" if lang == "en"
-                    else zh(f"Step 6-B — 引用一致性 — {_r6b_fw_label}", f"Step 6-B — 引用一致性 — {_r6b_fw_label}")
-                )
-                with st.expander("Show / Hide" if lang == "en" else zh("展開 / 收起", "展开 / 收起"), expanded=False):
-                    for i, h in enumerate(_r6b_quote_hist, start=1):
-                        qname = h.get("name") or f"Quote reference #{i}"
-                        analyzed_at = h.get("analyzed_at") or ""
-                        out = h.get("output") or ""
-                        label = f"{i}. {qname}" + (f" — {analyzed_at}" if analyzed_at else "")
-                        with st.expander(label, expanded=False):
-                            if out:
-                                st.markdown(out)
-                            else:
-                                st.info("No content yet." if lang == "en" else zh("尚無內容。", "暂无内容。"))
-
-    # ── Step 7 results: one section per framework ────────────────────────────
-    for _r7_fw_key in selected_framework_keys:
-        _r7_fw_label = key_to_label.get(_r7_fw_key, _r7_fw_key)
-        _r7_fw_state = framework_states.get(_r7_fw_key, {})
-        _r7_int_history = _r7_fw_state.get("integration_history") or []
-        st.subheader(
-            f"Step 7 — Integration Analysis — {_r7_fw_label}" if lang == "en"
-            else zh(f"Step 7 — 整合分析 — {_r7_fw_label}", f"Step 7 — 整合分析 — {_r7_fw_label}")
+        st.markdown(
+            f'<div class="ef-result-subsection"><p class="ef-result-subsection-title">{_r5_sub_title}</p></div>',
+            unsafe_allow_html=True,
         )
         with st.expander("Show / Hide" if lang == "en" else zh("展開 / 收起", "展开 / 收起"), expanded=False):
-            if _r7_int_history:
-                for e in _r7_int_history:
-                    _r7_label = f"{e.get('index','')}. {e.get('quote_name','')} — {e.get('generated_at','')}".strip()
-                    with st.expander(_r7_label if _r7_label else "(integration)", expanded=False):
-                        st.markdown(e.get("output", ""))
+            if _r5_output:
+                st.markdown(_r5_output)
             else:
-                st.markdown("_No Step 7 output yet._" if lang == "en" else "_尚無步驟七輸出。_")
-# Step 8 (NEW)
+                st.info("No content yet." if lang == "en" else zh("尚無內容。", "暂无内容。"))
 
+    # ── Step 6 results: Reference Relevance Analysis (primary heading + sub-headings) ──
+    _r6a_output = st.session_state.get("step6a_output", "")
+    _r6b_hist = st.session_state.get("step6b_history") or []
+    _show_step6 = (st.session_state.get("upstream_reference") and _r6a_output) or _r6b_hist
+    if _show_step6:
+        st.subheader(
+            "Step 6 — Reference Relevance Analysis" if lang == "en"
+            else zh("Step 6 — 參考文件相關性分析", "Step 6 — 参考文件相关性分析")
+        )
+        # 6-1: Upstream
+        if st.session_state.get("upstream_reference") and _r6a_output:
+            _r6a_sub_title = "Step 6-1 — Upstream Reference Relevance" if lang == "en" else zh("Step 6-1 — 上游主要參考文件相關性", "Step 6-1 — 上游主要参考文件相关性")
+            st.markdown(
+                f'<div class="ef-result-subsection"><p class="ef-result-subsection-title">{_r6a_sub_title}</p></div>',
+                unsafe_allow_html=True,
+            )
+            with st.expander("Show / Hide" if lang == "en" else zh("展開 / 收起", "展开 / 收起"), expanded=False):
+                st.markdown(_r6a_output)
+        # 6-2: Quote
+        if _r6b_hist:
+            _r6b_sub_title = "Step 6-2 — Quote Reference Relevance" if lang == "en" else zh("Step 6-2 — 次要參考文件引用一致性", "Step 6-2 — 次要参考文件引用一致性")
+            st.markdown(
+                f'<div class="ef-result-subsection"><p class="ef-result-subsection-title">{_r6b_sub_title}</p></div>',
+                unsafe_allow_html=True,
+            )
+            with st.expander("Show / Hide" if lang == "en" else zh("展開 / 收起", "展开 / 收起"), expanded=False):
+                for i, h in enumerate(_r6b_hist, start=1):
+                    qname = h.get("name") or f"Quote reference #{i}"
+                    analyzed_at = h.get("analyzed_at") or ""
+                    out = h.get("output") or ""
+                    label = f"{i}. {qname}" + (f" — {analyzed_at}" if analyzed_at else "")
+                    with st.expander(label, expanded=False):
+                        if out:
+                            st.markdown(out)
+                        else:
+                            st.info("No content yet." if lang == "en" else zh("尚無內容。", "暂无内容。"))
 
+    # ── Step 7 results: Integration Analysis (primary heading + sub-headings per framework) ──
+    _any_step7 = any(
+        bool(framework_states.get(k, {}).get("integration_history"))
+        for k in selected_framework_keys
+    )
+    if _any_step7 or selected_framework_keys:
+        st.subheader(
+            "Step 7 — Integration Analysis" if lang == "en"
+            else zh("Step 7 — 整合分析", "Step 7 — 整合分析")
+        )
+        for _r7i, _r7_fw_key in enumerate(selected_framework_keys, start=1):
+            _r7_fw_label = key_to_label.get(_r7_fw_key, _r7_fw_key)
+            _r7_fw_state = framework_states.get(_r7_fw_key, {})
+            _r7_int_history = _r7_fw_state.get("integration_history") or []
+            _r7_sub_title = (
+                f"Step 7-{_r7i} — {_r7_fw_label}" if lang == "en"
+                else f"Step 7-{_r7i} — {_r7_fw_label}"
+            )
+            st.markdown(
+                f'<div class="ef-result-subsection"><p class="ef-result-subsection-title">{_r7_sub_title}</p></div>',
+                unsafe_allow_html=True,
+            )
+            with st.expander("Show / Hide" if lang == "en" else zh("展開 / 收起", "展开 / 收起"), expanded=False):
+                if _r7_int_history:
+                    for e in _r7_int_history:
+                        _r7_label = f"{e.get('index','')}. {e.get('quote_name','')} — {e.get('generated_at','')}".strip()
+                        with st.expander(_r7_label if _r7_label else "(integration)", expanded=False):
+                            st.markdown(e.get("output", ""))
+                else:
+                    st.info("No content yet." if lang == "en" else zh("尚無內容。", "暂无内容。"))
+
+    # ── Step 8 results ────────────────────────────────────────────────────────
     if current_state.get("step8_done"):
         render_step_block(
             "Step 8 — Final Analysis (Final Deliverable)" if lang == "en" else zh("Step 8 — 最終分析（最終交付）", "Step 8 — 最终分析（最终交付）"),
