@@ -4039,7 +4039,9 @@ def _reset_whole_document():
     st.session_state.upstream_reference = None
     st.session_state.quote_current = None
     st.session_state.quote_history = []
-    st.session_state.quote_upload_nonce = 0
+    # Do NOT reset nonce to 0; always bump so uploader widget keys never reuse.
+    # Reusing the key can cause the frontend to keep showing the previous file.
+    # (We bump quote_upload_nonce again below.)
 
     # Also reset selection states so Step 2/Step 4 show "None" / empty after reset
     st.session_state.selected_framework_key = None
@@ -5151,6 +5153,14 @@ def main():
                 seen.add(_k)
                 selected_list.append(_k)
 
+        # Allow mid-flow changes: frameworks already analyzed in Step 5 are locked,
+        # but not-yet-analyzed frameworks + custom uploads remain editable until
+        # ALL selected frameworks finish Step 5.
+        analyzed_keys = {
+            k for k in selected_list
+            if bool((framework_states.get(k) or {}).get("step5_done", False))
+        }
+
         if selected_list:
             # Targeted CSS: compact remove button + card-like chip per framework
             st.markdown("""
@@ -5196,7 +5206,7 @@ button[title="fw-remove"] p {
                             key=f"remove_fw_{k}",
                             on_click=_step4_remove_fw,
                             args=(k,),
-                            disabled=step5_done,
+                            disabled=(k in analyzed_keys) or step5_all_done,
                             use_container_width=True,
                             help="fw-remove",
                         )
@@ -5213,7 +5223,7 @@ button[title="fw-remove"] p {
                 options=[sentinel] + available_for_add,
                 key="step4_add_framework",
                 on_change=_step4_add_fw,
-                disabled=step5_done,
+                disabled=step5_all_done,
                 format_func=lambda v: "No options to select" if v == sentinel else key_to_label.get(v, v),
             )
         else:
@@ -5227,6 +5237,7 @@ button[title="fw-remove"] p {
 
         # ── Custom framework upload ──────────────────────────────────────────
         st.markdown("---")
+        st.markdown("<div class='ef-custom-fw-scope'>", unsafe_allow_html=True)
         st.markdown(
             "**Upload custom framework** (txt / docx / pdf — no images)"
             if lang == "en" else
@@ -5258,17 +5269,9 @@ button[title="fw-remove"] p {
             st.markdown("""
 <style>
 /* Hide native × remove button inside the file uploader file list */
-[data-testid="stFileUploaderFile"] button,
-[data-testid="stFileUploaderDeleteBtn"] {
+.ef-custom-fw-scope [data-testid="stFileUploaderFile"] button,
+.ef-custom-fw-scope [data-testid="stFileUploaderDeleteBtn"] {
     display: none !important;
-}
-/* Shrink uploaded-filename rows to caption size + muted colour */
-[data-testid="stFileUploaderFile"],
-[data-testid="stFileUploaderFile"] span,
-[data-testid="stFileUploaderFile"] small,
-[data-testid="stFileUploaderFile"] p {
-    font-size: 0.75rem !important;
-    color: rgba(49, 51, 63, 0.6) !important;
 }
 </style>""", unsafe_allow_html=True)
             # Show loaded files as read-only rows (no delete button here —
@@ -5291,12 +5294,12 @@ button[title="fw-remove"] p {
             ("新增更多框架檔案" if _loaded_custom else "上傳框架檔案"),
             type=["txt", "docx", "pdf"],
             accept_multiple_files=True,
-            disabled=step5_done,
+            disabled=step5_all_done,
             key=f"custom_fw_uploader_{_custom_upload_nonce}",
             help="Accepts .txt, .docx, .pdf only. Images are not supported." if lang == "en"
                  else "僅接受 .txt、.docx、.pdf，不支援圖片。",
         )
-        if uploaded_custom_files and not step5_done:
+        if uploaded_custom_files and not step5_all_done:
             _custom_fws_now = dict(st.session_state.get("custom_frameworks") or {})
             _sel_keys_now = list(st.session_state.get("selected_framework_keys") or [])
             _already_sources = {v.get("source_file") for v in _custom_fws_now.values()}
@@ -5328,6 +5331,18 @@ button[title="fw-remove"] p {
                 st.session_state["_step4_auto_expand"] = True
                 save_state_to_disk()
                 st.rerun()
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        if analyzed_keys and (not step5_all_done):
+            st.info(
+                "Some frameworks are already analyzed and are now locked. You can still remove or add any frameworks that have not been analyzed yet, and you can upload additional custom frameworks before proceeding."
+                if lang == "en"
+                else zh(
+                    "部分框架已完成分析，這些項目已鎖定。您仍可刪除或新增尚未分析的框架，並可在進入下一步前上傳更多自訂框架。",
+                    "部分框架已完成分析，这些项目已锁定。您仍可删除或新增尚未分析的框架，并可在进入下一步前上传更多自订框架。",
+                )
+            )
 
         # Sync selected_key from current state (callbacks may have updated it)
         final_selected = list(st.session_state.get("selected_framework_keys") or [])
@@ -5926,26 +5941,14 @@ button[title="fw-remove"] p {
                     value=True,
                     key=f"include_qa_{selected_key}",
                 )
-                # Select format
-                fmt = st.selectbox(
-                    "Select format" if lang == "en" else zh("選擇格式", "选择格式"),
-                    ["Word (DOCX)", "PDF"],
-                    key=f"fmt_{selected_key}",
-                )
-
                 report = build_full_report(lang, selected_key, current_state, include_followups=include_qa, session_state=st.session_state)
 
                 now_ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                 framework_key = (selected_key or "unknown").replace("/", "__")
-                if fmt == "PDF":
-                    data = build_pdf_bytes(report)
-                    mime = "application/pdf"
-                    base_filename = f"Error-Free® IER {framework_key} {now_ts}" + (" +Q&A" if include_qa else "") + ".pdf"
-                else:
-                    # Download (DOCX)
-                    data = build_docx_bytes(report)
-                    mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    base_filename = f"Error-Free® IER {framework_key} {now_ts}" + (" +Q&A" if include_qa else "") + ".docx"
+                # Download (DOCX) — PDF temporarily disabled (formatting not stable)
+                data = build_docx_bytes(report)
+                mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                base_filename = f"Error-Free® IER {framework_key} {now_ts}" + (" +Q&A" if include_qa else "") + ".docx"
                 filename = tenant_namespace("downloads", base_filename).replace("/", "__")
 
                 # --- Prepare one canonical history row (saved on click, best-effort) ---
