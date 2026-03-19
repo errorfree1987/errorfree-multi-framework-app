@@ -1803,6 +1803,9 @@ def save_state_to_disk():
 
         # Custom frameworks uploaded by user in Step 4
         "custom_frameworks": st.session_state.get("custom_frameworks", {}),
+
+        # Step 5 explicit confirmation gate (user must press "Confirm & proceed to Step 6")
+        "step5_framework_confirmed": st.session_state.get("step5_framework_confirmed", False),
     }
     try:
         f = _user_state_file()
@@ -1853,6 +1856,7 @@ def restore_state_from_disk():
         "step7_done", "step7_output", "step7_generated_at",
         "step7_history", "integration_history",
         "_pending_clear_followup_key", "custom_frameworks",
+        "step5_framework_confirmed",
     ]
     for k in workflow_keys:
         if k in data:
@@ -4108,6 +4112,9 @@ def _reset_whole_document():
     st.session_state["custom_frameworks"] = {}
     st.session_state["custom_fw_upload_nonce"] = int(st.session_state.get("custom_fw_upload_nonce", 0)) + 1
 
+    # Clear Step 5 confirmation gate
+    st.session_state["step5_framework_confirmed"] = False
+
     # --------- KEEP AUTH (Portal-only SSO session stays logged-in) ---------
     # Do NOT change:
     # - st.session_state["is_authenticated"]
@@ -4716,6 +4723,8 @@ def main():
         bool(framework_states.get(k, {}).get("step5_done", False))
         for k in selected_framework_keys
     )
+    # True only after user explicitly confirms framework selection (Step 5 confirmation button)
+    step5_framework_confirmed = bool(st.session_state.get("step5_framework_confirmed", False))
 
     # Step 1: upload review doc
     st.subheader("Step 1: Upload Review Document" if lang == "en" else zh("步驟一：上傳審閱文件", "步骤一：上传審閱文件"))
@@ -5206,7 +5215,7 @@ button[title="fw-remove"] p {
                             key=f"remove_fw_{k}",
                             on_click=_step4_remove_fw,
                             args=(k,),
-                            disabled=(k in analyzed_keys) or step5_all_done,
+                            disabled=(k in analyzed_keys) or step5_framework_confirmed,
                             use_container_width=True,
                             help="fw-remove",
                         )
@@ -5223,7 +5232,7 @@ button[title="fw-remove"] p {
                 options=[sentinel] + available_for_add,
                 key="step4_add_framework",
                 on_change=_step4_add_fw,
-                disabled=step5_all_done,
+                disabled=step5_framework_confirmed,
                 format_func=lambda v: "No options to select" if v == sentinel else key_to_label.get(v, v),
             )
         else:
@@ -5261,30 +5270,11 @@ button[title="fw-remove"] p {
             st.markdown(
                 "**Loaded framework files:**" if lang == "en" else "**已載入的框架檔案：**"
             )
-            # CSS:
-            # 1. Hide the native × delete button inside the file uploader widget
-            #    (deletion is handled exclusively by ✕ in "Currently selected frameworks").
-            # 2. Shrink uploaded-file rows in the uploader to match the caption font size
-            #    ("Limit 200MB per file • TXT, DOCX, PDF").
-            st.markdown("""
-<style>
-/* Hide native × remove button inside the file uploader file list */
-.ef-custom-fw-scope [data-testid="stFileUploaderFile"] button,
-.ef-custom-fw-scope [data-testid="stFileUploaderDeleteBtn"] {
-    display: none !important;
-}
-</style>""", unsafe_allow_html=True)
-            # Show loaded files as read-only rows (no delete button here —
-            # deletion is done via ✕ in "Currently selected frameworks" above).
+            # Show loaded files as blue info boxes (matching Step 1/2/3 st.info style).
+            # Deletion is handled exclusively via ✕ in "Currently selected frameworks" above.
             for _ck, _cv in _loaded_custom.items():
                 _src = _cv.get("source_file") or _cv.get("name", _ck)
-                st.markdown(
-                    f"<p style='margin:2px 0;padding:5px 10px;background:#f8f9fb;"
-                    f"border:1px solid #e0e3ea;border-radius:6px;"
-                    f"font-size:0.75rem;color:rgba(49,51,63,0.6);line-height:1.4'>"
-                    f"📄 {_src}</p>",
-                    unsafe_allow_html=True,
-                )
+                st.info(f"📄 {_src}")
 
         # ── File uploader — for adding new custom frameworks only ─────────────
         _custom_upload_nonce = int(st.session_state.get("custom_fw_upload_nonce", 0))
@@ -5294,12 +5284,12 @@ button[title="fw-remove"] p {
             ("新增更多框架檔案" if _loaded_custom else "上傳框架檔案"),
             type=["txt", "docx", "pdf"],
             accept_multiple_files=True,
-            disabled=step5_all_done,
+            disabled=step5_framework_confirmed,
             key=f"custom_fw_uploader_{_custom_upload_nonce}",
             help="Accepts .txt, .docx, .pdf only. Images are not supported." if lang == "en"
                  else "僅接受 .txt、.docx、.pdf，不支援圖片。",
         )
-        if uploaded_custom_files and not step5_all_done:
+        if uploaded_custom_files and not step5_framework_confirmed:
             _custom_fws_now = dict(st.session_state.get("custom_frameworks") or {})
             _sel_keys_now = list(st.session_state.get("selected_framework_keys") or [])
             _already_sources = {v.get("source_file") for v in _custom_fws_now.values()}
@@ -5401,8 +5391,18 @@ button[title="fw-remove"] p {
     # Step 5: main analysis — one button per framework, sequential unlock
     st.subheader("Step 5: Analyze Main Document" if lang == "en" else zh("步驟五：分析主要文件", "步骤五：分析主要文件"))
     st.caption(
-        "Run each framework's analysis in order. The next button unlocks after the previous one completes." if lang == "en"
-        else zh("請依序執行每個框架的分析，前一個框架完成後，下一個才會開放。", "请依序执行每个框架的分析，前一个框架完成后，下一个才会开放。")
+        "Run each framework's analysis in order. The next button unlocks after the previous one completes. "
+        "Unanalyzed frameworks and custom uploads in Step 4 remain editable. "
+        "Once all analyses are done, confirm your selection to proceed to Step 6."
+        if lang == "en"
+        else zh(
+            "請依序執行每個框架的分析，前一個框架完成後，下一個才會開放。"
+            "尚未分析的框架及步驟四的自訂上傳仍可編輯，"
+            "所有分析完成後請按「確認框架選擇，進入步驟六」。",
+            "请依序执行每个框架的分析，前一个框架完成后，下一个才会开放。"
+            "尚未分析的框架及步骤四的自定上传仍可编辑，"
+            "所有分析完成后请按「确认框架选择，进入步骤六」。",
+        )
     )
 
     _step5_has_framework = bool(selected_key and list(st.session_state.get("selected_framework_keys") or []))
@@ -5491,27 +5491,60 @@ button[title="fw-remove"] p {
     # Update step5_done (first framework) for backward-compat with legacy gates
     step5_done = bool(framework_states.get(selected_framework_keys[0], {}).get("step5_done", False)) if selected_framework_keys else False
 
+    # ── Step 5 Confirmation Gate ────────────────────────────────────────────────
+    # Show the confirmation button once all frameworks are analyzed and
+    # the user has NOT yet confirmed. After confirmation, Step 4 locks fully
+    # and Step 6 becomes available.
+    if step5_all_done and not step5_framework_confirmed:
+        st.info(
+            "All framework analyses are complete. You can still add, remove, or upload frameworks in Step 4 before confirming. "
+            "When you are ready, click the button below to lock your framework selection and proceed to Step 6."
+            if lang == "en"
+            else zh(
+                "所有框架分析已完成。在確認之前，您仍可在步驟四中新增、刪除或上傳框架。"
+                "準備好後，請按下方按鈕鎖定框架選擇並進入步驟六。",
+                "所有框架分析已完成。在确认之前，您仍可在步骤四中新增、删除或上传框架。"
+                "准备好后，请按下方按钮锁定框架选择并进入步骤六。",
+            )
+        )
+        _confirm_col, _confirm_status_col = st.columns([4, 1])
+        with _confirm_col:
+            _do_confirm = st.button(
+                "Confirm framework selection & proceed to Step 6" if lang == "en"
+                else zh("確認框架選擇，進入步驟六", "确认框架选择，进入步骤六"),
+                key="step5_confirm_fw_btn",
+            )
+        if _do_confirm:
+            st.session_state["step5_framework_confirmed"] = True
+            save_state_to_disk()
+            st.rerun()
+    elif step5_framework_confirmed:
+        st.success(
+            "✓ Framework selection confirmed — Step 6 is now available." if lang == "en"
+            else zh("✓ 框架選擇已確認，步驟六已開放。", "✓ 框架选择已确认，步骤六已开放。")
+        )
+
     st.markdown("---")
 
     # Step 6: reference relevance analysis — single button per sub-step (not per framework)
     st.subheader("Step 6: Reference Relevance Analysis" if lang == "en" else zh("步驟六：參考文件相關性分析", "步骤六：参考文件相关性分析"))
     st.caption(
-        "All Step 5 analyses must complete before Step 6 unlocks. "
+        "All Step 5 analyses must be completed and confirmed before Step 6 unlocks. "
         "Step 6-A analyzes the upstream reference; Step 6-B analyzes the quote reference. "
         "Each runs once (single analysis, not per framework)." if lang == "en"
         else zh(
-            "步驟五所有框架都完成後，步驟六才會開放。Step 6-A 分析上游主要參考文件；Step 6-B 分析次要引用參考文件。每項各執行一次（非逐框架）。",
-            "步骤五所有框架都完成后，步骤六才会开放。Step 6-A 分析上游主要参考文件；Step 6-B 分析次要引用参考文件。每项各执行一次（非逐框架）。",
+            "步驟五所有框架都完成並確認後，步驟六才會開放。Step 6-A 分析上游主要參考文件；Step 6-B 分析次要引用參考文件。每項各執行一次（非逐框架）。",
+            "步骤五所有框架都完成并确认后，步骤六才会开放。Step 6-A 分析上游主要参考文件；Step 6-B 分析次要引用参考文件。每项各执行一次（非逐框架）。",
         )
     )
 
     upstream_exists = bool(st.session_state.get("upstream_reference"))
     quote_exists = bool(st.session_state.get("quote_current"))
 
-    if not step5_all_done:
+    if not (step5_all_done and step5_framework_confirmed):
         st.info(
-            "Complete all Step 5 analyses first before running Step 6." if lang == "en"
-            else zh("請先完成所有步驟五分析，再執行步驟六。", "请先完成所有步骤五分析，再执行步骤六。")
+            "Complete all Step 5 analyses and confirm your framework selection before running Step 6." if lang == "en"
+            else zh("請先完成所有步驟五分析並確認框架選擇，再執行步驟六。", "请先完成所有步骤五分析并确认框架选择，再执行步骤六。")
         )
 
     # ── Step 6-A: Upstream Relevance (single global analysis) ────────────────
@@ -5527,7 +5560,7 @@ button[title="fw-remove"] p {
                 "Run Upstream Reference Relevance" if lang == "en"
                 else zh("執行上游參考文件相關性分析", "执行上游参考文件相关性分析"),
                 key="run_step6a_btn",
-                disabled=(not step5_all_done) or not upstream_exists or _s6a_done,
+                disabled=(not (step5_all_done and step5_framework_confirmed)) or not upstream_exists or _s6a_done,
             )
         with _s6a_col_status:
             if _s6a_done:
@@ -5572,7 +5605,7 @@ button[title="fw-remove"] p {
                 "Run Quote Reference Relevance" if lang == "en"
                 else zh("執行次要參考文件引用一致性分析", "执行次要参考文件引用一致性分析"),
                 key="run_step6b_btn",
-                disabled=(not step5_all_done) or not quote_exists or _s6b_done or not _s6b_upstream_ok,
+                disabled=(not (step5_all_done and step5_framework_confirmed)) or not quote_exists or _s6b_done or not _s6b_upstream_ok,
             )
         with _s6b_col_status:
             if _s6b_done:
@@ -5619,6 +5652,7 @@ button[title="fw-remove"] p {
     _s7_quote_ok = (not quote_exists) or quote_done_current
     _s7_can_run = (
         step5_all_done
+        and step5_framework_confirmed
         and _s7_upstream_ok
         and _s7_quote_ok
         and not bool(current_state.get("step8_done", False))
