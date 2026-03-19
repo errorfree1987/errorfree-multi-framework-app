@@ -600,6 +600,54 @@ def _check_usage_cap(tenant: str, usage_type: str, email: str = "") -> tuple[boo
         return True, 0, 0, ""
 
 
+def _get_sidebar_usage_and_lease(tenant: str, email: str) -> tuple[str, str]:
+    """
+    Returns (usage_display_str, lease_display_str) for sidebar.
+    usage: e.g. "3 / 10" or "Unlimited"; lease: e.g. "2025-12-31" or "—".
+    """
+    usage_str = "—"
+    lease_str = "—"
+    supabase_url = (os.getenv("SUPABASE_URL", "") or "").strip().rstrip("/")
+    service_key = (os.getenv("SUPABASE_SERVICE_KEY", "") or "").strip()
+    if not supabase_url or not service_key:
+        return usage_str, lease_str
+    headers = {
+        "apikey": service_key,
+        "Authorization": f"Bearer {service_key}",
+        "Accept": "application/json",
+    }
+    try:
+        allow, cap, current_usage, _ = _check_usage_cap(tenant, "review", email=email or "")
+        if cap == 0 and current_usage == 0 and allow:
+            usage_str = "Unlimited"
+        elif cap > 0:
+            usage_str = f"{current_usage} / {cap}"
+        else:
+            usage_str = str(current_usage) if current_usage else "—"
+    except Exception:
+        pass
+    try:
+        resp = requests.get(
+            f"{supabase_url}/rest/v1/tenants",
+            params={"select": "trial_end", "slug": f"eq.{tenant}", "limit": "1"},
+            headers=headers,
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            rows = resp.json() or []
+            if rows and rows[0].get("trial_end"):
+                from datetime import datetime, timezone
+                trial_end_str = rows[0]["trial_end"]
+                try:
+                    trial_end = datetime.fromisoformat(trial_end_str.replace("Z", "+00:00"))
+                    lease_str = trial_end.strftime("%Y-%m-%d")
+                except Exception:
+                    lease_str = trial_end_str[:10] if len(trial_end_str) >= 10 else trial_end_str
+    except Exception:
+        pass
+    return usage_str, lease_str
+
+
 def _record_usage_event(tenant: str, email: str, usage_type: str, quantity: int = 1, context: dict = None):
     """
     Phase A2-2: Record usage event to tenant_usage_events table.
@@ -2852,65 +2900,139 @@ def run_followup_qa(
 # Report formatting / exports
 # =========================
 
-def build_full_report(lang: str, framework_key: str, state: Dict, include_followups: bool = True) -> str:
-    analysis_output = state.get("analysis_output", "")
+def build_full_report(lang: str, framework_key: str, state: Dict, include_followups: bool = True, session_state: Dict = None) -> str:
+    """
+    Build a formal review report including Step 7 Integration and Step 8 Cross Checking.
+    Preserves structure and tables; optional session_state provides step7_output/step7_generated_at.
+    """
+    session = session_state if session_state is not None else st.session_state
+    step7_output = (session.get("step7_output") or "").strip()
+    step7_generated_at = (session.get("step7_generated_at") or "").strip()
+    step8_output = (state.get("step8_output") or "").strip()
     followups = state.get("followup_history", []) if include_followups else []
     fw = FRAMEWORKS.get(framework_key, {})
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    email = st.session_state.get("user_email", "unknown")
+    email = session.get("user_email", "unknown")
+    if framework_key.startswith("custom_"):
+        custom_fws = session.get("custom_frameworks") or {}
+        custom_name = (custom_fws.get(framework_key) or {}).get("name", framework_key)
+        name_zh = name_en = custom_name
+    else:
+        name_zh = fw.get("name_zh", framework_key)
+        name_en = fw.get("name_en", framework_key)
 
-    name_zh = fw.get("name_zh", framework_key)
-    name_en = fw.get("name_en", framework_key)
+    # Metadata block for Step 8 (document type, refs)
+    doc_type = session.get("document_type") or ("(not selected)" if lang != "zh" else "（未選擇）" if session.get("zh_variant") == "tw" else "（未选择）")
+    upstream_ref = session.get("upstream_reference") or {}
+    upstream_name = upstream_ref.get("name", "(unknown)") if upstream_ref else "(unknown)"
+    step6b_hist = session.get("step6b_history") or []
 
     if lang == "zh":
-        header = [
-            f"{BRAND_TITLE_ZH} 報告（分析" + (" + Q&A" if include_followups else "") + ")",
+        meta_lines = [
+            "### 分析紀錄（必讀）",
+            f"- 文件類型（Document Type）：{doc_type}",
+            f"- 步驟七整合報告產生時間：{step7_generated_at or '（未記錄）'}",
+        ]
+        if upstream_ref:
+            meta_lines.append(f"- 主要參考文件（Upstream）：{upstream_name}")
+        if step6b_hist:
+            meta_lines.append("- 次要參考文件（Quote References）分析紀錄：")
+            for i, h in enumerate(step6b_hist, start=1):
+                meta_lines.append(f"  {i}. {h.get('name', '(unknown)')} ({h.get('analyzed_at', '')})")
+    else:
+        meta_lines = [
+            "### Analysis Record",
+            f"- Document Type: {doc_type}",
+            f"- Step 7 Integration Report Generated At: {step7_generated_at or '(not recorded)'}",
+        ]
+        if upstream_ref:
+            meta_lines.append(f"- Upstream reference: {upstream_name}")
+        if step6b_hist:
+            meta_lines.append("- Quote reference analysis log:")
+            for i, h in enumerate(step6b_hist, start=1):
+                meta_lines.append(f"  {i}. {h.get('name', '(unknown)')} ({h.get('analyzed_at', '')})")
+
+    meta_block = "\n".join(meta_lines) + "\n\n"
+
+    if lang == "zh":
+        parts = [
+            f"{BRAND_TITLE_ZH} 審查結果報告" + ("（含 Q&A）" if include_followups and followups else ""),
             f"{BRAND_SUBTITLE_ZH}",
             f"產生時間：{now}",
             f"使用者帳號：{email}",
             f"使用框架：{name_zh}",
             "",
             "==============================",
-            "一、分析結果",
+            "一、步驟七 — 整合分析（Integration Analysis）",
             "==============================",
-            analysis_output,
         ]
+        if step7_generated_at:
+            parts.append(f"產生時間：{step7_generated_at}\n")
+        parts.append(step7_output if step7_output else "（尚無內容）")
+        parts.extend([
+            "",
+            "==============================",
+            "二、步驟八 — 交叉核對分析（Cross Checking Analysis）",
+            "==============================",
+            meta_block,
+            "==============================",
+            "（步驟八）交叉核對分析報告",
+            "==============================",
+            step8_output if step8_output else "（尚無內容）",
+        ])
         if include_followups and followups:
-            header += [
+            parts += [
                 "",
                 "==============================",
                 "附錄：後續問答（Q&A）",
                 "==============================",
             ]
-            for i, (q, a) in enumerate(followups, start=1):
-                header.append(f"[Q{i}] {q}")
-                header.append(f"[A{i}] {a}")
-                header.append("")
+            for i, item in enumerate(followups, start=1):
+                q = item[0] if isinstance(item, (list, tuple)) else (item.get("question") or item.get("q") or "")
+                a = item[1] if isinstance(item, (list, tuple)) and len(item) >= 2 else (item.get("answer") or item.get("a") or "")
+                parts.append(f"[Q{i}] {q}")
+                parts.append(f"[A{i}] {a}")
+                parts.append("")
     else:
-        header = [
-            f"{BRAND_TITLE_EN} Report (Analysis" + (" + Q&A" if include_followups else "") + ")",
+        parts = [
+            f"{BRAND_TITLE_EN} Review Result Report" + (" (with Q&A)" if include_followups and followups else ""),
             f"{BRAND_SUBTITLE_EN}",
             f"Generated: {now}",
             f"User: {email}",
             f"Framework: {name_en}",
             "",
             "==============================",
-            "1. Analysis",
+            "1. Step 7 — Integration Analysis",
             "==============================",
-            analysis_output,
         ]
+        if step7_generated_at:
+            parts.append(f"Generated at: {step7_generated_at}\n")
+        parts.append(step7_output if step7_output else "(No content yet.)")
+        parts.extend([
+            "",
+            "==============================",
+            "2. Step 8 — Cross Checking Analysis",
+            "==============================",
+            meta_block,
+            "==============================",
+            "(Step 8) Cross Checking Analysis Report",
+            "==============================",
+            step8_output if step8_output else "(No content yet.)",
+        ])
         if include_followups and followups:
-            header += [
+            parts += [
                 "",
                 "==============================",
                 "Appendix: Follow-up Q&A",
                 "==============================",
             ]
-            for i, (q, a) in enumerate(followups, start=1):
-                header.append(f"[Q{i}] {q}")
-                header.append(f"[A{i}] {a}")
-                header.append("")
-    return clean_report_text("\n".join(header))
+            for i, item in enumerate(followups, start=1):
+                q = item[0] if isinstance(item, (list, tuple)) else (item.get("question") or item.get("q") or "")
+                a = item[1] if isinstance(item, (list, tuple)) and len(item) >= 2 else (item.get("answer") or item.get("a") or "")
+                parts.append(f"[Q{i}] {q}")
+                parts.append(f"[A{i}] {a}")
+                parts.append("")
+    return clean_report_text("\n".join(parts))
 
 
 def build_docx_bytes(text: str) -> bytes:
@@ -4132,6 +4254,21 @@ def main():
         f"**{'Organization' if not is_zh else ('組織' if ui_zhv == 'tw' else '组织')}**"
     )
     st.sidebar.markdown(_org_display)
+
+    # ── Usage & Lease (for authenticated user) ─────────────────────────────────
+    if st.session_state.get("is_authenticated"):
+        _tenant_for_usage = (st.session_state.get("tenant") or "").strip() or ""
+        _email_for_usage = (st.session_state.get("user_email") or "").strip() or ""
+        if _tenant_for_usage:
+            _usage_str, _lease_str = _get_sidebar_usage_and_lease(_tenant_for_usage, _email_for_usage)
+            st.sidebar.markdown(
+                f"**{'Usage' if not is_zh else ('使用次數' if ui_zhv == 'tw' else '使用次数')}**"
+            )
+            st.sidebar.markdown(_usage_str)
+            st.sidebar.markdown(
+                f"**{'Lease / Term' if not is_zh else ('租約期限' if ui_zhv == 'tw' else '租约期限')}**"
+            )
+            st.sidebar.markdown(_lease_str)
 
     # ── Review Type ───────────────────────────────────────────────────────────
     _doc_type = st.session_state.get("document_type")
@@ -5412,8 +5549,8 @@ button[title="fw-remove"] p {
 
     st.markdown("---")
 
-    # Step 8: Final Analysis — Cross-Check using TRFW-011
-    st.subheader("Step 8: Final Analysis" if lang == "en" else zh("步驟八：最終分析（Final Analysis）", "步骤八：最终分析（Final Analysis）"))
+    # Step 8: Cross Checking Analysis (TRFW-011)
+    st.subheader("Step 8: Cross Checking Analysis" if lang == "en" else zh("步驟八：交叉核對分析（Cross Checking Analysis）", "步骤八：交叉核对分析（Cross Checking Analysis）"))
 
     step8_done = bool(current_state.get("step8_done", False))
     quote_finalized = bool(st.session_state.get("quote_upload_finalized", False))
@@ -5639,13 +5776,13 @@ button[title="fw-remove"] p {
     # ── Step 8 results ────────────────────────────────────────────────────────
     if current_state.get("step8_done"):
         render_step_block(
-            "Step 8 — Final Analysis (Final Deliverable)" if lang == "en" else zh("Step 8 — 最終分析（最終交付）", "Step 8 — 最终分析（最终交付）"),
+            "Step 8 — Cross Checking Analysis" if lang == "en" else zh("Step 8 — 交叉核對分析（Cross Checking Analysis）", "Step 8 — 交叉核对分析（Cross Checking Analysis）"),
             current_state.get("step8_output", ""),
             expanded=False,
         )
     else:
         render_step_block(
-            "Step 8 — Final Analysis (Final Deliverable)" if lang == "en" else zh("Step 8 — 最終分析（最終交付）", "Step 8 — 最终分析（最终交付）"),
+            "Step 8 — Cross Checking Analysis" if lang == "en" else zh("Step 8 — 交叉核對分析（Cross Checking Analysis）", "Step 8 — 交叉核对分析（Cross Checking Analysis）"),
             "",
             expanded=False,
         )
@@ -5659,7 +5796,7 @@ button[title="fw-remove"] p {
     # Download (3) choose include follow-ups
     # =========================
     st.markdown("---")
-    st.subheader("Download Report" if lang == "en" else zh("下載報告", "下载报告"))
+    st.subheader("Download Review Result" if lang == "en" else zh("下載審查結果", "下载审查结果"))
 
     if current_state.get("analysis_done") and current_state.get("analysis_output"):
         if is_guest and current_state.get("download_used"):
@@ -5686,7 +5823,7 @@ button[title="fw-remove"] p {
                     unsafe_allow_html=True,
                 )
 
-                report = build_full_report(lang, selected_key, current_state, include_followups=include_qa)
+                report = build_full_report(lang, selected_key, current_state, include_followups=include_qa, session_state=st.session_state)
 
                 # PDF/PPTX are temporarily disabled (formatting not stable yet)
                 if fmt.startswith("PDF") or fmt.startswith("PowerPoint"):
@@ -5777,8 +5914,7 @@ button[title="fw-remove"] p {
             "You can ask follow-up questions about **specific findings in your document**, such as:\n"
             "- *\"Can you explain the High Risk error on page 3 in more detail?\"*\n"
             "- *\"How should I fix the reference inconsistency identified in Step 5?\"*\n"
-            "- *\"What specific clause in my document causes the alignment error?\"*\n\n"
-            "Note: Questions about the analysis methodology or internal processes cannot be answered.",
+            "- *\"What specific clause in my document causes the alignment error?\"*",
             unsafe_allow_html=False,
         )
     elif st.session_state.get("zh_variant", "tw") == "tw":
@@ -5786,8 +5922,7 @@ button[title="fw-remove"] p {
             "您可以針對**文件中具體的發現**提出追問，例如：\n"
             "- *「可以詳細說明第 3 頁的 High Risk 錯誤嗎？」*\n"
             "- *「步驟 5 發現的參考文件不一致問題，應該如何修正？」*\n"
-            "- *「我的文件中哪個具體條款導致了對齊錯誤？」*\n\n"
-            "注意：關於分析方法論或內部流程的問題無法回答。",
+            "- *「我的文件中哪個具體條款導致了對齊錯誤？」*",
             unsafe_allow_html=False,
         )
     else:
@@ -5795,8 +5930,7 @@ button[title="fw-remove"] p {
             "您可以针对**文件中具体的发现**提出追问，例如：\n"
             "- *「可以详细说明第 3 页的 High Risk 错误吗？」*\n"
             "- *「步骤 5 发现的参考文件不一致问题，应该如何修正？」*\n"
-            "- *「我的文件中哪个具体条款导致了对齐错误？」*\n\n"
-            "注意：关于分析方法论或内部流程的问题无法回答。",
+            "- *「我的文件中哪个具体条款导致了对齐错误？」*",
             unsafe_allow_html=False,
         )
 
