@@ -2311,23 +2311,24 @@ def render_openai_error(language: str) -> None:
 
 
 def run_upstream_relevance(language: str, main_doc: str, upstream_doc: str, model_name: str) -> str:
-    """Upstream reference relevance analysis following the Reference Alignment / Data Inconsistency Error methodology."""
+    """Upstream reference relevance analysis following the Reference Conflict Error / Reference Data Inconsistency Error methodology."""
     if language == "zh":
-        sys = "你是一位嚴謹的工程審閱顧問，依照『Reference Alignment Error』和『Reference Data Inconsistency Error』方法論進行分析，不得杜撰。"
+        sys = "你是一位嚴謹的工程審閱顧問，依照『Reference Conflict Error』和『Reference Data Inconsistency Error』方法論進行分析，不得杜撰。"
         user = (
             "任務：對主文件與上游主要參考文件進行『Reference Relevancy Analysis（參考文件相關性分析）』。\n\n"
-            "【分析步驟一：識別 Reference Alignment Error】\n"
-            "檢查主文件與上游參考文件之間，下列三個面向是否存在衝突：\n"
-            "1) Purpose（目的）：主文件的目的是否與上游參考文件的目的衝突。\n"
-            "2) Requirements（需求）：上游參考文件中引用的需求是否與主文件中的需求衝突。\n"
-            "3) Conclusions（結論）：上游參考文件的結論是否與主文件的結論衝突。\n"
-            "凡發現衝突，即稱為『Reference Alignment Error』。\n\n"
+            "【分析步驟一：識別 Reference Conflict Error】\n"
+            "此步驟檢查主文件與上游參考文件之間，下列四個面向是否存在衝突：\n"
+            "1) Purpose（目的）：主文件的目的是否與上游參考文件的目的衝突（不必完全一致，但不能衝突）。\n"
+            "2) Requirements（需求）：上游參考文件中引用的需求是否與主文件中的需求衝突（不必完全一致，但不能衝突）。\n"
+            "3) Analysis Results（分析結果）：上游參考文件中轉移至或引用至主文件的分析結果，是否與主文件中的陳述衝突。\n"
+            "4) Conclusions（結論）：上游參考文件的結論是否與主文件的結論衝突（不必完全一致，但不能衝突）。\n"
+            "凡發現衝突，即稱為『Reference Conflict Error』。\n\n"
             "【分析步驟二：識別 Reference Data Inconsistency Error】\n"
             "找出主文件中所有引自上游參考文件的數據/數值/條款，逐一核對是否與上游參考文件中的原始數據一致。\n"
             "凡發現不一致，即稱為『Reference Data Inconsistency Error』。\n\n"
             "【輸出格式（Markdown）】\n"
             "對每一個已識別的錯誤，請依以下格式輸出：\n"
-            "- (1) Reference Relevancy Error Type：Reference Alignment Error 或 Reference Data Inconsistency Error\n"
+            "- (1) Reference Relevancy Error Type：Reference Conflict Error 或 Reference Data Inconsistency Error\n"
             "- (2) Description：錯誤的詳細描述\n"
             "- (3) Risk Level：High / Medium / Low\n"
             "  - High：影響主文件結論\n"
@@ -2338,26 +2339,28 @@ def run_upstream_relevance(language: str, main_doc: str, upstream_doc: str, mode
             f"【上游主要參考文件（Upstream Reference）】\n{(upstream_doc or '')[:18000]}"
         )
     else:
-        sys = "You are a rigorous engineering review consultant. Apply the Reference Alignment Error and Reference Data Inconsistency Error methodology. Do not hallucinate."
+        sys = "You are a rigorous engineering review consultant. Apply the Reference Conflict Error and Reference Data Inconsistency Error methodology exactly as defined. Do not hallucinate."
         user = (
             "Task: Perform a Reference Relevancy Analysis between the main document and the upstream reference document.\n\n"
-            "Step 1 — Identify Reference Alignment Errors:\n"
-            "Check for conflicts between the main document and the upstream reference in the following three aspects:\n"
-            "1) Purpose: Does the main document's purpose conflict with the upstream reference's purpose?\n"
-            "2) Requirements: Do the requirements quoted in the upstream reference conflict with those in the main document?\n"
-            "3) Conclusions: Do the upstream reference's conclusions conflict with the main document's conclusions?\n"
-            "Any identified conflict is called a 'Reference Alignment Error'.\n\n"
+            "Step 1 — Identify Reference Conflict Errors:\n"
+            "Check for conflicts between the main document and the upstream reference in the following four aspects.\n"
+            "Note: they may not need to be in total consistency, but they must NOT conflict.\n"
+            "1) Purpose: The purposes of the main document shall not be in conflict with those of the upstream reference.\n"
+            "2) Requirements: The requirements quoted in the upstream reference shall not be in conflict with those in the main document.\n"
+            "3) Analysis Results: The analysis results in the upstream document that are transferred to or quoted in the main document shall not be in conflict with what is stated in the main document.\n"
+            "4) Conclusions: The conclusions of the upstream reference shall not be in conflict with the conclusions of the main document.\n"
+            "Any identified conflict is called a 'Reference Conflict Error'.\n\n"
             "Step 2 — Identify Reference Data Inconsistency Errors:\n"
             "Find all data/values/clauses in the main document that are quoted from the upstream reference.\n"
             "Check each for consistency with the original data in the upstream reference.\n"
             "Any inconsistency is called a 'Reference Data Inconsistency Error'.\n\n"
             "Output Format (Markdown):\n"
-            "For each identified error, report in this format:\n"
-            "- (1) Reference Relevancy Error Type: Reference Alignment Error OR Reference Data Inconsistency Error\n"
+            "For each identified error, use this format:\n"
+            "- (1) Reference Relevancy Error Type: Reference Conflict Error OR Reference Data Inconsistency Error\n"
             "- (2) Description: Detailed description of the error\n"
             "- (3) Risk Level: High / Medium / Low\n"
             "  - High: Impacting Main Document Conclusion\n"
-            "  - Medium: Impacting Only Main Document Analysis, Not Conclusion\n"
+            "  - Medium: Impacting Only the Main Document Analysis, Not Conclusion\n"
             "  - Low: Impacting Only Main Document Statements\n\n"
             "End with a summary table (Error Type / Description Summary / Risk Level).\n\n"
             f"[Main document]\n{(main_doc or '')[:18000]}\n\n"
@@ -2367,23 +2370,24 @@ def run_upstream_relevance(language: str, main_doc: str, upstream_doc: str, mode
 
 
 def run_quote_relevance(language: str, main_doc: str, quote_ref_doc: str, model_name: str) -> str:
-    """Quote reference relevance analysis following the Reference Alignment / Data Inconsistency Error methodology."""
+    """Quote reference relevance analysis following the Reference Conflict Error / Reference Data Inconsistency Error methodology."""
     if language == "zh":
-        sys = "你是一位嚴謹的文件核對顧問，依照『Reference Alignment Error』和『Reference Data Inconsistency Error』方法論進行分析，不得杜撰。"
+        sys = "你是一位嚴謹的文件核對顧問，依照『Reference Conflict Error』和『Reference Data Inconsistency Error』方法論進行分析，不得杜撰。"
         user = (
             "任務：對主文件與次要參考文件（Quote Reference）進行『Reference Relevancy Analysis（參考文件相關性分析）』。\n\n"
-            "【分析步驟一：識別 Reference Alignment Error】\n"
-            "檢查主文件與次要參考文件之間，下列三個面向是否存在衝突：\n"
-            "1) Purpose（目的）：主文件的目的是否與次要參考文件的目的衝突。\n"
-            "2) Requirements（需求）：次要參考文件中引用的需求是否與主文件中的需求衝突。\n"
-            "3) Conclusions（結論）：次要參考文件的結論是否與主文件的結論衝突。\n"
-            "凡發現衝突，即稱為『Reference Alignment Error』。\n\n"
+            "【分析步驟一：識別 Reference Conflict Error】\n"
+            "此步驟檢查主文件與次要參考文件之間，下列四個面向是否存在衝突：\n"
+            "1) Purpose（目的）：主文件的目的是否與次要參考文件的目的衝突（不必完全一致，但不能衝突）。\n"
+            "2) Requirements（需求）：次要參考文件中引用的需求是否與主文件中的需求衝突（不必完全一致，但不能衝突）。\n"
+            "3) Analysis Results（分析結果）：次要參考文件中轉移至或引用至主文件的分析結果，是否與主文件中的陳述衝突。\n"
+            "4) Conclusions（結論）：次要參考文件的結論是否與主文件的結論衝突（不必完全一致，但不能衝突）。\n"
+            "凡發現衝突，即稱為『Reference Conflict Error』。\n\n"
             "【分析步驟二：識別 Reference Data Inconsistency Error】\n"
             "找出主文件中所有引自次要參考文件的數據/數值/條款（可用關鍵字如：according to, as stated in, per, 引用, 依據, 參照, 條款, 規範 等），逐一核對是否與次要參考文件中的原始數據一致。\n"
             "凡發現不一致，即稱為『Reference Data Inconsistency Error』。\n\n"
             "【輸出格式（Markdown）】\n"
             "對每一個已識別的錯誤，請依以下格式輸出：\n"
-            "- (1) Reference Relevancy Error Type：Reference Alignment Error 或 Reference Data Inconsistency Error\n"
+            "- (1) Reference Relevancy Error Type：Reference Conflict Error 或 Reference Data Inconsistency Error\n"
             "- (2) Description：錯誤的詳細描述\n"
             "- (3) Risk Level：High / Medium / Low\n"
             "  - High：影響主文件結論\n"
@@ -2395,27 +2399,29 @@ def run_quote_relevance(language: str, main_doc: str, quote_ref_doc: str, model_
             f"【次要參考文件（Quote Reference）】\n{(quote_ref_doc or '')[:18000]}"
         )
     else:
-        sys = "You are a meticulous cross-checking consultant. Apply the Reference Alignment Error and Reference Data Inconsistency Error methodology. Do not hallucinate."
+        sys = "You are a meticulous cross-checking consultant. Apply the Reference Conflict Error and Reference Data Inconsistency Error methodology exactly as defined. Do not hallucinate."
         user = (
             "Task: Perform a Reference Relevancy Analysis between the main document and the quote reference document.\n\n"
-            "Step 1 — Identify Reference Alignment Errors:\n"
-            "Check for conflicts between the main document and the quote reference in the following three aspects:\n"
-            "1) Purpose: Does the main document's purpose conflict with the quote reference's purpose?\n"
-            "2) Requirements: Do the requirements quoted in the quote reference conflict with those in the main document?\n"
-            "3) Conclusions: Do the quote reference's conclusions conflict with the main document's conclusions?\n"
-            "Any identified conflict is called a 'Reference Alignment Error'.\n\n"
+            "Step 1 — Identify Reference Conflict Errors:\n"
+            "Check for conflicts between the main document and the quote reference in the following four aspects.\n"
+            "Note: they may not need to be in total consistency, but they must NOT conflict.\n"
+            "1) Purpose: The purposes of the main document shall not be in conflict with those of the quote reference.\n"
+            "2) Requirements: The requirements quoted in the quote reference shall not be in conflict with those in the main document.\n"
+            "3) Analysis Results: The analysis results in the quote reference that are transferred to or quoted in the main document shall not be in conflict with what is stated in the main document.\n"
+            "4) Conclusions: The conclusions of the quote reference shall not be in conflict with the conclusions of the main document.\n"
+            "Any identified conflict is called a 'Reference Conflict Error'.\n\n"
             "Step 2 — Identify Reference Data Inconsistency Errors:\n"
             "Identify all data/values/clauses in the main document that are quoted from the quote reference\n"
             "(look for keywords such as 'according to', 'as stated in', 'per', 'reference', etc.).\n"
             "Check each for consistency with the original data in the quote reference document.\n"
             "Any inconsistency is called a 'Reference Data Inconsistency Error'.\n\n"
             "Output Format (Markdown):\n"
-            "For each identified error, report in this format:\n"
-            "- (1) Reference Relevancy Error Type: Reference Alignment Error OR Reference Data Inconsistency Error\n"
+            "For each identified error, use this format:\n"
+            "- (1) Reference Relevancy Error Type: Reference Conflict Error OR Reference Data Inconsistency Error\n"
             "- (2) Description: Detailed description of the error\n"
             "- (3) Risk Level: High / Medium / Low\n"
             "  - High: Impacting Main Document Conclusion\n"
-            "  - Medium: Impacting Only Main Document Analysis, Not Conclusion\n"
+            "  - Medium: Impacting Only the Main Document Analysis, Not Conclusion\n"
             "  - Low: Impacting Only Main Document Statements\n\n"
             "End with a summary table (Error Type / Description Summary / Risk Level).\n\n"
             "Note: If the main document contains no identifiable quotes/citations, state this clearly and perform a conservative 'possible quote points' check without inventing content.\n\n"
@@ -2489,25 +2495,9 @@ def run_step7_integration(
     combined_input = _build_input(language)
 
     if language == "zh":
-        methodology = (
-            "【Step 7 輸出規範（Reference Relevancy Summary Report）】\n"
-            "你必須依照以下方法論定義與格式，將 Step 6 的參考關聯性結果整理成『摘要報告』。\n\n"
-            "目的：檢查主文件與 upstream reference / quote reference 的關聯性。\n\n"
-            "錯誤類型定義：\n"
-            "1) Reference Conflict Error：主文件與 upstream/quote reference 在『目的、需求、分析結果、結論』之間存在衝突。\n"
-            "2) Reference Data Inconsistency Error：主文件中引用自 upstream/quote reference 的數據/資料前後不一致。\n\n"
-            "摘要報告輸出格式（每一筆錯誤/發現都必須用這個格式列出）：\n"
-            "- Reference Relevancy Error Type: Reference Conflict Error (main vs upstream) / (main vs quote)\n"
-            "  或 Reference Data Inconsistency Error (main vs upstream) / (main vs quote)\n"
-            "- Description: 描述錯誤內容\n"
-            "- Risk Level: High / Medium / Low\n"
-            "  High: 影響主文件結論\n"
-            "  Medium: 只影響主文件分析，不影響結論\n"
-            "  Low: 只影響主文件陳述\n"
-        )
         sys = (
-            "你是一位專業的技術審閱報告整合專家。"
-            "你的任務是將多份已完成的分析結果整合成一份完整、條理清晰、專業可交付的報告。"
+            "你是一位專業的技術審閱整合專家。"
+            "你的任務是將多份已完成的分析結果整合成一份完整、條理清晰、專業的分析結果。"
             "嚴格禁止新增任何未在輸入中提及的分析內容，也不得刪除任何已分析的發現。"
             "只做整理、去重、統一格式、改善可讀性的工作。"
         )
@@ -2518,39 +2508,21 @@ def run_step7_integration(
             "• 步驟六-A（Step 6-A）：上游主要參考文件相關性分析結果（如有）\n"
             "• 步驟六-B（Step 6-B）：次要參考文件引用一致性分析結果（如有）\n\n"
             "要求：\n"
-            "1. 將所有上述分析結果整合成【一份】完整的專業報告。\n"
+            "1. 將所有上述分析結果整合成【一份】完整的專業分析結果。\n"
             "2. 去除重複的內容，統一術語與格式。\n"
             "3. 不得新增任何未在輸入中提及的分析或發現。\n"
             "4. 不得刪除任何已分析識別的錯誤或發現。\n"
-            "5. 報告必須包含以下兩個主要部分（但內容只能來自輸入）：\n"
+            "5. 整合結果必須包含以下兩個主要部分（但內容只能來自輸入）：\n"
             "   A) Step 5 主文件分析結果：保留所有既有發現，僅整理、去重與潤飾。\n"
-            "   B) Step 6 參考關聯性結果（Upstream + Quote）：必須依『Reference Conflict Error / Reference Data Inconsistency Error』的方法論定義與摘要格式輸出。\n"
-            "6. 重要：你只能重新組織/改寫為更專業的表述，不能新增任何新的錯誤或結論；也不能遺漏任何輸入中已經出現的錯誤/發現。\n\n"
-            f"{methodology}\n\n"
+            "   B) Step 6 參考文件相關性分析結果（Upstream + Quote）：保留所有既有發現，僅整理、去重與潤飾。\n"
+            "6. 你只能重新組織/改寫為更專業的表述，不能新增任何新的錯誤或結論；也不能遺漏任何輸入中已經出現的錯誤/發現。\n\n"
             f"{combined_input[:24000]}"
         )
     else:
-        methodology = (
-            "[Step 7 Output Spec (Reference Relevancy Summary Report)]\n"
-            "Use the following methodology definitions and output format to rewrite the Step 6 reference relevancy "
-            "results into a clean Summary Report.\n\n"
-            "Purpose: check relevance between the main document and the upstream/quote reference.\n\n"
-            "Error type definitions:\n"
-            "1) Reference Conflict Error: any conflict in purpose, requirements, analysis results, or conclusions between the main document and the upstream/quote reference.\n"
-            "2) Reference Data Inconsistency Error: any inconsistency between quoted data in the main document and the data in the upstream/quote reference.\n\n"
-            "Summary Report format (EVERY error/finding must be listed in this format):\n"
-            "- Reference Relevancy Error Type: Reference Conflict Error (main vs upstream) / (main vs quote)\n"
-            "  OR Reference Data Inconsistency Error (main vs upstream) / (main vs quote)\n"
-            "- Description: description of the error\n"
-            "- Risk Level: High / Medium / Low\n"
-            "  High: impacts main document conclusion\n"
-            "  Medium: impacts only analysis, not conclusion\n"
-            "  Low: impacts only statements\n"
-        )
         sys = (
-            "You are a professional technical review report integration specialist. "
+            "You are a professional technical review integration specialist. "
             "Your task is to consolidate multiple completed analysis results into ONE complete, well-structured, "
-            "and professionally deliverable report. "
+            "and professionally presented analysis result. "
             "Strictly do NOT add any new analysis findings not present in the input. "
             "Do NOT remove any identified errors or findings. "
             "Only organize, de-duplicate, unify formatting, and improve readability."
@@ -2562,15 +2534,14 @@ def run_step7_integration(
             "• Step 6-A: Upstream reference relevance analysis result (if available)\n"
             "• Step 6-B: Quote reference relevance analysis result (if available)\n\n"
             "Requirements:\n"
-            "1. Consolidate all of the above into ONE complete professional report.\n"
+            "1. Consolidate all of the above into ONE complete, professionally presented analysis result.\n"
             "2. Remove duplicate content; unify terminology and formatting.\n"
             "3. Do NOT add any analysis or findings not already present in the input.\n"
             "4. Do NOT remove any identified errors or findings from the input.\n"
-            "5. The report MUST have two major parts (content only from input):\n"
-            "   A) Step 5 main document findings: keep every finding; only organize/de-duplicate/polish.\n"
-            "   B) Step 6 reference relevancy findings (Upstream + Quote): MUST be rewritten into a Summary Report using the provided 'Reference Conflict Error' / 'Reference Data Inconsistency Error' definitions and output format.\n"
+            "5. The integrated result MUST have two major parts (content only from input):\n"
+            "   A) Step 5 main document findings: keep every finding; only organize, de-duplicate, and polish.\n"
+            "   B) Step 6 reference relevancy findings (Upstream + Quote): keep every finding; only organize, de-duplicate, and polish.\n"
             "6. You may rephrase for professionalism, but you must not introduce new findings or omit any existing findings.\n\n"
-            f"{methodology}\n\n"
             f"{combined_input[:24000]}"
         )
 
@@ -2944,7 +2915,7 @@ def run_followup_qa(
 
 def build_full_report(lang: str, framework_key: str, state: Dict, include_followups: bool = True, session_state: Dict = None) -> str:
     """
-    Build a formal review report including Step 7 Integration and Step 8 Cross Checking.
+    Build a professional review analysis result including Step 7 Integration and Step 8 Cross Checking.
     Preserves structure and tables; optional session_state provides step7_output/step7_generated_at.
     """
     session = session_state if session_state is not None else st.session_state
@@ -2998,7 +2969,7 @@ def build_full_report(lang: str, framework_key: str, state: Dict, include_follow
 
     if lang == "zh":
         parts = [
-            f"{BRAND_TITLE_ZH} 審查結果報告" + ("（含 Q&A）" if include_followups and followups else ""),
+            f"{BRAND_TITLE_ZH} 審查分析結果" + ("（含 Q&A）" if include_followups and followups else ""),
             f"{BRAND_SUBTITLE_ZH}",
             f"產生時間：{now}",
             f"使用者帳號：{email}",
@@ -3018,7 +2989,7 @@ def build_full_report(lang: str, framework_key: str, state: Dict, include_follow
             "==============================",
             meta_block,
             "==============================",
-            "（步驟八）交叉核對分析報告",
+            "（步驟八）交叉核對分析結果",
             "==============================",
             step8_output if step8_output else "（尚無內容）",
         ])
@@ -3037,7 +3008,7 @@ def build_full_report(lang: str, framework_key: str, state: Dict, include_follow
                 parts.append("")
     else:
         parts = [
-            f"{BRAND_TITLE_EN} Review Result Report" + (" (with Q&A)" if include_followups and followups else ""),
+            f"{BRAND_TITLE_EN} Review Analysis Result" + (" (with Q&A)" if include_followups and followups else ""),
             f"{BRAND_SUBTITLE_EN}",
             f"Generated: {now}",
             f"User: {email}",
@@ -3057,7 +3028,7 @@ def build_full_report(lang: str, framework_key: str, state: Dict, include_follow
             "==============================",
             meta_block,
             "==============================",
-            "(Step 8) Cross Checking Analysis Report",
+            "(Step 8) Cross Checking Analysis Result",
             "==============================",
             step8_output if step8_output else "(No content yet.)",
         ])
