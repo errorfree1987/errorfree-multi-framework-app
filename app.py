@@ -2485,6 +2485,22 @@ def run_step7_integration(
     combined_input = _build_input(language)
 
     if language == "zh":
+        methodology = (
+            "【Step 7 輸出規範（Reference Relevancy Summary Report）】\n"
+            "你必須依照以下方法論定義與格式，將 Step 6 的參考關聯性結果整理成『摘要報告』。\n\n"
+            "目的：檢查主文件與 upstream reference / quote reference 的關聯性。\n\n"
+            "錯誤類型定義：\n"
+            "1) Reference Conflict Error：主文件與 upstream/quote reference 在『目的、需求、分析結果、結論』之間存在衝突。\n"
+            "2) Reference Data Inconsistency Error：主文件中引用自 upstream/quote reference 的數據/資料前後不一致。\n\n"
+            "摘要報告輸出格式（每一筆錯誤/發現都必須用這個格式列出）：\n"
+            "- Reference Relevancy Error Type: Reference Conflict Error (main vs upstream) / (main vs quote)\n"
+            "  或 Reference Data Inconsistency Error (main vs upstream) / (main vs quote)\n"
+            "- Description: 描述錯誤內容\n"
+            "- Risk Level: High / Medium / Low\n"
+            "  High: 影響主文件結論\n"
+            "  Medium: 只影響主文件分析，不影響結論\n"
+            "  Low: 只影響主文件陳述\n"
+        )
         sys = (
             "你是一位專業的技術審閱報告整合專家。"
             "你的任務是將多份已完成的分析結果整合成一份完整、條理清晰、專業可交付的報告。"
@@ -2502,11 +2518,31 @@ def run_step7_integration(
             "2. 去除重複的內容，統一術語與格式。\n"
             "3. 不得新增任何未在輸入中提及的分析或發現。\n"
             "4. 不得刪除任何已分析識別的錯誤或發現。\n"
-            "5. 以清晰的章節結構組織報告，包含摘要、各類錯誤/發現的詳細說明、以及建議修正清單。\n"
-            "6. 使用專業的技術報告語言，讓報告看起來像一份可直接提交的最終分析報告。\n\n"
+            "5. 報告必須包含以下兩個主要部分（但內容只能來自輸入）：\n"
+            "   A) Step 5 主文件分析結果：保留所有既有發現，僅整理、去重與潤飾。\n"
+            "   B) Step 6 參考關聯性結果（Upstream + Quote）：必須依『Reference Conflict Error / Reference Data Inconsistency Error』的方法論定義與摘要格式輸出。\n"
+            "6. 重要：你只能重新組織/改寫為更專業的表述，不能新增任何新的錯誤或結論；也不能遺漏任何輸入中已經出現的錯誤/發現。\n\n"
+            f"{methodology}\n\n"
             f"{combined_input[:24000]}"
         )
     else:
+        methodology = (
+            "[Step 7 Output Spec (Reference Relevancy Summary Report)]\n"
+            "Use the following methodology definitions and output format to rewrite the Step 6 reference relevancy "
+            "results into a clean Summary Report.\n\n"
+            "Purpose: check relevance between the main document and the upstream/quote reference.\n\n"
+            "Error type definitions:\n"
+            "1) Reference Conflict Error: any conflict in purpose, requirements, analysis results, or conclusions between the main document and the upstream/quote reference.\n"
+            "2) Reference Data Inconsistency Error: any inconsistency between quoted data in the main document and the data in the upstream/quote reference.\n\n"
+            "Summary Report format (EVERY error/finding must be listed in this format):\n"
+            "- Reference Relevancy Error Type: Reference Conflict Error (main vs upstream) / (main vs quote)\n"
+            "  OR Reference Data Inconsistency Error (main vs upstream) / (main vs quote)\n"
+            "- Description: description of the error\n"
+            "- Risk Level: High / Medium / Low\n"
+            "  High: impacts main document conclusion\n"
+            "  Medium: impacts only analysis, not conclusion\n"
+            "  Low: impacts only statements\n"
+        )
         sys = (
             "You are a professional technical review report integration specialist. "
             "Your task is to consolidate multiple completed analysis results into ONE complete, well-structured, "
@@ -2526,9 +2562,11 @@ def run_step7_integration(
             "2. Remove duplicate content; unify terminology and formatting.\n"
             "3. Do NOT add any analysis or findings not already present in the input.\n"
             "4. Do NOT remove any identified errors or findings from the input.\n"
-            "5. Organize the report with clear sections: Executive Summary, Detailed Findings (by category/framework), "
-            "and a Recommended Corrective Actions list.\n"
-            "6. Use professional technical report language suitable for direct submission as a final analysis report.\n\n"
+            "5. The report MUST have two major parts (content only from input):\n"
+            "   A) Step 5 main document findings: keep every finding; only organize/de-duplicate/polish.\n"
+            "   B) Step 6 reference relevancy findings (Upstream + Quote): MUST be rewritten into a Summary Report using the provided 'Reference Conflict Error' / 'Reference Data Inconsistency Error' definitions and output format.\n"
+            "6. You may rephrase for professionalism, but you must not introduce new findings or omit any existing findings.\n\n"
+            f"{methodology}\n\n"
             f"{combined_input[:24000]}"
         )
 
@@ -4233,6 +4271,64 @@ def main():
     ui_zhv = st.session_state.get("zh_variant", "tw")
     is_zh = (ui_lang == "zh")
 
+    # Sidebar styling — make the workspace panel more lively but still professional
+    st.sidebar.markdown(
+        """
+<style>
+  section[data-testid="stSidebar"] {
+    background: radial-gradient(1200px 800px at 20% 0%, rgba(192, 57, 43, 0.08), transparent 60%),
+                radial-gradient(900px 700px at 90% 30%, rgba(52, 152, 219, 0.08), transparent 55%),
+                linear-gradient(180deg, rgba(255,255,255,0.0), rgba(0,0,0,0.015));
+  }
+  section[data-testid="stSidebar"] .stMarkdown h2 {
+    letter-spacing: 0.2px;
+    font-weight: 900;
+  }
+  section[data-testid="stSidebar"] .ef-sb-card {
+    border: 1px solid rgba(49, 51, 63, 0.14);
+    border-radius: 14px;
+    padding: 12px 12px;
+    background: rgba(255,255,255,0.72);
+    box-shadow: 0 10px 22px rgba(15, 23, 42, 0.06);
+    margin: 10px 0 12px 0;
+  }
+  section[data-testid="stSidebar"] .ef-sb-title {
+    font-size: 12px;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: rgba(49, 51, 63, 0.66);
+    margin: 0 0 6px 0;
+  }
+  section[data-testid="stSidebar"] .ef-sb-value {
+    font-size: 16px;
+    font-weight: 800;
+    margin: 0;
+    color: #111827;
+  }
+  section[data-testid="stSidebar"] .ef-sb-pillrow { display:flex; gap:8px; flex-wrap: wrap; }
+  section[data-testid="stSidebar"] .ef-sb-pill {
+    display:inline-block;
+    padding: 6px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 800;
+    border: 1px solid rgba(49, 51, 63, 0.12);
+    background: rgba(49, 51, 63, 0.04);
+    color: rgba(49, 51, 63, 0.92);
+  }
+  section[data-testid="stSidebar"] .ef-sb-pill.usage { background: rgba(192, 57, 43, 0.08); border-color: rgba(192, 57, 43, 0.22); }
+  section[data-testid="stSidebar"] .ef-sb-pill.lease { background: rgba(52, 152, 219, 0.08); border-color: rgba(52, 152, 219, 0.22); }
+  section[data-testid="stSidebar"] .ef-sb-muted {
+    color: rgba(49, 51, 63, 0.62);
+    font-size: 13px;
+    font-weight: 600;
+  }
+</style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     # ── Sidebar: Enterprise User Workspace Panel ─────────────────────────────
     # System-level details (Tenant slug, AI provider/model, Namespace, etc.)
     # are intentionally omitted — enterprise users should not see platform internals.
@@ -4251,9 +4347,14 @@ def main():
         if _tenant_raw else "—"
     )
     st.sidebar.markdown(
-        f"**{'Organization' if not is_zh else ('組織' if ui_zhv == 'tw' else '组织')}**"
+        f"""
+<div class="ef-sb-card">
+  <div class="ef-sb-title">{'Organization' if not is_zh else ('組織' if ui_zhv == 'tw' else '组织')}</div>
+  <p class="ef-sb-value">{_org_display}</p>
+</div>
+        """,
+        unsafe_allow_html=True,
     )
-    st.sidebar.markdown(_org_display)
 
     # ── Usage & Lease (for authenticated user) ─────────────────────────────────
     if st.session_state.get("is_authenticated"):
@@ -4262,13 +4363,17 @@ def main():
         if _tenant_for_usage:
             _usage_str, _lease_str = _get_sidebar_usage_and_lease(_tenant_for_usage, _email_for_usage)
             st.sidebar.markdown(
-                f"**{'Usage' if not is_zh else ('使用次數' if ui_zhv == 'tw' else '使用次数')}**"
+                f"""
+<div class="ef-sb-card">
+  <div class="ef-sb-title">{'Account' if not is_zh else ('帳戶狀態' if ui_zhv == 'tw' else '账户状态')}</div>
+  <div class="ef-sb-pillrow">
+    <span class="ef-sb-pill usage">{('Usage' if not is_zh else ('使用次數' if ui_zhv == 'tw' else '使用次数'))}: {_usage_str}</span>
+    <span class="ef-sb-pill lease">{('Lease / Term' if not is_zh else ('租約期限' if ui_zhv == 'tw' else '租约期限'))}: {_lease_str}</span>
+  </div>
+</div>
+                """,
+                unsafe_allow_html=True,
             )
-            st.sidebar.markdown(_usage_str)
-            st.sidebar.markdown(
-                f"**{'Lease / Term' if not is_zh else ('租約期限' if ui_zhv == 'tw' else '租约期限')}**"
-            )
-            st.sidebar.markdown(_lease_str)
 
     # ── Review Type ───────────────────────────────────────────────────────────
     _doc_type = st.session_state.get("document_type")
@@ -4276,15 +4381,25 @@ def main():
         "—" if (not _doc_type or _doc_type == "None") else _doc_type
     )
     st.sidebar.markdown(
-        f"**{'Review Type' if not is_zh else ('審查類型' if ui_zhv == 'tw' else '审查类型')}**"
+        f"""
+<div class="ef-sb-card">
+  <div class="ef-sb-title">{'Review Type' if not is_zh else ('審查類型' if ui_zhv == 'tw' else '审查类型')}</div>
+  <p class="ef-sb-value">{_review_type_display}</p>
+</div>
+        """,
+        unsafe_allow_html=True,
     )
-    st.sidebar.markdown(_review_type_display)
 
     # ── Framework ─────────────────────────────────────────────────────────────
     st.sidebar.markdown(
-        f"**{'Framework' if not is_zh else '框架'}**"
+        f"""
+<div class="ef-sb-card">
+  <div class="ef-sb-title">{'Framework' if not is_zh else '框架'}</div>
+  <p class="ef-sb-muted">Error-Free® Multi-Pass Technical Review Framework</p>
+</div>
+        """,
+        unsafe_allow_html=True,
     )
-    st.sidebar.markdown("Error-Free® Multi-Pass Technical Review Framework")
 
     # ── Recent Reviews ────────────────────────────────────────────────────────
     st.sidebar.markdown("---")
@@ -4305,9 +4420,11 @@ def main():
             else ("尚無分析紀錄。" if ui_zhv == "tw" else "暂无分析记录。")
         )
     else:
+        st.sidebar.markdown("<div class=\"ef-sb-card\">", unsafe_allow_html=True)
         for _rr in _review_rows:
             _doc_name = (_rr.get("document_name") or "").strip() or "—"
-            st.sidebar.markdown(f"• {_doc_name}")
+            st.sidebar.markdown(f"<div class=\"ef-sb-muted\">• {_doc_name}</div>", unsafe_allow_html=True)
+        st.sidebar.markdown("</div>", unsafe_allow_html=True)
 
     # ── User / Account ─────────────────────────────────────────────────────────
     if st.session_state.get("is_authenticated"):
@@ -5809,36 +5926,27 @@ button[title="fw-remove"] p {
                     value=True,
                     key=f"include_qa_{selected_key}",
                 )
-                # Select format (PDF/PPTX temporarily disabled)
+                # Select format
                 fmt = st.selectbox(
                     "Select format" if lang == "en" else zh("選擇格式", "选择格式"),
-                    ["Word (DOCX)"],
+                    ["Word (DOCX)", "PDF"],
                     key=f"fmt_{selected_key}",
-                )
-                st.markdown(
-                    "<div style='color:#9aa0a6; margin-top:6px;'>"
-                    + ("PDF (temporarily unavailable)\n" if lang == "en" else zh("PDF（暫不開放）\n", "PDF（暂不开放）\n"))
-                    + ("PowerPoint (PPTX) (temporarily unavailable)" if lang == "en" else zh("PowerPoint（PPTX）（暫不開放）", "PowerPoint（PPTX）（暂不开放）"))
-                    + "</div>",
-                    unsafe_allow_html=True,
                 )
 
                 report = build_full_report(lang, selected_key, current_state, include_followups=include_qa, session_state=st.session_state)
 
-                # PDF/PPTX are temporarily disabled (formatting not stable yet)
-                if fmt.startswith("PDF") or fmt.startswith("PowerPoint"):
-                    st.info(
-                        "PDF/PPTX download is temporarily unavailable." if lang == "en" else zh("PDF / PPTX 下載暫不開放。", "PDF / PPTX 下载暂不开放。")
-                    )
+                now_ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                framework_key = (selected_key or "unknown").replace("/", "__")
+                if fmt == "PDF":
+                    data = build_pdf_bytes(report)
+                    mime = "application/pdf"
+                    base_filename = f"Error-Free® IER {framework_key} {now_ts}" + (" +Q&A" if include_qa else "") + ".pdf"
                 else:
                     # Download (DOCX)
                     data = build_docx_bytes(report)
                     mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-
-                    now_ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                    framework_key = (selected_key or "unknown").replace("/", "__")
                     base_filename = f"Error-Free® IER {framework_key} {now_ts}" + (" +Q&A" if include_qa else "") + ".docx"
-                    filename = tenant_namespace("downloads", base_filename).replace("/", "__")
+                filename = tenant_namespace("downloads", base_filename).replace("/", "__")
 
                     # --- Prepare one canonical history row (saved on click, best-effort) ---
                     tenant = (st.session_state.get("tenant") or "unknown").strip() or "unknown"
@@ -5871,7 +5979,7 @@ button[title="fw-remove"] p {
                         },
                     }
 
-                    # Download (DOCX) — use Streamlit native download_button
+                    # Download — use Streamlit native download_button
                     try:
                         st.download_button(
                             label=("Download" if lang == "en" else zh("開始下載", "开始下载")),
