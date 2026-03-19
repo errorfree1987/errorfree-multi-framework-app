@@ -5948,67 +5948,67 @@ button[title="fw-remove"] p {
                     base_filename = f"Error-Free® IER {framework_key} {now_ts}" + (" +Q&A" if include_qa else "") + ".docx"
                 filename = tenant_namespace("downloads", base_filename).replace("/", "__")
 
-                    # --- Prepare one canonical history row (saved on click, best-effort) ---
-                    tenant = (st.session_state.get("tenant") or "unknown").strip() or "unknown"
-                    email = (st.session_state.get("user_email") or "").strip().lower() or None
-                    doc_name = st.session_state.get("last_doc_name") or None
-                    doc_text = st.session_state.get("last_doc_text") or ""
-                    doc_sha = hashlib.sha256(doc_text.encode("utf-8")).hexdigest() if doc_text else None
+                # --- Prepare one canonical history row (saved on click, best-effort) ---
+                tenant = (st.session_state.get("tenant") or "unknown").strip() or "unknown"
+                email = (st.session_state.get("user_email") or "").strip().lower() or None
+                doc_name = st.session_state.get("last_doc_name") or None
+                doc_text = st.session_state.get("last_doc_text") or ""
+                doc_sha = hashlib.sha256(doc_text.encode("utf-8")).hexdigest() if doc_text else None
 
-                    report_sha = hashlib.sha256(report.encode("utf-8")).hexdigest()
-                    fp = report_sha[:16]
+                report_sha = hashlib.sha256(report.encode("utf-8")).hexdigest()
+                fp = report_sha[:16]
 
-                    st.session_state["_pending_tenant_review_row"] = {
-                        "_fingerprint": fp,
-                        "tenant": tenant,
-                        "created_by": email,
-                        "framework_key": selected_key,
-                        "document_name": doc_name,
-                        "document_sha256": doc_sha,
-                        "report_md": report,
-                        "qa_json": (current_state.get("followup_history") or []) if include_qa else None,
-                        "download_filename": filename,
-                        "meta": {
-                            "lang": lang,
-                            "zh_variant": st.session_state.get("zh_variant"),
-                            "include_qa": bool(include_qa),
-                            "report_sha256": report_sha,
-                            "ai_provider": (st.session_state.get("tenant_ai_settings") or {}).get("provider"),
-                            "ai_model": (st.session_state.get("tenant_ai_settings") or {}).get("model"),
-                            "ai_source": (st.session_state.get("tenant_ai_settings") or {}).get("source"),
-                        },
-                    }
+                st.session_state["_pending_tenant_review_row"] = {
+                    "_fingerprint": fp,
+                    "tenant": tenant,
+                    "created_by": email,
+                    "framework_key": selected_key,
+                    "document_name": doc_name,
+                    "document_sha256": doc_sha,
+                    "report_md": report,
+                    "qa_json": (current_state.get("followup_history") or []) if include_qa else None,
+                    "download_filename": filename,
+                    "meta": {
+                        "lang": lang,
+                        "zh_variant": st.session_state.get("zh_variant"),
+                        "include_qa": bool(include_qa),
+                        "report_sha256": report_sha,
+                        "ai_provider": (st.session_state.get("tenant_ai_settings") or {}).get("provider"),
+                        "ai_model": (st.session_state.get("tenant_ai_settings") or {}).get("model"),
+                        "ai_source": (st.session_state.get("tenant_ai_settings") or {}).get("source"),
+                    },
+                }
 
-                    # Download — use Streamlit native download_button
-                    try:
-                        st.download_button(
-                            label=("Download" if lang == "en" else zh("開始下載", "开始下载")),
-                            data=data,
-                            file_name=filename,
-                            mime=mime,
-                            key=tenant_namespace("ui", f"download_{framework_key}_{now_ts}").replace("/", "__"),
-                            on_click=_save_pending_review_to_supabase,
-                        )
-                    except TypeError:
-                        # Older Streamlit: download_button may not support on_click
-                        st.download_button(
-                            label=("Download" if lang == "en" else zh("開始下載", "开始下载")),
-                            data=data,
-                            file_name=filename,
-                            mime=mime,
-                            key=tenant_namespace("ui", f"download_{framework_key}_{now_ts}").replace("/", "__"),
-                        )
-                        st.button(
-                            ("Record this download in history" if lang == "en" else zh("將本次下載寫入歷史紀錄", "将本次下载写入历史记录")),
-                            on_click=_save_pending_review_to_supabase,
-                            key=tenant_namespace("ui", f"record_download_{framework_key}_{now_ts}").replace("/", "__"),
-                        )
-
-                    st.caption(
-                        "Tip: If you want a 'Save As' location prompt, enable 'Ask where to save each file' in your browser settings."
-                        if lang == "en"
-                        else zh("提示：若你希望每次都跳出『選擇下載位置』視窗，請在瀏覽器下載設定中開啟『每次下載前詢問儲存位置』。", "提示：若你希望每次都跳出『选择下载位置』视窗，请在浏览器下载设置中开启『每次下载前询问保存位置』。")
+                # Download — use Streamlit native download_button
+                try:
+                    st.download_button(
+                        label=("Download" if lang == "en" else zh("開始下載", "开始下载")),
+                        data=data,
+                        file_name=filename,
+                        mime=mime,
+                        key=tenant_namespace("ui", f"download_{framework_key}_{now_ts}").replace("/", "__"),
+                        on_click=_save_pending_review_to_supabase,
                     )
+                except TypeError:
+                    # Older Streamlit: download_button may not support on_click
+                    st.download_button(
+                        label=("Download" if lang == "en" else zh("開始下載", "开始下载")),
+                        data=data,
+                        file_name=filename,
+                        mime=mime,
+                        key=tenant_namespace("ui", f"download_{framework_key}_{now_ts}").replace("/", "__"),
+                    )
+                    st.button(
+                        ("Record this download in history" if lang == "en" else zh("將本次下載寫入歷史紀錄", "将本次下载写入历史记录")),
+                        on_click=_save_pending_review_to_supabase,
+                        key=tenant_namespace("ui", f"record_download_{framework_key}_{now_ts}").replace("/", "__"),
+                    )
+
+                st.caption(
+                    "Tip: If you want a 'Save As' location prompt, enable 'Ask where to save each file' in your browser settings."
+                    if lang == "en"
+                    else zh("提示：若你希望每次都跳出『選擇下載位置』視窗，請在瀏覽器下載設定中開啟『每次下載前詢問儲存位置』。", "提示：若你希望每次都跳出『选择下载位置』视窗，请在浏览器下载设置中开启『每次下载前询问保存位置』。")
+                )
     else:
         st.info("Complete Step 8 to enable downloads." if lang == "en" else zh("請先完成步驟八，產出最終交付報告後才能下載。", "请先完成步骤八，产出最终交付报告后才能下载。"))
 
