@@ -1806,6 +1806,9 @@ def save_state_to_disk():
 
         # Step 5 explicit confirmation gate (user must press "Confirm & proceed to Step 6")
         "step5_framework_confirmed": st.session_state.get("step5_framework_confirmed", False),
+
+        # Step 6-B explicit confirmation: user has no quote reference and confirmed to proceed to Step 7
+        "step6b_no_quote_confirm": st.session_state.get("step6b_no_quote_confirm", False),
     }
     try:
         f = _user_state_file()
@@ -1857,6 +1860,7 @@ def restore_state_from_disk():
         "step7_history", "integration_history",
         "_pending_clear_followup_key", "custom_frameworks",
         "step5_framework_confirmed",
+        "step6b_no_quote_confirm",
     ]
     for k in workflow_keys:
         if k in data:
@@ -4086,6 +4090,9 @@ def _reset_whole_document():
     # Clear Step 5 confirmation gate
     st.session_state["step5_framework_confirmed"] = False
 
+    # Clear Step 6-B no-quote confirmation
+    st.session_state["step6b_no_quote_confirm"] = False
+
     # --------- KEEP AUTH (Portal-only SSO session stays logged-in) ---------
     # Do NOT change:
     # - st.session_state["is_authenticated"]
@@ -5058,39 +5065,7 @@ def main():
             save_state_to_disk()
             st.rerun()
 
-    col_qr1, col_qr2, col_qr3 = st.columns([1, 2, 3])
-    with col_qr1:
-        if st.button(
-            "Reset quote reference",
-            key="reset_quote_ref_btn",
-            disabled=quote_finalized,
-        ):
-            # Allow uploading the next quote reference by switching the uploader widget key.
-            st.session_state.quote_current = None
-            st.session_state.quote_step6_done_current = False
-            st.session_state.step6b_done_current = False
-            st.session_state.quote_upload_nonce = int(st.session_state.get("quote_upload_nonce", 0)) + 1
-            # Best-effort clear for the prior uploader widget state
-            try:
-                old_key = f"quote_uploader_{quote_nonce}"
-                if old_key in st.session_state:
-                    st.session_state[old_key] = None
-            except Exception:
-                pass
-            save_state_to_disk()
-            st.rerun()
-
-    with col_qr2:
-        pass
-
-
-    with col_qr3:
-        # Show quote history from first framework (summary only)
-        _qh_first = framework_states.get(selected_framework_keys[0], {}).get("quote_history") or [] if selected_framework_keys else []
-        if _qh_first:
-            st.markdown("**Quote relevance history (first framework):**" if lang == "en" else "**引用一致性分析紀錄（第一個框架）：**")
-            for i, h in enumerate(_qh_first, start=1):
-                st.markdown(f"- {i}. {h.get('name','(unknown)')} — {h.get('analyzed_at','')}")
+    # (Reset Quote Reference button has been moved to Step 6-B for better workflow continuity)
 
     st.markdown("---")
 
@@ -5557,57 +5532,118 @@ button[title="fw-remove"] p {
                 st.success("Upstream reference relevance analysis complete." if lang == "en" else zh("上游參考文件相關性分析完成。", "上游参考文件相关性分析完成。"))
                 st.rerun()
 
-    # ── Step 6-B: Quote Relevance (single global analysis, supports multiple quote uploads) ──
-    if quote_exists:
-        st.markdown(
-            "**Step 6-B: Quote Reference Relevance**" if lang == "en"
-            else "**步驟六-B：次要參考文件引用一致性**"
+    # ── Step 6-B: Quote Relevance — always shown once Step 5 is confirmed ──────
+    # Three actions are available side-by-side:
+    #   1. Run Quote Reference Relevance   (active when a quote is uploaded & not yet analyzed)
+    #   2. Reset Quote Reference           (active when a quote is uploaded; moved here from Step 3-2)
+    #   3. No quote reference — proceed    (active when NO quote is uploaded and user has not yet confirmed)
+    st.markdown(
+        "**Step 6-B: Quote Reference Relevance**" if lang == "en"
+        else "**步驟六-B：次要參考文件引用一致性**"
+    )
+    _s6b_upstream_ok = (not upstream_exists) or bool(st.session_state.get("step6a_done", False))
+    if upstream_exists and not _s6b_upstream_ok:
+        st.info(
+            "Complete Step 6-A first before running Step 6-B." if lang == "en"
+            else zh("請先完成步驟六-A，再執行步驟六-B。", "请先完成步骤六-A，再执行步骤六-B。")
         )
-        _s6b_upstream_ok = (not upstream_exists) or bool(st.session_state.get("step6a_done", False))
-        if upstream_exists and not _s6b_upstream_ok:
-            st.info(
-                "Complete Step 6-A first before running Step 6-B." if lang == "en"
-                else zh("請先完成步驟六-A，再執行步驟六-B。", "请先完成步骤六-A，再执行步骤六-B。")
-            )
-        _s6b_done = bool(st.session_state.get("step6b_done_current", False))
-        _s6b_col_btn, _s6b_col_status = st.columns([4, 1])
-        with _s6b_col_btn:
-            _s6b_run = st.button(
-                "Run Quote Reference Relevance" if lang == "en"
-                else zh("執行次要參考文件引用一致性分析", "执行次要参考文件引用一致性分析"),
-                key="run_step6b_btn",
-                disabled=(not (step5_all_done and step5_framework_confirmed)) or not quote_exists or _s6b_done or not _s6b_upstream_ok,
-            )
-        with _s6b_col_status:
-            if _s6b_done:
-                st.success("✓ Done" if lang == "en" else "✓ 完成")
-        if _s6b_run:
-            banner = show_running_banner(
-                "Analyzing quote reference relevance..." if lang == "en"
-                else zh("次要參考文件引用一致性分析中...", "次要参考文件引用一致性分析中...")
-            )
-            try:
-                with st.spinner(" "):
-                    _q_text = st.session_state.quote_current.get("text", "") if st.session_state.quote_current else ""
-                    _s6b_out = run_quote_relevance(lang, st.session_state.last_doc_text or "", _q_text, model_name)
-            finally:
-                banner.empty()
-            if is_openai_error_output(_s6b_out):
-                render_openai_error(lang)
-                save_state_to_disk()
-            else:
-                _q_rec = {
-                    "name": st.session_state.quote_current.get("name", "(unknown)"),
-                    "ext": st.session_state.quote_current.get("ext", ""),
-                    "uploaded_at": st.session_state.quote_current.get("uploaded_at", ""),
-                    "analyzed_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "output": clean_report_text(_s6b_out),
-                }
-                st.session_state.step6b_history = (st.session_state.get("step6b_history") or []) + [_q_rec]
-                st.session_state.step6b_done_current = True
-                save_state_to_disk()
-                st.success("Quote reference relevance analysis complete." if lang == "en" else zh("次要參考文件引用一致性分析完成。", "次要参考文件引用一致性分析完成。"))
-                st.rerun()
+    _s6b_done = bool(st.session_state.get("step6b_done_current", False))
+    _s6b_no_quote_confirmed = bool(st.session_state.get("step6b_no_quote_confirm", False))
+    _s6b_prereq = step5_all_done and step5_framework_confirmed and _s6b_upstream_ok
+
+    # Current quote nonce (needed by reset logic)
+    _s6b_quote_nonce = int(st.session_state.get("quote_upload_nonce", 0))
+
+    _s6b_run_col, _s6b_reset_col, _s6b_noref_col = st.columns(3)
+
+    # Button 1 — Run Quote Reference Relevance
+    with _s6b_run_col:
+        _s6b_run = st.button(
+            "Run Quote Reference Relevance" if lang == "en"
+            else zh("執行次要參考文件引用一致性分析", "执行次要参考文件引用一致性分析"),
+            key="run_step6b_btn",
+            disabled=(not _s6b_prereq) or not quote_exists or _s6b_done or _s6b_no_quote_confirmed,
+        )
+        if _s6b_done:
+            st.success("✓ Done" if lang == "en" else "✓ 完成")
+
+    # Button 2 — Reset Quote Reference (moved from Step 3-2)
+    with _s6b_reset_col:
+        _s6b_reset = st.button(
+            "Reset Quote Reference" if lang == "en"
+            else zh("重置次要參考文件", "重置次要参考文件"),
+            key="reset_quote_ref_btn",
+            disabled=(not quote_exists) or _s6b_no_quote_confirmed,
+            help="Clear the current quote reference so you can upload a new one." if lang == "en"
+                 else zh("清除目前的次要參考文件，以便上傳新的。", "清除目前的次要参考文件，以便上传新的。"),
+        )
+
+    # Button 3 — No quote reference, confirm proceed to Step 7
+    with _s6b_noref_col:
+        _s6b_noref_label = (
+            "No quote reference — proceed to Step 7" if lang == "en"
+            else zh("無次要參考文件 — 進入步驟七", "无次要参考文件 — 进入步骤七")
+        )
+        _s6b_noref = st.button(
+            _s6b_noref_label,
+            key="step6b_no_ref_btn",
+            disabled=(not _s6b_prereq) or quote_exists or _s6b_no_quote_confirmed,
+            help="Confirm you have no quote reference to analyze and unlock Step 7." if lang == "en"
+                 else zh("確認無需分析次要參考文件，並開啟步驟七。", "确认无需分析次要参考文件，并开启步骤七。"),
+        )
+        if _s6b_no_quote_confirmed and not quote_exists:
+            st.success("✓ Confirmed" if lang == "en" else "✓ 已確認")
+
+    # ── Handle button clicks ────────────────────────────────────────────────
+    if _s6b_reset:
+        # Reset logic (identical to original Step 3-2 reset, plus clear no-quote confirmation)
+        st.session_state.quote_current = None
+        st.session_state.quote_step6_done_current = False
+        st.session_state.step6b_done_current = False
+        st.session_state["step6b_no_quote_confirm"] = False
+        st.session_state.quote_upload_nonce = int(st.session_state.get("quote_upload_nonce", 0)) + 1
+        try:
+            old_key = f"quote_uploader_{_s6b_quote_nonce}"
+            if old_key in st.session_state:
+                st.session_state[old_key] = None
+        except Exception:
+            pass
+        save_state_to_disk()
+        st.rerun()
+
+    if _s6b_noref:
+        # User confirms they have no quote reference — unlock Step 7
+        st.session_state["step6b_no_quote_confirm"] = True
+        save_state_to_disk()
+        st.rerun()
+
+    if _s6b_run:
+        banner = show_running_banner(
+            "Analyzing quote reference relevance..." if lang == "en"
+            else zh("次要參考文件引用一致性分析中...", "次要参考文件引用一致性分析中...")
+        )
+        try:
+            with st.spinner(" "):
+                _q_text = st.session_state.quote_current.get("text", "") if st.session_state.quote_current else ""
+                _s6b_out = run_quote_relevance(lang, st.session_state.last_doc_text or "", _q_text, model_name)
+        finally:
+            banner.empty()
+        if is_openai_error_output(_s6b_out):
+            render_openai_error(lang)
+            save_state_to_disk()
+        else:
+            _q_rec = {
+                "name": st.session_state.quote_current.get("name", "(unknown)"),
+                "ext": st.session_state.quote_current.get("ext", ""),
+                "uploaded_at": st.session_state.quote_current.get("uploaded_at", ""),
+                "analyzed_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "output": clean_report_text(_s6b_out),
+            }
+            st.session_state.step6b_history = (st.session_state.get("step6b_history") or []) + [_q_rec]
+            st.session_state.step6b_done_current = True
+            save_state_to_disk()
+            st.success("Quote reference relevance analysis complete." if lang == "en" else zh("次要參考文件引用一致性分析完成。", "次要参考文件引用一致性分析完成。"))
+            st.rerun()
 
     # Convenience aliases used by Step 7 / Step 8 gates
     upstream_done = bool(st.session_state.get("step6a_done", False))
@@ -5620,7 +5656,11 @@ button[title="fw-remove"] p {
 
     _s7_done = bool(st.session_state.get("step7_done", False))
     _s7_upstream_ok = (not upstream_exists) or upstream_done
-    _s7_quote_ok = (not quote_exists) or quote_done_current
+    # Step 7 quote gate: user must either complete Step 6-B analysis OR explicitly
+    # confirm they have no quote reference (via the "No quote reference" button in Step 6-B).
+    # This prevents Step 7 from unlocking automatically after "Reset Quote Reference" is clicked.
+    _s7_no_quote_confirmed = bool(st.session_state.get("step6b_no_quote_confirm", False))
+    _s7_quote_ok = quote_done_current or _s7_no_quote_confirmed
     _s7_can_run = (
         step5_all_done
         and step5_framework_confirmed
