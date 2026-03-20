@@ -1180,6 +1180,13 @@ def try_portal_sso_login():
             except Exception:
                 token_epoch = 0
 
+            # ✅ CRITICAL: Seed the language from the token into session_state BEFORE
+            # calling _enforce_epoch_or_block(). If the epoch is mismatched the block
+            # screen is rendered immediately, and _detect_ui_lang() must already have
+            # the correct lang in st.session_state so English users see English (not Chinese).
+            # This is the root fix for the post-logout / session-revoked language bug.
+            _apply_portal_lang(payload.get("lang") or _qp_get("lang", "en"))
+
             # Optional debug: show tenant / token_epoch / current_epoch
             if _qp_get("debug_epoch", "") != "":
                 current_epoch_dbg = _get_epoch_strict(tenant_from_payload)
@@ -4706,7 +4713,7 @@ def main():
 
     # Step 1: upload review doc
     st.subheader("Step 1: Upload Review Document" if lang == "en" else zh("步驟一：上傳審閱文件", "步骤一：上传審閱文件"))
-    st.caption("Note: Only 1 document can be uploaded for a complete content analysis." if lang == "en" else zh("提醒：一次只能上載 1 份文件進行完整內容分析。", "提醒：一次只能上传 1 份文件进行完整内容分析。"))
+    st.caption("💡 Note: Only 1 document can be uploaded for a complete content analysis." if lang == "en" else zh("💡 提醒：一次只能上載 1 份文件進行完整內容分析。", "💡 提醒：一次只能上传 1 份文件进行完整内容分析。"))
 
     doc_locked = bool(st.session_state.get("last_doc_text"))
 
@@ -5075,8 +5082,8 @@ def main():
         st.markdown('<div id="step4-framework-section"></div>', unsafe_allow_html=True)
     st.subheader("Step 4: Select Framework" if lang == "en" else zh("步驟四：選擇分析框架", "步骤四：选择分析框架"))
     st.caption(
-        "Single selection only. After Step 5, the framework will be locked until Reset Whole Document." if lang == "en"
-        else zh("僅單選。一旦按下步驟五開始分析後，框架會被鎖住，需 Reset Whole Document 才能重新選擇。", "仅单选。一旦按下步骤五开始分析后，框架会被锁住，需 Reset Whole Document 才能重新选择。")
+        "💡 Single selection only. After Step 5, the framework will be locked until Reset Whole Document." if lang == "en"
+        else zh("💡 僅單選。一旦按下步驟五開始分析後，框架會被鎖住，需 Reset Whole Document 才能重新選擇。", "💡 仅单选。一旦按下步骤五开始分析后，框架会被锁住，需 Reset Whole Document 才能重新选择。")
     )
     doc_type = st.session_state.get("document_type") or DOC_TYPES[0]
     expander_label = (
@@ -5199,10 +5206,10 @@ button[title="fw-remove"] p {
             "**上傳自訂框架** （txt / docx / pdf — 不接受圖片）"
         )
         st.caption(
-            "Each uploaded file becomes a new framework included in the analysis. "
+            "💡 Each uploaded file becomes a new framework included in the analysis. "
             "After a page refresh, the file list below will be restored automatically — framework content is preserved."
             if lang == "en" else
-            "每個上傳的檔案都會成為一個新框架並納入分析。重新整理頁面後，下方檔案列表會自動還原，框架內容不會遺失。"
+            "💡 每個上傳的檔案都會成為一個新框架並納入分析。重新整理頁面後，下方檔案列表會自動還原，框架內容不會遺失。"
         )
 
         # ── Already-loaded custom frameworks list (persisted across refresh) ──
@@ -5337,12 +5344,12 @@ button[title="fw-remove"] p {
     # Step 5: main analysis — one button per framework, sequential unlock
     st.subheader("Step 5: Analyze Main Document" if lang == "en" else zh("步驟五：分析主要文件", "步骤五：分析主要文件"))
     st.caption(
-        "Run each framework's analysis in order. The next button unlocks after the previous one completes. "
+        "💡 Run each framework's analysis in order. The next button unlocks after the previous one completes. "
         "Unanalyzed frameworks and custom uploads in Step 4 remain editable. "
         "Once all analyses are done, confirm your selection to proceed to Step 6."
         if lang == "en"
         else zh(
-            "請依序執行每個框架的分析，前一個框架完成後，下一個才會開放。"
+            "💡 請依序執行每個框架的分析，前一個框架完成後，下一個才會開放。"
             "尚未分析的框架及步驟四的自訂上傳仍可編輯，"
             "所有分析完成後請按「確認框架選擇，進入步驟六」。",
             "请依序执行每个框架的分析，前一个框架完成后，下一个才会开放。"
@@ -5475,12 +5482,12 @@ button[title="fw-remove"] p {
     # Step 6: reference relevance analysis — single button per sub-step (not per framework)
     st.subheader("Step 6: Reference Relevance Analysis" if lang == "en" else zh("步驟六：參考文件相關性分析", "步骤六：参考文件相关性分析"))
     st.caption(
-        "All Step 5 analyses must be completed and confirmed before Step 6 unlocks. "
+        "💡 All Step 5 analyses must be completed and confirmed before Step 6 unlocks. "
         "Step 6-A analyzes the upstream reference; Step 6-B analyzes the quote reference. "
         "Each runs once (single analysis, not per framework)." if lang == "en"
         else zh(
-            "步驟五所有框架都完成並確認後，步驟六才會開放。Step 6-A 分析上游主要參考文件；Step 6-B 分析次要引用參考文件。每項各執行一次（非逐框架）。",
-            "步骤五所有框架都完成并确认后，步骤六才会开放。Step 6-A 分析上游主要参考文件；Step 6-B 分析次要引用参考文件。每项各执行一次（非逐框架）。",
+            "💡 步驟五所有框架都完成並確認後，步驟六才會開放。Step 6-A 分析上游主要參考文件；Step 6-B 分析次要引用參考文件。每項各執行一次（非逐框架）。",
+            "💡 步骤五所有框架都完成并确认后，步骤六才会开放。Step 6-A 分析上游主要参考文件；Step 6-B 分析次要引用参考文件。每项各执行一次（非逐框架）。",
         )
     )
 
@@ -5601,12 +5608,11 @@ button[title="fw-remove"] p {
             # Enabled when: Step 5 confirmed AND (analysis done OR no quote was ever uploaded)
             disabled=(not step5_framework_confirmed) or (not _s6b_done and quote_exists) or _s6b_no_quote_confirmed,
             help=(
-                "Confirm you have no more quote references to analyze and unlock Step 7. "
-                "You can still return to Step 3-2 to upload an additional quote reference document if needed."
+                "Confirm you have no more quote references to analyze and unlock Step 7."
                 if lang == "en"
                 else zh(
-                    "確認無需再分析次要參考文件，並開啟步驟七。如需新增次要參考文件，您仍可回到步驟 3-2 上傳。",
-                    "确认无需再分析次要参考文件，并开启步骤七。如需新增次要参考文件，您仍可回到步骤 3-2 上传。",
+                    "確認無需再分析次要參考文件，並開啟步驟七。",
+                    "确认无需再分析次要参考文件，并开启步骤七。",
                 )
             ),
         )
@@ -5997,11 +6003,11 @@ button[title="fw-remove"] p {
     st.markdown("---")
     st.subheader("Follow-Up (Q&A)" if lang == "en" else zh("後續提問（Q&A）", "后续提问（Q&A）"))
     st.caption(
-        "All questions and answers submitted in the **Ask a Follow-Up Question** section below will be recorded here."
+        "💡 All questions and answers submitted in the **Ask a Follow-Up Question** section below will be recorded here."
         if lang == "en"
         else zh(
-            "您在下方「提出追問」區塊所送出的所有問題與回覆，都會在此處累積顯示。",
-            "您在下方「提出追问」区块所送出的所有问题与回复，都会在此处累积显示。",
+            "💡 您在下方「提出追問」區塊所送出的所有問題與回覆，都會在此處累積顯示。",
+            "💡 您在下方「提出追问」区块所送出的所有问题与回复，都会在此处累积显示。",
         )
     )
     render_followup_history_chat(current_state.get("followup_history", []), lang)
@@ -6090,9 +6096,9 @@ button[title="fw-remove"] p {
                     )
 
                 st.caption(
-                    "Tip: If you want a 'Save As' location prompt, enable 'Ask where to save each file' in your browser settings."
+                    "💡 Tip: If you want a 'Save As' location prompt, enable 'Ask where to save each file' in your browser settings."
                     if lang == "en"
-                    else zh("提示：若你希望每次都跳出『選擇下載位置』視窗，請在瀏覽器下載設定中開啟『每次下載前詢問儲存位置』。", "提示：若你希望每次都跳出『选择下载位置』视窗，请在浏览器下载设置中开启『每次下载前询问保存位置』。")
+                    else zh("💡 提示：若你希望每次都跳出『選擇下載位置』視窗，請在瀏覽器下載設定中開啟『每次下載前詢問儲存位置』。", "💡 提示：若你希望每次都跳出『选择下载位置』视窗，请在浏览器下载设置中开启『每次下载前询问保存位置』。")
                 )
     else:
         st.info("Complete Step 8 to enable downloads." if lang == "en" else zh("請先完成步驟八，產出最終交付報告後才能下載。", "请先完成步骤八，产出最终交付报告后才能下载。"))
