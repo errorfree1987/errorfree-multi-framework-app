@@ -5628,6 +5628,16 @@ button[title="fw-remove"] p {
         except Exception:
             pass
         save_state_to_disk()
+        # Toast notification: guide user to return to Step 3-2 to upload a new quote
+        st.toast(
+            "Quote reference cleared. Please scroll up to **Step 3-2** to upload a new quote reference document."
+            if lang == "en"
+            else zh(
+                "次要參考文件已清除。請向上捲動至**步驟 3-2**，上傳新的次要參考文件。",
+                "次要参考文件已清除。请向上滚动至**步骤 3-2**，上传新的次要参考文件。",
+            ),
+            icon="📂",
+        )
         st.rerun()
 
     if _s6b_noref:
@@ -5986,6 +5996,14 @@ button[title="fw-remove"] p {
     # Follow-up history after results
     st.markdown("---")
     st.subheader("Follow-Up (Q&A)" if lang == "en" else zh("後續提問（Q&A）", "后续提问（Q&A）"))
+    st.caption(
+        "All questions and answers submitted in the **Ask a Follow-Up Question** section below will be recorded here."
+        if lang == "en"
+        else zh(
+            "您在下方「提出追問」區塊所送出的所有問題與回覆，都會在此處累積顯示。",
+            "您在下方「提出追问」区块所送出的所有问题与回复，都会在此处累积显示。",
+        )
+    )
     render_followup_history_chat(current_state.get("followup_history", []), lang)
 
     # =========================
@@ -6109,6 +6127,14 @@ button[title="fw-remove"] p {
             unsafe_allow_html=False,
         )
 
+    st.caption(
+        "💡 After submitting a question, your question and the answer will be automatically saved to the **Follow-Up (Q&A)** section above for easy reference."
+        if lang == "en"
+        else zh(
+            "💡 送出追問後，您的問題與回覆將自動儲存至上方的「後續提問（Q&A）」區塊，方便隨時查閱。",
+            "💡 送出追问后，您的问题与回复将自动保存至上方的「后续提问（Q&A）」区块，方便随时查阅。",
+        )
+    )
 
     if not current_state.get("analysis_output"):
         st.info("Please complete Step 8 before asking follow-up questions." if lang == "en" else zh("請先完成步驟八，產出最終交付成品後再進行追問。", "请先完成步骤八，产出最终交付成品后再进行追问。"))
