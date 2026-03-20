@@ -5765,11 +5765,9 @@ button[title="fw-remove"] p {
     st.subheader("Step 8: Cross Checking Analysis" if lang == "en" else zh("步驟八：交叉核對分析（Cross Checking Analysis）", "步骤八：交叉核对分析（Cross Checking Analysis）"))
 
     step8_done = bool(current_state.get("step8_done", False))
-    quote_finalized = bool(st.session_state.get("quote_upload_finalized", False))
 
-    # Step 8 gate: Step 7 must be done; if quote references uploaded, user must confirm no more
+    # Step 8 gate: Step 7 must be done (quote confirmation is handled in Step 6-B)
     _s8_step7_done = bool(st.session_state.get("step7_done", False))
-    _s8_has_quotes = bool(st.session_state.get("step6b_history"))
 
     if not _s8_step7_done:
         st.info(
@@ -5777,32 +5775,7 @@ button[title="fw-remove"] p {
             else zh("請先完成步驟七整合分析，再執行步驟八。", "请先完成步骤七整合分析，再执行步骤八。")
         )
 
-    # Confirm button (only shown if quote references exist and not yet finalized)
-    if _s8_has_quotes and not quote_finalized:
-        confirm_disabled = step8_done or quote_finalized or not _s8_step7_done
-        confirm_clicked = st.button(
-            "Confirm no more quote reference" if lang == "en" else zh("確認已無其他參考文件要上傳", "确认已无其他参考文件要上传"),
-            key="confirm_no_more_quote_btn",
-            disabled=confirm_disabled,
-        )
-        if confirm_clicked:
-            st.session_state.quote_upload_finalized = True
-            save_state_to_disk()
-            st.success("Confirmed. Step 8 is now unlocked." if lang == "en" else zh("已確認，步驟八現在已解鎖。", "已确认，步骤八现在已解锁。"))
-            st.rerun()
-        if not step8_done:
-            st.info(
-                "To enable Step 8, click **Confirm no more quote reference**." if lang == "en"
-                else zh("要啟用步驟八，請按下『確認已無其他參考文件要上傳』。", "要启用步骤八，请按下『确认已无其他参考文件要上传』。")
-            )
-    elif _s8_has_quotes and quote_finalized:
-        st.info("Quote reference upload is locked. Step 8 can run now." if lang == "en" else zh("次要參考文件上傳已鎖定，現在可進行步驟八。", "次要参考文件上传已锁定，现在可进行步骤八。"))
-
-    step8_can_run = (
-        _s8_step7_done
-        and (not _s8_has_quotes or quote_finalized)
-        and not step8_done
-    )
+    step8_can_run = _s8_step7_done and not step8_done
 
     _s8_col_btn, _s8_col_status = st.columns([4, 1])
     with _s8_col_btn:
