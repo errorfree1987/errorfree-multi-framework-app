@@ -1766,7 +1766,7 @@ def save_state_to_disk():
         # "_portal_sso_checked": ...
 
         # ---- OK to persist workflow/UI state ----
-        "lang": st.session_state.get("lang", "zh"),
+        "lang": st.session_state.get("lang", "en"),
         "zh_variant": st.session_state.get("zh_variant", "tw"),
         "usage_date": st.session_state.get("usage_date"),
         "usage_count": st.session_state.get("usage_count", 0),
@@ -1869,8 +1869,13 @@ def restore_state_from_disk():
         "step5_framework_confirmed",
         "step6b_no_quote_confirm",
     ]
+    _lang_is_locked = bool(st.session_state.get("_lang_locked"))
     for k in workflow_keys:
         if k in data:
+            # Never overwrite language settings that were already locked by Portal SSO.
+            # If the disk file has a stale "zh" but the portal says "en", the portal wins.
+            if k in ("lang", "zh_variant") and _lang_is_locked:
+                continue
             st.session_state[k] = data[k]
 
     # Do not clear step4 widget key here: restore runs on every rerun; clearing would reset user's add/remove. On full refresh session is new so key is missing anyway.
@@ -4171,7 +4176,7 @@ def main():
         ("user_email", None),
         ("user_role", None),
         ("is_authenticated", False),
-        ("lang", "zh"),
+        ("lang", "en"),   # default "en" so block screens show English before SSO sets the real lang
         ("zh_variant", "tw"),
         ("usage_date", None),
         ("usage_count", 0),
