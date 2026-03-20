@@ -5766,7 +5766,9 @@ button[title="fw-remove"] p {
 
     step8_done = bool(current_state.get("step8_done", False))
 
-    # Step 8 gate: Step 7 must be done (quote confirmation is handled in Step 6-B)
+    # Step 8 gate: Step 7 must be done.
+    # Quote confirmation is handled in Step 6-B (3-button design) and is a prerequisite
+    # for Step 7 to run, so no additional confirmation is needed here.
     _s8_step7_done = bool(st.session_state.get("step7_done", False))
 
     if not _s8_step7_done:
