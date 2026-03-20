@@ -5568,17 +5568,28 @@ button[title="fw-remove"] p {
             st.success("✓ Done" if lang == "en" else "✓ 完成")
 
     # Button 2 — Reset Quote Reference (moved from Step 3-2)
+    # Opens only after: Step 5 confirmed AND current quote analysis is complete.
+    # This lets the user decide whether to upload another quote or proceed to Step 7.
     with _s6b_reset_col:
         _s6b_reset = st.button(
             "Reset Quote Reference" if lang == "en"
             else zh("重置次要參考文件", "重置次要参考文件"),
             key="reset_quote_ref_btn",
-            disabled=(not quote_exists) or _s6b_no_quote_confirmed,
-            help="Clear the current quote reference so you can upload a new one." if lang == "en"
-                 else zh("清除目前的次要參考文件，以便上傳新的。", "清除目前的次要参考文件，以便上传新的。"),
+            disabled=(not step5_framework_confirmed) or (not _s6b_done) or _s6b_no_quote_confirmed,
+            help=(
+                "Analysis complete. Click to clear the current quote reference and upload a new one. "
+                "You can return to Step 3-2 to upload an additional quote reference document."
+                if lang == "en"
+                else zh(
+                    "分析完成。點此清除目前的次要參考文件以上傳新的。您可以回到步驟 3-2 上傳更多次要參考文件。",
+                    "分析完成。点此清除目前的次要参考文件以上传新的。您可以回到步骤 3-2 上传更多次要参考文件。",
+                )
+            ),
         )
 
     # Button 3 — No quote reference, confirm proceed to Step 7
+    # Opens in sync with Button 2 when analysis is done, OR immediately if no quote was ever uploaded.
+    # Both buttons appear together so the user can choose: add another quote (Button 2) or proceed (Button 3).
     with _s6b_noref_col:
         _s6b_noref_label = (
             "No quote reference — proceed to Step 7" if lang == "en"
@@ -5587,9 +5598,17 @@ button[title="fw-remove"] p {
         _s6b_noref = st.button(
             _s6b_noref_label,
             key="step6b_no_ref_btn",
-            disabled=(not _s6b_prereq) or quote_exists or _s6b_no_quote_confirmed,
-            help="Confirm you have no quote reference to analyze and unlock Step 7." if lang == "en"
-                 else zh("確認無需分析次要參考文件，並開啟步驟七。", "确认无需分析次要参考文件，并开启步骤七。"),
+            # Enabled when: Step 5 confirmed AND (analysis done OR no quote was ever uploaded)
+            disabled=(not step5_framework_confirmed) or (not _s6b_done and quote_exists) or _s6b_no_quote_confirmed,
+            help=(
+                "Confirm you have no more quote references to analyze and unlock Step 7. "
+                "You can still return to Step 3-2 to upload an additional quote reference document if needed."
+                if lang == "en"
+                else zh(
+                    "確認無需再分析次要參考文件，並開啟步驟七。如需新增次要參考文件，您仍可回到步驟 3-2 上傳。",
+                    "确认无需再分析次要参考文件，并开启步骤七。如需新增次要参考文件，您仍可回到步骤 3-2 上传。",
+                )
+            ),
         )
         if _s6b_no_quote_confirmed and not quote_exists:
             st.success("✓ Confirmed" if lang == "en" else "✓ 已確認")
