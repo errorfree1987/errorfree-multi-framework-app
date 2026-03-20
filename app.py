@@ -3433,11 +3433,11 @@ def admin_router() -> bool:
 
 BRAND_TITLE_EN = "Error-Free® Intelligence Engine"
 BRAND_TAGLINE_EN = "An AI-enhanced intelligence engine that helps organizations analyze risks, prevent errors, and make better decisions."
-BRAND_SUBTITLE_EN = "Pioneered and refined by Dr. Chiu’s Error-Free® team since 1987."
+BRAND_SUBTITLE_EN = "Pioneered and refined by Dr. Chong Chiu’s Error-Free® team since 1987."
 
 BRAND_TITLE_ZH = zh("零錯誤智能引擎", "零错误智能引擎")
 BRAND_TAGLINE_ZH = zh("一套 AI 強化的智能引擎，協助公司或組織進行風險分析、預防錯誤，並提升決策品質。", "一套 AI 强化的智能引擎，协助公司或组织进行风险分析、预防错误，并提升决策品质。")
-BRAND_SUBTITLE_ZH = zh("邱博士零錯誤團隊自 1987 年起領先研發並持續深化至今。", "邱博士零错误团队自 1987 年起领先研发并持续深化至今。")
+BRAND_SUBTITLE_ZH = zh("邱強博士零錯誤團隊自 1987 年起領先研發並持續深化至今。", "邱强博士零错误团队自 1987 年起领先研发并持续深化至今。")
 
 # Always resolve logo path robustly (Railway/Streamlit working-dir can vary)
 APP_DIR = Path(__file__).parent if "__file__" in globals() else Path.cwd()
