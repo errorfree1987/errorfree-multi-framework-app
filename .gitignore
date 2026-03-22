@@ -11,6 +11,11 @@ env/
 
 # Environment variables
 .env
+.env.local
+.env*.local
+
+# Node (admin-dashboard)
+node_modules/
 
 # OS
 .DS_Store

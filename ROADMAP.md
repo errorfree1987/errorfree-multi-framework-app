@@ -266,19 +266,22 @@
 - `TEST_B2_1_v2.md` - 完整測試指南（含修正後功能）
 - `TEST_TRIAL_DATE_FEATURE.md` - 試用期靈活調整功能測試指南
 
-#### B2.2 完美版本（預計 1-2 天）
+#### B2.2 完美版本（Next.js + shadcn/ui）— 2026-03-21 啟動 ✅
 
-**任務**：
-- [ ] 美化表格（shadcn/ui DataTable）
-- [ ] 搜尋/篩選/排序
-- [ ] 視覺化（圖表顯示用量趨勢）
-- [ ] 租戶詳情頁（完整儀表板）
+**已完成**：
+- ✅ Next.js 14 + Tailwind + shadcn/ui 專案建立（`admin-dashboard/`）
+- ✅ 登入頁、Dashboard 主頁、側邊欄導航
+- ✅ 租戶列表（搜尋、展開詳情、Members/Today Usage/Epoch）
+- ✅ 建立新租戶表單（slug, name, trial_days, caps）
+- ✅ API 路由（/api/auth/login、/api/tenants、/api/tenants/create、/api/tenants/stats）
+
+**操作手冊**：`GUIDE_NEXTJS_ADMIN_非工程師操作.md`（非工程師可依步驟完成安裝與啟動）
+
+**待完成**：
+- [ ] 美化表格（DataTable 排序）
+- [ ] 視覺化（7 天用量趨勢圖表）
+- [ ] 租戶編輯（試用期、啟用/停用）
 - [ ] 快速操作（右鍵選單）
-
-**驗收標準**：
-- [ ] 可快速搜尋租戶
-- [ ] 圖表顯示 7 天用量趨勢
-- [ ] 響應式設計
 
 ---
 
