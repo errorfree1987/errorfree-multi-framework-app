@@ -29,7 +29,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const [membersRes, usageRes, epochRes] = await Promise.all([
+    const [membersRes, usageRes, epochRes, capsRes] = await Promise.all([
       supabaseFetch(
         `/tenant_members?tenant_id=eq.${tenantId}&select=id&is_active=eq.true`
       ),
@@ -39,16 +39,24 @@ export async function GET(request: NextRequest) {
       supabaseFetch(
         `/tenant_session_epoch?tenant=eq.${tenantSlug}&select=epoch`
       ),
+      supabaseFetch(
+        `/tenant_usage_caps?tenant_id=eq.${tenantId}&select=id,daily_review_cap,daily_download_cap`
+      ),
     ]);
 
     const members = membersRes.ok ? await membersRes.json() : [];
     const usage = usageRes.ok ? await usageRes.json() : [];
     const epochData = epochRes.ok ? await epochRes.json() : [];
+    const capsData = capsRes.ok ? await capsRes.json() : [];
 
+    const caps = capsData[0] || {};
     return NextResponse.json({
       memberCount: members.length,
       todayUsage: usage.length,
       epoch: epochData[0]?.epoch ?? 0,
+      daily_review_cap: caps.daily_review_cap ?? null,
+      daily_download_cap: caps.daily_download_cap ?? null,
+      caps_id: caps.id ?? null,
     });
   } catch (e) {
     return NextResponse.json(

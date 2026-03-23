@@ -14,6 +14,8 @@ import {
   Hash,
   ChevronDown,
   ChevronUp,
+  Pencil,
+  Loader2,
 } from "lucide-react";
 
 type Tenant = {
@@ -32,6 +34,8 @@ type TenantStats = {
   memberCount: number;
   todayUsage: number;
   epoch: number;
+  daily_review_cap?: number | null;
+  daily_download_cap?: number | null;
 };
 
 export default function TenantsPage() {
@@ -44,6 +48,16 @@ export default function TenantsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [createLoading, setCreateLoading] = useState(false);
   const [createError, setCreateError] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editLoading, setEditLoading] = useState(false);
+  const [editError, setEditError] = useState("");
+  const [editForm, setEditForm] = useState({
+    trial_end: "",
+    extend_days: 30,
+    is_active: true,
+    daily_review_cap: 50,
+    daily_download_cap: 20,
+  });
   const [form, setForm] = useState({
     slug: "",
     name: "",
@@ -116,6 +130,77 @@ export default function TenantsPage() {
 
   function formatDate(s: string) {
     return s ? new Date(s).toLocaleDateString() : "—";
+  }
+
+  function openEdit(t: Tenant, stats?: TenantStats) {
+    const trialEnd = t.trial_end ? t.trial_end.slice(0, 10) : "";
+    setEditForm({
+      trial_end: trialEnd,
+      extend_days: 30,
+      is_active: t.is_active,
+      daily_review_cap:
+        stats?.daily_review_cap != null ? stats.daily_review_cap : 50,
+      daily_download_cap:
+        stats?.daily_download_cap != null ? stats.daily_download_cap : 20,
+    });
+    setEditingId(t.id);
+    setEditError("");
+  }
+
+  async function handleSaveEdit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingId) return;
+    setEditLoading(true);
+    setEditError("");
+    try {
+      const body: Record<string, unknown> = { tenant_id: editingId };
+      if (editForm.trial_end) {
+        body.trial_end = editForm.trial_end + "T23:59:59.000Z";
+      }
+      body.is_active = editForm.is_active;
+      body.daily_review_cap =
+        editForm.daily_review_cap === 0 ? null : editForm.daily_review_cap;
+      body.daily_download_cap =
+        editForm.daily_download_cap === 0
+          ? null
+          : editForm.daily_download_cap;
+
+      const res = await fetch("/api/tenants/update", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setEditError(data.error || data.details || "Failed to update");
+        return;
+      }
+      setEditingId(null);
+      setStatsCache((c) => {
+        const next = { ...c };
+        delete next[editingId];
+        return next;
+      });
+      fetch("/api/tenants")
+        .then((r) => r.json())
+        .then((data) => {
+          if (Array.isArray(data)) setTenants(data);
+        })
+        .catch(() => {});
+      const t = tenants.find((x) => x.id === editingId);
+      if (t && expandedId === editingId) {
+        fetch(
+          `/api/tenants/stats?tenant_id=${editingId}&tenant_slug=${encodeURIComponent(t.slug)}`
+        )
+          .then((r) => r.json())
+          .then((s) => setStatsCache((c) => ({ ...c, [editingId]: s })))
+          .catch(() => {});
+      }
+    } catch {
+      setEditError("Network error");
+    } finally {
+      setEditLoading(false);
+    }
   }
 
   return (
@@ -283,39 +368,161 @@ export default function TenantsPage() {
                       </div>
                     </button>
                     {expanded && (
-                      <div className="border-t bg-slate-50 p-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                        <div className="flex items-center gap-2">
-                          <Users className="h-4 w-4 text-muted-foreground" />
+                      <div className="border-t bg-slate-50 p-4 space-y-4">
+                        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                          <div className="flex items-center gap-2">
+                            <Users className="h-4 w-4 text-muted-foreground" />
+                            <div>
+                              <p className="text-xs text-muted-foreground">Members</p>
+                              <p className="font-medium">
+                                {stats ? stats.memberCount : "—"}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Activity className="h-4 w-4 text-muted-foreground" />
+                            <div>
+                              <p className="text-xs text-muted-foreground">Today&apos;s Usage</p>
+                              <p className="font-medium">
+                                {stats ? stats.todayUsage : "—"}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Hash className="h-4 w-4 text-muted-foreground" />
+                            <div>
+                              <p className="text-xs text-muted-foreground">Epoch</p>
+                              <p className="font-medium">
+                                {stats ? stats.epoch : "—"}
+                              </p>
+                            </div>
+                          </div>
                           <div>
-                            <p className="text-xs text-muted-foreground">Members</p>
+                            <p className="text-xs text-muted-foreground">Trial</p>
                             <p className="font-medium">
-                              {stats ? stats.memberCount : "—"}
+                              {formatDate(t.trial_start)} → {formatDate(t.trial_end)}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-muted-foreground">Review Cap</p>
+                            <p className="font-medium">
+                              {stats?.daily_review_cap != null
+                                ? stats.daily_review_cap
+                                : "—"}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-muted-foreground">Download Cap</p>
+                            <p className="font-medium">
+                              {stats?.daily_download_cap != null
+                                ? stats.daily_download_cap
+                                : "—"}
                             </p>
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          <Activity className="h-4 w-4 text-muted-foreground" />
-                          <div>
-                            <p className="text-xs text-muted-foreground">Today&apos;s Usage</p>
-                            <p className="font-medium">
-                              {stats ? stats.todayUsage : "—"}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Hash className="h-4 w-4 text-muted-foreground" />
-                          <div>
-                            <p className="text-xs text-muted-foreground">Epoch</p>
-                            <p className="font-medium">
-                              {stats ? stats.epoch : "—"}
-                            </p>
-                          </div>
-                        </div>
-                        <div>
-                          <p className="text-xs text-muted-foreground">Trial</p>
-                          <p className="font-medium">
-                            {formatDate(t.trial_start)} → {formatDate(t.trial_end)}
-                          </p>
+                          {editingId === t.id ? (
+                            <form
+                              onSubmit={handleSaveEdit}
+                              className="flex flex-wrap gap-4 items-end"
+                            >
+                              <div>
+                                <Label className="text-xs">Trial End</Label>
+                                <Input
+                                  type="date"
+                                  value={editForm.trial_end}
+                                  onChange={(e) =>
+                                    setEditForm((f) => ({
+                                      ...f,
+                                      trial_end: e.target.value,
+                                    }))
+                                  }
+                                  className="h-9 mt-1"
+                                />
+                              </div>
+                              <div>
+                                <Label className="text-xs">Active</Label>
+                                <select
+                                  value={editForm.is_active ? "1" : "0"}
+                                  onChange={(e) =>
+                                    setEditForm((f) => ({
+                                      ...f,
+                                      is_active: e.target.value === "1",
+                                    }))
+                                  }
+                                  className="h-9 mt-1 rounded-md border px-2 text-sm"
+                                >
+                                  <option value="1">Yes</option>
+                                  <option value="0">No</option>
+                                </select>
+                              </div>
+                              <div>
+                                <Label className="text-xs">
+                                  Daily Review Cap (0 = unlimited)
+                                </Label>
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  value={editForm.daily_review_cap}
+                                  onChange={(e) =>
+                                    setEditForm((f) => ({
+                                      ...f,
+                                      daily_review_cap: Number(e.target.value),
+                                    }))
+                                  }
+                                  className="h-9 mt-1 w-28"
+                                />
+                              </div>
+                              <div>
+                                <Label className="text-xs">
+                                  Daily Download Cap (0 = unlimited)
+                                </Label>
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  value={editForm.daily_download_cap}
+                                  onChange={(e) =>
+                                    setEditForm((f) => ({
+                                      ...f,
+                                      daily_download_cap: Number(e.target.value),
+                                    }))
+                                  }
+                                  className="h-9 mt-1 w-28"
+                                />
+                              </div>
+                              {editError && (
+                                <p className="text-sm text-destructive w-full">
+                                  {editError}
+                                </p>
+                              )}
+                              <div className="flex gap-2">
+                                <Button type="submit" size="sm" disabled={editLoading}>
+                                  {editLoading ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    "Save"
+                                  )}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setEditingId(null)}
+                                >
+                                  Cancel
+                                </Button>
+                              </div>
+                            </form>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => openEdit(t, stats)}
+                            >
+                              <Pencil className="h-4 w-4 mr-1" />
+                              Edit
+                            </Button>
+                          )}
                         </div>
                       </div>
                     )}
