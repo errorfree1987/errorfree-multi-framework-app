@@ -93,7 +93,7 @@ export default function MembersPage() {
     setBatchSuccess("");
     const tenant = batchTenant || (tenants[0]?.slug ?? "");
     if (!tenant) {
-      setBatchError("請選擇租戶");
+      setBatchError("Please select a tenant.");
       return;
     }
 
@@ -110,7 +110,7 @@ export default function MembersPage() {
     }
 
     if (rows.length === 0) {
-      setBatchError("請上傳 CSV 或貼上 email 清單。CSV 格式：第一欄為 email，可選 phone、display_name");
+      setBatchError("Please upload a CSV file or paste email list. Format: first column = email, optional: phone, display_name");
       return;
     }
 
@@ -130,14 +130,14 @@ export default function MembersPage() {
       const data = await res.json();
 
       if (!res.ok) {
-        setBatchError(data.error || data.details || "新增失敗");
+        setBatchError(data.error || data.details || "Failed to add members.");
         if (data.duplicates?.length) {
-          setBatchError((prev) => prev + ` 重複：${data.duplicates.join(", ")}`);
+          setBatchError((prev) => prev + ` Duplicates: ${data.duplicates.join(", ")}`);
         }
         return;
       }
       setBatchProgress(100);
-      setBatchSuccess(`成功新增 ${data.added} 位成員${data.duplicates?.length ? `，${data.duplicates.length} 位已存在已略過` : ""}`);
+      setBatchSuccess(`Successfully added ${data.added} member(s)${data.duplicates?.length ? ` (${data.duplicates.length} already existed, skipped)` : ""}`);
       setBatchFile(null);
       setBatchPaste("");
       loadMembers();
@@ -146,7 +146,7 @@ export default function MembersPage() {
         setBatchProgress(0);
       }, 3000);
     } catch (e) {
-      setBatchError("網路錯誤：" + String(e));
+      setBatchError("Network error: " + String(e));
     } finally {
       setBatchLoading(false);
     }
@@ -167,7 +167,7 @@ export default function MembersPage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Members</h1>
         <p className="text-muted-foreground mt-1">
-          批量新增與管理成員。支援 CSV 上傳、搜尋篩選。
+          Batch add and manage members. Supports CSV upload and search.
         </p>
       </div>
 
@@ -178,7 +178,7 @@ export default function MembersPage() {
               <div className="relative flex-1 min-w-[180px]">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="搜尋 email、名稱、電話..."
+                  placeholder="Search email, name, phone..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   className="pl-9"
@@ -189,7 +189,7 @@ export default function MembersPage() {
                 onChange={(e) => setTenantFilter(e.target.value)}
                 className="h-10 rounded-md border border-input bg-background px-3 text-sm"
               >
-                <option value="">全部租戶</option>
+                <option value="">All Tenants</option>
                 {tenants.map((t) => (
                   <option key={t.id} value={t.slug}>
                     {t.name || t.slug}
@@ -199,24 +199,24 @@ export default function MembersPage() {
             </div>
             <Button onClick={() => setBatchOpen(!batchOpen)}>
               <Upload className="h-4 w-4 mr-2" />
-              {batchOpen ? "關閉" : "批量新增"}
+              {batchOpen ? "Close" : "Bulk Add"}
             </Button>
           </div>
         </CardHeader>
 
         {batchOpen && (
           <CardContent className="border-t pt-4 space-y-4">
-            <CardTitle className="text-base">批量新增成員</CardTitle>
+            <CardTitle className="text-base">Bulk Add Members</CardTitle>
             <div className="space-y-2">
               <CardDescription>
-                CSV 格式：第一欄為 email（必填），可選第二欄 phone、第三欄 display_name。或直接貼上 email 清單（一行一個）。
+                CSV format: first column = email (required), optional: phone, display_name. Or paste one email per line.
               </CardDescription>
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
                 onClick={() => {
-                  const csv = "email,phone,display_name\nuser1@example.com,+886912345678,張小明\nuser2@example.com,,李美華";
+                  const csv = "email,phone,display_name\nuser1@example.com,+886912345678,John Doe\nuser2@example.com,,Jane Smith";
                   const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
                   const a = document.createElement("a");
                   a.href = URL.createObjectURL(blob);
@@ -225,18 +225,18 @@ export default function MembersPage() {
                   URL.revokeObjectURL(a.href);
                 }}
               >
-                下載 CSV 範本
+                Download CSV Template
               </Button>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
-                <Label>選擇租戶</Label>
+                <Label>Select Tenant</Label>
                 <select
                   value={batchTenant}
                   onChange={(e) => setBatchTenant(e.target.value)}
                   className="mt-1 w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
                 >
-                  <option value="">請選擇</option>
+                  <option value="">Select...</option>
                   {tenants.map((t) => (
                     <option key={t.id} value={t.slug}>
                       {t.name || t.slug}
@@ -245,7 +245,7 @@ export default function MembersPage() {
                 </select>
               </div>
               <div>
-                <Label>角色</Label>
+                <Label>Role</Label>
                 <select
                   value={batchRole}
                   onChange={(e) => setBatchRole(e.target.value as "user" | "tenant_admin")}
@@ -257,7 +257,7 @@ export default function MembersPage() {
               </div>
             </div>
             <div>
-              <Label>上傳 CSV 檔案</Label>
+              <Label>Upload CSV File</Label>
               <Input
                 type="file"
                 accept=".csv,.txt"
@@ -270,7 +270,7 @@ export default function MembersPage() {
               />
             </div>
             <div>
-              <Label>或貼上 email 清單（一行一個，或 CSV）</Label>
+              <Label>Or paste email list (one per line, or CSV)</Label>
               <textarea
                 value={batchPaste}
                 onChange={(e) => {
@@ -292,7 +292,7 @@ export default function MembersPage() {
                 </div>
                 <p className="text-sm text-muted-foreground flex items-center gap-2">
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  處理中...
+                  Processing...
                 </p>
               </div>
             )}
@@ -314,7 +314,7 @@ export default function MembersPage() {
               ) : (
                 <Upload className="h-4 w-4 mr-2" />
               )}
-              開始新增
+              Add Members
             </Button>
           </CardContent>
         )}
@@ -324,15 +324,15 @@ export default function MembersPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Users className="h-5 w-5" />
-            成員列表
+            Member List
             {filteredCount >= 0 && (
               <span className="text-sm font-normal text-muted-foreground">
-                （{filteredCount} 筆）
+                ({filteredCount})
               </span>
             )}
           </CardTitle>
           <CardDescription>
-            依搜尋與租戶篩選顯示。啟用/停用、編輯角色請使用 Streamlit Admin UI。
+            Filter by search and tenant.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -342,7 +342,7 @@ export default function MembersPage() {
             </div>
           ) : members.length === 0 ? (
             <p className="text-muted-foreground py-8 text-center">
-              尚無成員，或搜尋/篩選無結果。請使用「批量新增」上傳 CSV 或貼上清單。
+              No members found. Use Bulk Add to upload CSV or paste a list.
             </p>
           ) : (
             <div className="overflow-x-auto">
@@ -350,11 +350,11 @@ export default function MembersPage() {
                 <thead>
                   <tr className="border-b">
                     <th className="text-left py-3 px-2 font-medium">Email</th>
-                    <th className="text-left py-3 px-2 font-medium">名稱</th>
-                    <th className="text-left py-3 px-2 font-medium">租戶</th>
-                    <th className="text-left py-3 px-2 font-medium">角色</th>
-                    <th className="text-left py-3 px-2 font-medium">狀態</th>
-                    <th className="text-left py-3 px-2 font-medium">加入日期</th>
+                    <th className="text-left py-3 px-2 font-medium">Name</th>
+                    <th className="text-left py-3 px-2 font-medium">Tenant</th>
+                    <th className="text-left py-3 px-2 font-medium">Role</th>
+                    <th className="text-left py-3 px-2 font-medium">Status</th>
+                    <th className="text-left py-3 px-2 font-medium">Joined</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -391,7 +391,7 @@ export default function MembersPage() {
                               : "text-muted-foreground"
                           }
                         >
-                          {m.is_active ? "啟用" : "停用"}
+                          {m.is_active ? "Active" : "Inactive"}
                         </span>
                       </td>
                       <td className="py-3 px-2 text-muted-foreground">
