@@ -333,7 +333,7 @@ export default function TenantsPage() {
                 return (
                   <div
                     key={t.id}
-                    className="border rounded-lg overflow-hidden"
+                    className="border rounded-lg overflow-visible"
                   >
                     <button
                       className="w-full flex items-center justify-between p-4 text-left hover:bg-slate-50 transition-colors"
@@ -369,6 +369,26 @@ export default function TenantsPage() {
                     </button>
                     {expanded && (
                       <div className="border-t bg-slate-50 p-4 space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-2 border-b border-slate-200">
+                          <p className="text-sm font-medium text-slate-700">
+                            {editingId === t.id
+                              ? "Edit tenant settings"
+                              : "Tenant details"}
+                          </p>
+                          {editingId !== t.id && (
+                            <Button
+                              size="sm"
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openEdit(t, stats);
+                              }}
+                            >
+                              <Pencil className="h-4 w-4 mr-2" />
+                              Edit tenant
+                            </Button>
+                          )}
+                        </div>
                         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                           <div className="flex items-center gap-2">
                             <Users className="h-4 w-4 text-muted-foreground" />
@@ -420,11 +440,10 @@ export default function TenantsPage() {
                             </p>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          {editingId === t.id ? (
+                        {editingId === t.id && (
                             <form
                               onSubmit={handleSaveEdit}
-                              className="flex flex-wrap gap-4 items-end"
+                              className="flex flex-wrap gap-4 items-end p-3 rounded-md border border-slate-200 bg-white"
                             >
                               <div>
                                 <Label className="text-xs">Trial End</Label>
@@ -513,17 +532,7 @@ export default function TenantsPage() {
                                 </Button>
                               </div>
                             </form>
-                          ) : (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => openEdit(t, stats)}
-                            >
-                              <Pencil className="h-4 w-4 mr-1" />
-                              Edit
-                            </Button>
-                          )}
-                        </div>
+                        )}
                       </div>
                     )}
                   </div>
