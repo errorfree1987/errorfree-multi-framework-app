@@ -25,7 +25,7 @@
 使用 Streamlit 的 `st.query_params` API 將 session token 儲存在 URL 中：
 
 ```
-https://trustworthy-analysis-production-xxxx.up.railway.app/?session=1234567890.abc123def456...
+https://errorfree-techincal-review-app-staging-production.up.railway.app/?session=1234567890.abc123def456...
                                                               ↑
                                                         Session token
 ```

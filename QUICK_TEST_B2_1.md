@@ -23,7 +23,7 @@ Branch: staging-portal-sso
 
 1. **進入 Railway Dashboard**
    - https://railway.app/dashboard
-   - 選擇 `trustworthy-analysis` 服務
+   - 選擇 **errorfree-techincal review-app-staging** 專案內的服務
 
 2. **查看部署狀態**
    - Deployments 標籤
@@ -39,7 +39,7 @@ Branch: staging-portal-sso
 
 1. **訪問 Admin UI**
    ```
-   https://trustworthy-analysis-production-7beb.up.railway.app
+   https://errorfree-techincal-review-app-staging-production.up.railway.app
    ```
 
 2. **登入**（如果還沒登入）

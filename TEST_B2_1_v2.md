@@ -31,7 +31,7 @@ Branch: staging-portal-sso
 ### 步驟 1：等待部署（1-2 分鐘）
 
 1. 進入 Railway Dashboard
-2. 查看 `trustworthy-analysis` 服務
+2. 查看正式 Staging 專案（`errorfree-techincal review-app-staging`，見 `RAILWAY_STAGING_CANONICAL.md`）
 3. 確認最新部署狀態為 "Active"
 
 ---

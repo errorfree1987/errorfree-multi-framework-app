@@ -1,5 +1,8 @@
 # 🚀 Railway 新增獨立 Admin UI 服務 - 詳細步驟
 
+> **正式 Staging 專案名稱與 URL** 以 [`RAILWAY_STAGING_CANONICAL.md`](./RAILWAY_STAGING_CANONICAL.md) 為準（`errorfree-techincal review-app-staging`）。  
+> 請勿將 GitHub 連到錯誤的舊 Railway 專案。
+
 ## 📋 目標
 
 創建一個獨立的 Admin UI 服務，與現有的 Analyzer 服務並行運行。

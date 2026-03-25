@@ -154,7 +154,7 @@ npm run dev
 
 ### Q5：想部署到 Railway 讓別人也能用
 
-**A**：等本地測試沒問題後，可依 `RAILWAY_DEPLOY_ADMIN_NEXTJS.md`（之後會產生）的步驟部署。
+**A**：正式 Staging 的 Railway 專案名稱與網址請看 **`RAILWAY_STAGING_CANONICAL.md`**（目前為 `errorfree-techincal review-app-staging`）。Next.js Admin 若要上線，須在該專案（或約定專案）內新增獨立 Service；詳細步驟可對照 `RAILWAY_DEPLOY_ADMIN.md`／`RAILWAY_ADD_ADMIN_SERVICE.md`。
 
 ---
 
