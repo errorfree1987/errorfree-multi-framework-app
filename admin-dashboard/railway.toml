@@ -5,6 +5,6 @@
 builder = "nixpacks"
 
 [deploy]
-startCommand = "next start -p ${PORT:-3000}"
+startCommand = "next start -p $PORT"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
