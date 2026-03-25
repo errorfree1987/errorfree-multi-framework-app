@@ -154,14 +154,10 @@ export async function PATCH(req: NextRequest) {
       const capPayload: Record<string, unknown> = {};
       if (daily_review_cap !== undefined)
         capPayload.daily_review_cap =
-          daily_review_cap === null || daily_review_cap === ""
-            ? null
-            : Number(daily_review_cap);
+          daily_review_cap === null ? null : Number(daily_review_cap);
       if (daily_download_cap !== undefined)
         capPayload.daily_download_cap =
-          daily_download_cap === null || daily_download_cap === ""
-            ? null
-            : Number(daily_download_cap);
+          daily_download_cap === null ? null : Number(daily_download_cap);
 
       if (capsList.length > 0) {
         const capId = capsList[0].id;
