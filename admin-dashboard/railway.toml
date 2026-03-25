@@ -1,0 +1,10 @@
+# Railway: set service "Root Directory" to admin-dashboard (this folder).
+# https://docs.railway.app/deploy/builds
+
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "npm run start"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
