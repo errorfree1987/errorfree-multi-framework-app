@@ -1,18 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
 import {
   Bot,
   Save,
@@ -61,7 +53,7 @@ const KEY_REF_SUGGESTIONS: Record<string, string> = {
 };
 
 function providerBadge(provider: string | null) {
-  if (!provider) return <Badge variant="outline" className="text-slate-400">Not configured</Badge>;
+  if (!provider) return <span className="px-2 py-0.5 rounded text-xs border border-slate-200 text-slate-400">Not configured</span>;
   const colors: Record<string, string> = {
     copilot: "bg-blue-100 text-blue-700",
     openai_compatible: "bg-green-100 text-green-700",
@@ -156,7 +148,7 @@ function TenantAiCard({ tenant, onSaved }: { tenant: TenantRow; onSaved: () => v
               <div className="flex items-center gap-2">
                 <span className="font-medium text-sm">{tenant.name}</span>
                 {!tenant.is_active && (
-                  <Badge variant="outline" className="text-xs text-slate-400">Inactive</Badge>
+                  <span className="px-1.5 py-0.5 text-xs border border-slate-200 rounded text-slate-400">Inactive</span>
                 )}
               </div>
               <span className="text-xs text-slate-500 font-mono">{tenant.slug}</span>
@@ -178,16 +170,16 @@ function TenantAiCard({ tenant, onSaved }: { tenant: TenantRow; onSaved: () => v
             {/* Provider */}
             <div className="space-y-1.5">
               <Label className="text-xs font-medium">AI Provider</Label>
-              <Select value={form.provider} onValueChange={onProviderChange}>
-                <SelectTrigger className="h-9 text-sm">
-                  <SelectValue placeholder="Select provider…" />
-                </SelectTrigger>
-                <SelectContent>
-                  {PROVIDER_OPTIONS.map((o) => (
-                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <select
+                className="w-full h-9 px-3 text-sm border border-input rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                value={form.provider}
+                onChange={(e) => onProviderChange(e.target.value)}
+              >
+                <option value="">Select provider…</option>
+                {PROVIDER_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
             </div>
 
             {/* Model */}
