@@ -1,134 +1,138 @@
-# Phase B / Phase C 交接摘要 — 給新對話用
+# Phase B 完成 / Phase C 交接摘要 — 給新對話用
 
 > **用途**：貼到新 Cursor Chat，讓 AI 延續工作  
-> **最後更新**：2026-03-22
+> **最後更新**：2026-03-24
 
 ---
 
 ## 一、貼給 AI 的起手文（直接複製貼上）
 
 ```
-【Error-Free Admin 專案交接】
+【Error-Free Admin 專案交接 — Phase C 開始】
 
-專案已從 Dropbox 搬到 GitHub 同步，工作目錄在：
-- iMac: /Users/amandachiu/Projects/errorfree-multi-framework-app
+專案工作目錄：
+- iMac:    /Users/amandachiu/Projects/errorfree-multi-framework-app
 - MacBook: ~/Projects/errorfree-multi-framework-app
+GitHub branch: staging-portal-sso
 
-請讀取本檔案（NEW_CHAT_Phase_B_C_交接摘要.md）了解 Phase B 已完成內容與 Phase C 待辦事項。
+Phase B 已全部完成，現在要進行 Phase C（BYOK 千人企業計畫）。
+請讀取 NEW_CHAT_Phase_B_C_交接摘要.md 了解詳細狀況，再讀取 PLAN_BYOK_ENTERPRISE.md 了解 Phase C 規劃。
+
+我不會 coding，請用最簡單有細節的步驟說明。
 ```
 
 ---
 
-## 二、Phase B 已完成項目 ✅
+## 二、Phase B — 全部完成 ✅
 
-### B2 租戶管理（Next.js Admin UI）
-
-| 項目 | 狀態 |
-|------|------|
-| Next.js 14 + Tailwind + shadcn/ui 專案 | ✅ 已建立於 `admin-dashboard/` |
-| 登入頁（ADMIN_PASSWORD） | ✅ 完成 |
-| Dashboard 主頁、側邊欄導航 | ✅ 完成 |
-| 租戶列表（搜尋、展開詳情、Members/Today Usage/Epoch） | ✅ 完成 |
-| 建立新租戶表單 | ✅ 完成 |
-| API 路由（auth、tenants、tenants/create、tenants/stats） | ✅ 完成 |
-
-### 暫為「Coming Soon」的頁面
-
-- **Members**（B3）：成員批量管理 — 目前用 Streamlit admin_ui
-- **Revoke Access**（B4）：一鍵撤權
-- **Usage & Caps**（B6）：用量圖表
-- **Audit Logs**（B5）：審計日誌
-
-### 其他已完成
-
-- 專案已從 Dropbox 搬到 GitHub
-- 兩台電腦（iMac、MacBook）可透過 git clone / git pull 同步
-- 操作手冊：`GUIDE_NEXTJS_ADMIN_非工程師操作.md`、`GUIDE_從Dropbox搬到GitHub.md`
-
----
-
-## 三、Phase B 待完成項目 ⏳
-
-| 優先 | 項目 | 說明 |
+| 功能 | 狀態 | 說明 |
 |------|------|------|
-| 1 | B3 成員批量管理 | CSV 上傳、進度條、模糊搜尋 |
-| 2 | B6 用量與 Caps 圖表 | 折線圖、7 天趨勢、超限警告 |
-| 3 | B5 Audit Log 時間線 | 時間線視圖、匯出 CSV |
-| 4 | B4 一鍵撤權增強 | 速率限制、受影響 session 估算 |
-| 5 | B2 租戶編輯 | 試用期調整、啟用/停用 |
+| B2 租戶管理 | ✅ | 試用期編輯、啟停、用量上限、Quick Extend (+7/+30天)、KPI卡片、filter tabs |
+| B3 成員批量管理 | ✅ | CSV 上傳、個別編輯（role、啟停、display name）、自訂 cap、bypass tenant cap、last login |
+| B4 撤權管理 | ✅ | Session 估算、風險標示、撤權歷史、Emergency Revoke All |
+| B5 Audit Log | ✅ | 時間線、快捷篩選、統計卡片、actor 搜尋、展開 context、匯出 CSV |
+| B6 用量圖表 | ✅ | 7/14/30 天趨勢、卡片/表格視圖、Utilization Ring、Cap Hit 分析、Top Users |
+| Dashboard 首頁 | ✅ | KPI 卡片、試用到期警告、近期 audit feed、Tenant Health sidebar |
+| 舊版 admin_ui.py | ✅ | 已加 deprecation banner，導引至新 Next.js admin |
+
+### 線上網址
+- **新版 Next.js Admin Dashboard**：`https://empathetic-quietude-production-507e.up.railway.app`
+- **舊版 Streamlit Analyzer**（保留）：`https://trustworthy-analysis-production-7beb.up.railway.app`
 
 ---
 
-## 四、Phase C：BYOK 千人企業計畫 ⏳
+## 三、Phase C — 待開始 ⏳
 
-### 最高優先：Company Admin BYOK 設定頁
+### C1（最高優先）：Company Admin BYOK 設定頁
 
-讓千人企業的 Company Admin 自行設定本公司 AI Provider / Base URL / API Key，不需 Error-Free 運維介入。
+讓千人企業的 **Company Admin** 自行設定本公司 AI Provider / Base URL / API Key，**無需 Error-Free 工程師介入**。
 
 **待完成：**
-- [ ] Company Admin 專屬設定頁（僅 `company_admin` 可見）
-- [ ] 可選 Provider、Base URL、Model
-- [ ] API Key 安全處理（不存明文）
-- [ ] 儲存後 Analyzer 依新設定切換
-- [ ] 變更寫入 audit_events
+- [ ] Company Admin 專屬設定頁（Next.js Admin Dashboard 新增頁面，僅 `company_admin` 角色可見）
+- [ ] 可選 Provider（copilot / openai_compatible）、填寫 Base URL、Model
+- [ ] API Key 安全處理（不存明文，使用 api_key_ref 或加密）
+- [ ] 儲存後 Analyzer 依新設定切換 provider / model
+- [ ] 所有變更寫入 `audit_events`（action: `tenant_ai_settings_updated`）
 
-**參考檔案：** `PLAN_BYOK_ENTERPRISE.md`
+**參考檔案：** `PLAN_BYOK_ENTERPRISE.md`（第四章有詳細實作步驟）
 
-### 其他 Phase C 項目
+### C2：企業級隔離
+- Row-Level Security（RLS）
+- Tenant-claim JWT
 
-- **C1**：BYOK Onboarding、API Key 驗證、Key rotation
-- **C2**：企業級隔離（RLS、tenant-claim JWT）
-- **C3**：Observability（Request ID、Sentry、測試）
+### C3：可觀測性
+- Request ID 追蹤
+- Sentry 錯誤監控
+- 測試覆蓋
 
 ---
 
-## 五、專案結構與重要檔案
+## 四、重要檔案清單
 
 ```
 errorfree-multi-framework-app/
-├── admin-dashboard/          # Next.js Admin UI（Phase B）
-│   ├── src/
-│   │   ├── app/             # 頁面與 API
-│   │   ├── components/ui/   # shadcn 元件
-│   │   └── lib/             # 工具
-│   ├── .env.local           # 每台電腦需自建（不進 Git）
-│   └── package.json
-├── admin_ui.py              # Streamlit Admin（舊版，仍可用）
-├── app.py                   # Analyzer 主程式
-├── ROADMAP.md               # 完整路線圖
-├── PLAN_BYOK_ENTERPRISE.md  # BYOK 規劃
-├── GUIDE_NEXTJS_ADMIN_非工程師操作.md
-├── GUIDE_從Dropbox搬到GitHub.md
-└── NEW_CHAT_Phase_B_C_交接摘要.md  # 本檔案
+├── admin-dashboard/                        # Next.js Admin UI（Phase B 完成）
+│   ├── src/app/
+│   │   ├── dashboard/
+│   │   │   ├── page.tsx                    # 首頁 Dashboard
+│   │   │   ├── tenants/page.tsx            # B2 租戶管理
+│   │   │   ├── members/page.tsx            # B3 成員管理
+│   │   │   ├── audit/page.tsx              # B5 Audit Log
+│   │   │   ├── usage/page.tsx              # B6 用量圖表
+│   │   │   └── revoke/page.tsx             # B4 撤權管理
+│   │   └── api/
+│   │       ├── tenants/route.ts            # 租戶列表
+│   │       ├── tenants/update/route.ts     # 租戶編輯
+│   │       ├── tenants/stats/route.ts      # 租戶統計
+│   │       ├── members/route.ts            # 成員列表
+│   │       ├── members/batch/route.ts      # 批量新增
+│   │       ├── members/update/route.ts     # 成員編輯
+│   │       ├── audit/route.ts              # Audit log
+│   │       ├── usage/route.ts              # 用量趨勢
+│   │       └── revoke/route.ts             # 撤權操作
+│   ├── railway.toml                        # Railway 部署設定
+│   ├── tsconfig.json                       # TypeScript 設定（target: ES2017）
+│   └── .env.local                          # 每台電腦需自建（不進 Git）
+├── admin_ui.py                             # Streamlit 舊版（已加 deprecation banner）
+├── app.py                                  # Analyzer 主程式
+├── ROADMAP.md                              # 完整路線圖
+├── PLAN_BYOK_ENTERPRISE.md                 # Phase C BYOK 規劃（重要）
+├── GUIDE_ENTERPRISE_TRIAL_資料安全說明.md  # 企業客戶說明文件
+├── GUIDE_NEXTJS_ADMIN_非工程師操作.md      # 操作手冊
+└── NEW_CHAT_Phase_B_C_交接摘要.md         # 本檔案
 ```
 
 ---
 
-## 六、環境與啟動
+## 五、環境變數（.env.local — 每台電腦需手動建立，不進 Git）
 
-### Admin Dashboard 啟動
+檔案位置：`admin-dashboard/.env.local`
+
+```
+SUPABASE_URL=（你的 Supabase URL）
+SUPABASE_SERVICE_KEY=（你的 service key）
+ADMIN_PASSWORD=（你設定的管理員密碼）
+```
+
+---
+
+## 六、本機啟動指令
 
 ```bash
 cd admin-dashboard
 npm run dev
 ```
 
-瀏覽器：http://localhost:3000（或 3001 若 3000 被佔用）
-
-### 環境變數（.env.local）
-
-```
-SUPABASE_URL=...
-SUPABASE_SERVICE_KEY=...
-ADMIN_PASSWORD=...
-```
+瀏覽器開啟：http://localhost:3000
 
 ---
 
 ## 七、使用者背景
 
-專案負責人 **Amanda Chiu** 為非工程師，操作需以「複製貼上指令」與「步驟化說明」為主。
+- 專案負責人 **Amanda Chiu**，非工程師
+- 操作說明需以「複製貼上指令」＋「逐步圖文說明」為主
+- 下週開放千人企業試用，C1 BYOK 設定頁為最優先項目
 
 ---
 
-**最後更新**：2026-03-22
+**最後更新**：2026-03-24
