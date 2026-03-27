@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import {
   Search, Upload, Users, Building2, Mail, UserCircle,
   Loader2, CheckCircle2, AlertCircle, Pencil, X, Save,
-  Phone, ShieldCheck, Power,
+  Phone, ShieldCheck, Power, Download,
 } from "lucide-react";
 
 type MemberSettings = {
@@ -261,7 +261,10 @@ export default function MembersPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [tenantFilter, setTenantFilter] = useState<string>("");
+  const [roleFilter, setRoleFilter] = useState<string>("");
+  const [statusFilter, setStatusFilter] = useState<string>("");
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   // Batch add state
   const [batchOpen, setBatchOpen] = useState(false);
@@ -284,6 +287,35 @@ export default function MembersPage() {
       .catch(() => setMembers([]))
       .finally(() => setLoading(false));
   }, [tenantFilter, search]);
+
+  async function handleQuickToggle(m: Member) {
+    setTogglingId(m.id);
+    try {
+      await fetch("/api/members/update", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ member_id: m.id, tenant_slug: m.tenant_slug, is_active: !m.is_active }),
+      });
+      setMembers((prev) => prev.map((x) => x.id === m.id ? { ...x, is_active: !m.is_active } : x));
+    } catch { /* silent */ }
+    finally { setTogglingId(null); }
+  }
+
+  function handleExportCSV() {
+    const header = ["Email", "Display Name", "Phone", "Tenant", "Role", "Status", "Joined", "Last Login"];
+    const rows = displayedMembers.map((m) => [
+      m.email, m.display_name ?? "", m.phone ?? "", m.tenant_slug,
+      roleLabel(m.role), m.is_active ? "Active" : "Inactive",
+      m.created_at, m.last_login_at ?? "",
+    ]);
+    const csv = [header, ...rows].map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `members-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
 
   useEffect(() => { setLoading(true); loadMembers(); }, [loadMembers]);
   useEffect(() => {
@@ -346,11 +378,48 @@ export default function MembersPage() {
     }
   }
 
+  // Derived stats
+  const activeCount = members.filter((m) => m.is_active).length;
+  const adminCount = members.filter((m) => m.role === "tenant_admin").length;
+  const recentLogin = members.filter((m) => {
+    if (!m.last_login_at) return false;
+    return Date.now() - new Date(m.last_login_at).getTime() < 24 * 60 * 60 * 1000;
+  }).length;
+
+  const displayedMembers = members.filter((m) => {
+    if (roleFilter && m.role !== roleFilter) return false;
+    if (statusFilter === "active" && !m.is_active) return false;
+    if (statusFilter === "inactive" && m.is_active) return false;
+    return true;
+  });
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Members</h1>
-        <p className="text-muted-foreground mt-1">Manage members individually or in bulk. Click Edit to customise role, usage caps, and more.</p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Members</h1>
+          <p className="text-muted-foreground mt-1">Manage members individually or in bulk. Click Edit to customise role, usage caps, and more.</p>
+        </div>
+        <Button variant="outline" size="sm" onClick={handleExportCSV} disabled={members.length === 0}>
+          <Download className="h-4 w-4 mr-1" />Export CSV
+        </Button>
+      </div>
+
+      {/* Summary stats */}
+      <div className="grid gap-3 sm:grid-cols-4">
+        {[
+          { label: "Total Members", value: members.length, color: "text-blue-600", bg: "bg-blue-50" },
+          { label: "Active", value: activeCount, color: "text-green-600", bg: "bg-green-50" },
+          { label: "Admins", value: adminCount, color: "text-purple-600", bg: "bg-purple-50" },
+          { label: "Active Last 24h", value: recentLogin, color: "text-amber-600", bg: "bg-amber-50" },
+        ].map((k) => (
+          <Card key={k.label} className="shadow-none">
+            <CardContent className="pt-3 pb-3">
+              <p className="text-xs text-muted-foreground">{k.label}</p>
+              <p className={`text-2xl font-bold mt-0.5 ${k.color}`}>{loading ? "—" : k.value}</p>
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
       {/* Search + Bulk Add */}
@@ -365,6 +434,17 @@ export default function MembersPage() {
               <select value={tenantFilter} onChange={(e) => setTenantFilter(e.target.value)} className="h-10 rounded-md border border-input bg-background px-3 text-sm">
                 <option value="">All Tenants</option>
                 {tenants.map((t) => <option key={t.id} value={t.slug}>{t.name || t.slug}</option>)}
+              </select>
+              <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} className="h-10 rounded-md border border-input bg-background px-3 text-sm">
+                <option value="">All Roles</option>
+                <option value="user">User</option>
+                <option value="tenant_admin">Admin</option>
+                <option value="viewer">Viewer</option>
+              </select>
+              <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="h-10 rounded-md border border-input bg-background px-3 text-sm">
+                <option value="">All Status</option>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
               </select>
             </div>
             <Button onClick={() => setBatchOpen(!batchOpen)}>
@@ -429,92 +509,91 @@ export default function MembersPage() {
           <CardTitle className="flex items-center gap-2">
             <Users className="h-5 w-5" />
             Member List
-            <span className="text-sm font-normal text-muted-foreground">({members.length})</span>
+            <span className="text-sm font-normal text-muted-foreground">
+              ({displayedMembers.length}{displayedMembers.length !== members.length ? ` of ${members.length}` : ""})
+            </span>
           </CardTitle>
-          <CardDescription>Click <strong>Edit</strong> on any row to modify role, status, usage caps, and more.</CardDescription>
+          <CardDescription>Click <strong>Edit</strong> to customise role, caps, and settings. Use the toggle to quickly activate/deactivate.</CardDescription>
         </CardHeader>
         <CardContent>
           {loading ? (
             <div className="flex items-center justify-center py-12"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>
-          ) : members.length === 0 ? (
-            <p className="text-muted-foreground py-8 text-center">No members found.</p>
+          ) : displayedMembers.length === 0 ? (
+            <p className="text-muted-foreground py-8 text-center">No members match the current filters.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b">
-                    <th className="text-left py-3 px-2 font-medium">Email</th>
-                    <th className="text-left py-3 px-2 font-medium">Name / Phone</th>
+                  <tr className="border-b bg-slate-50">
+                    <th className="text-left py-3 px-3 font-medium">Member</th>
                     <th className="text-left py-3 px-2 font-medium">Tenant</th>
                     <th className="text-left py-3 px-2 font-medium">Role</th>
                     <th className="text-left py-3 px-2 font-medium">Status</th>
+                    <th className="text-left py-3 px-2 font-medium">Last Login</th>
                     <th className="text-left py-3 px-2 font-medium">Cap Settings</th>
                     <th className="text-left py-3 px-2 font-medium">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {members.map((m) => {
+                  {displayedMembers.map((m) => {
                     const s = parseSettings(m.notes);
                     const isEditing = editingId === m.id;
                     return (
                       <>
-                        <tr key={m.id} className={`border-b hover:bg-slate-50 ${isEditing ? "bg-slate-100" : ""}`}>
-                          <td className="py-3 px-2">
-                            <span className="flex items-center gap-2">
-                              <Mail className="h-4 w-4 shrink-0 text-muted-foreground" />
-                              <span className="break-all">{m.email}</span>
-                            </span>
+                        <tr key={m.id} className={`border-b hover:bg-slate-50 ${isEditing ? "bg-blue-50/50" : ""}`}>
+                          {/* Member: avatar + email + name */}
+                          <td className="py-3 px-3">
+                            <div className="flex items-center gap-2.5">
+                              <div className={`h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${m.is_active ? "bg-primary/10 text-primary" : "bg-slate-100 text-slate-400"}`}>
+                                {(m.display_name || m.email).charAt(0).toUpperCase()}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="font-medium truncate max-w-[180px]">{m.email}</p>
+                                <div className="flex items-center gap-2 mt-0.5">
+                                  {m.display_name && <span className="text-xs text-muted-foreground truncate max-w-[120px]">{m.display_name}</span>}
+                                  {m.phone && <span className="text-xs text-muted-foreground"><Phone className="h-2.5 w-2.5 inline mr-0.5" />{m.phone}</span>}
+                                </div>
+                              </div>
+                            </div>
                           </td>
                           <td className="py-3 px-2">
-                            {m.display_name && (
-                              <span className="flex items-center gap-1 text-xs">
-                                <UserCircle className="h-3.5 w-3.5 text-muted-foreground" />{m.display_name}
-                              </span>
-                            )}
-                            {m.phone && (
-                              <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                                <Phone className="h-3 w-3" />{m.phone}
-                              </span>
-                            )}
-                            {!m.display_name && !m.phone && <span className="text-muted-foreground">—</span>}
+                            <span className="text-xs bg-slate-100 rounded px-1.5 py-0.5">{m.tenant_slug}</span>
                           </td>
                           <td className="py-3 px-2">
-                            <span className="flex items-center gap-1 text-xs">
-                              <Building2 className="h-3.5 w-3.5 text-muted-foreground" />{m.tenant_slug}
-                            </span>
+                            <span className={roleBadge(m.role)}>{roleLabel(m.role)}</span>
                           </td>
                           <td className="py-3 px-2">
-                            <span className={roleBadge(m.role)}>
-                              {roleLabel(m.role)}
-                            </span>
-                          </td>
-                          <td className="py-3 px-2">
-                            <span className={`inline-flex items-center gap-1 text-xs font-medium ${m.is_active ? "text-green-600" : "text-slate-400"}`}>
-                              <Power className="h-3 w-3" />
+                            <button
+                              onClick={() => handleQuickToggle(m)}
+                              disabled={togglingId === m.id}
+                              className={`inline-flex items-center gap-1 text-xs font-medium rounded-full px-2.5 py-1 border transition-colors ${
+                                m.is_active
+                                  ? "bg-green-50 text-green-700 border-green-200 hover:bg-green-100"
+                                  : "bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100"
+                              }`}
+                            >
+                              {togglingId === m.id
+                                ? <Loader2 className="h-3 w-3 animate-spin" />
+                                : <Power className="h-3 w-3" />}
                               {m.is_active ? "Active" : "Inactive"}
-                            </span>
+                            </button>
+                          </td>
+                          <td className="py-3 px-2 text-xs text-muted-foreground">
+                            {m.last_login_at ? (
+                              <span title={new Date(m.last_login_at).toLocaleString()}>
+                                {formatDate(m.last_login_at)}
+                              </span>
+                            ) : "Never"}
                           </td>
                           <td className="py-3 px-2 text-xs text-muted-foreground space-y-0.5">
-                            {s.bypass_tenant_cap && (
-                              <span className="flex items-center gap-1 text-amber-600">
-                                <ShieldCheck className="h-3 w-3" /> Bypass cap
-                              </span>
-                            )}
-                            {s.custom_daily_cap && (
-                              <span>Personal cap: {s.custom_daily_cap}/day</span>
-                            )}
-                            {s.track_usage === false && (
-                              <span className="text-slate-400">No tracking</span>
-                            )}
-                            {!s.bypass_tenant_cap && !s.custom_daily_cap && s.track_usage !== false && (
-                              <span className="text-slate-400">Follow tenant</span>
-                            )}
+                            {s.bypass_tenant_cap && <span className="flex items-center gap-1 text-amber-600"><ShieldCheck className="h-3 w-3" />Bypass cap</span>}
+                            {s.custom_daily_cap ? <span>{s.custom_daily_cap}/day</span> : null}
+                            {s.track_usage === false && <span className="text-slate-400">No tracking</span>}
+                            {!s.bypass_tenant_cap && !s.custom_daily_cap && s.track_usage !== false && <span className="text-slate-300">—</span>}
                           </td>
                           <td className="py-3 px-2">
                             {isEditing ? (
-                              <Button size="sm" variant="ghost" onClick={() => setEditingId(null)}>
-                                <X className="h-4 w-4" />
-                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => setEditingId(null)}><X className="h-4 w-4" /></Button>
                             ) : (
                               <Button size="sm" variant="outline" onClick={() => setEditingId(m.id)}>
                                 <Pencil className="h-3.5 w-3.5 mr-1" />Edit
