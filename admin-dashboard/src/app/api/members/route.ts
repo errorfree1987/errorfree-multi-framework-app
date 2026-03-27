@@ -26,7 +26,8 @@ export async function GET(req: NextRequest) {
   const search = searchParams.get("search")?.trim() || null;
 
   try {
-    let url = "/tenant_members?select=id,tenant_id,email,display_name,phone,role,is_active,created_at&order=created_at.desc";
+    const fields = "id,tenant_id,email,display_name,phone,role,is_active,notes,created_at,last_login_at,last_activity_at";
+    let url = `/tenant_members?select=${fields}&order=created_at.desc`;
     if (tenantSlug) {
       const tenantRes = await supabaseFetch(
         `/tenants?slug=eq.${encodeURIComponent(tenantSlug)}&select=id`
@@ -42,7 +43,7 @@ export async function GET(req: NextRequest) {
         return NextResponse.json([]);
       }
       const tenantId = tenants[0].id;
-      url = `/tenant_members?tenant_id=eq.${tenantId}&select=id,tenant_id,email,display_name,phone,role,is_active,created_at&order=created_at.desc`;
+      url = `/tenant_members?tenant_id=eq.${tenantId}&select=${fields}&order=created_at.desc`;
     }
 
     const res = await supabaseFetch(url);
