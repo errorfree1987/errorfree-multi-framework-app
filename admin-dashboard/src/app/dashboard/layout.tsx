@@ -12,6 +12,7 @@ import {
   FileText,
   BarChart3,
   LogOut,
+  Bot,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -22,6 +23,7 @@ const navItems = [
   { href: "/dashboard/revoke", label: "Revoke Access", icon: Shield },
   { href: "/dashboard/usage", label: "Usage & Caps", icon: BarChart3 },
   { href: "/dashboard/audit", label: "Audit Logs", icon: FileText },
+  { href: "/dashboard/ai-settings", label: "AI Settings", icon: Bot },
 ];
 
 export default function DashboardLayout({
