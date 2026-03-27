@@ -290,6 +290,16 @@ def show_admin_dashboard():
         st.write("")
         admin_email = st.session_state.get("admin_email", "admin")
         st.caption(f"👤 {admin_email}")
+
+    # ── Deprecation notice ──────────────────────────────────────────────────
+    st.warning(
+        "⚠️ **This admin interface has been replaced by the new Admin Dashboard.**  \n"
+        "Please use the new system for all tenant and member management:  \n"
+        "👉 **[Open New Admin Dashboard](https://empathetic-quietude-production-507e.up.railway.app)**  \n\n"
+        "This page is kept as a read-only backup and will be removed in a future update.",
+        icon="⚠️"
+    )
+    # ────────────────────────────────────────────────────────────────────────
     
     with col3:
         st.write("")
